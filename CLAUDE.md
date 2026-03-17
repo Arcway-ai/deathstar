@@ -68,7 +68,11 @@ deathstar upgrade
 - **API auth**: Optional bearer token via `DEATHSTAR_API_TOKEN`. Health endpoint is always public.
 - **No public SSH**: Security group has zero inbound rules by default.
 - **Single instance**: v1 is intentionally single EC2, single AZ. No HA.
-- **Web UI**: Optional mobile-friendly chat UI gated behind `DEATHSTAR_ENABLE_WEB_UI=true`. Served from the same FastAPI app as vanilla HTML/CSS/JS (no build step). Static files and `/` bypass auth; `/web/api/*` requires bearer token.
+- **Web UI**: Optional React + Vite frontend gated behind `DEATHSTAR_ENABLE_WEB_UI=true`. Multi-stage Docker build (Node.js builds frontend, Python builds backend). Static files and `/` bypass auth; `/web/api/*` requires bearer token.
+- **Personas**: Frontend-defined system prompts (Frontend, Full-stack, Security, DevOps, Data, Architect) sent with each chat request to shape LLM behavior.
+- **Memory Bank**: Thumbs-up responses are saved as persistent context per repo. Injected into future prompts within a token budget (~4K chars).
+- **Repo Context**: CLAUDE.md, branch, recent commits, and file tree are automatically fetched and injected into LLM system prompts when a repo is selected.
+- **Version tracking**: `/v1/health` returns `VERSION+git-sha`. `deathstar upgrade` compares local vs remote versions.
 
 ## Testing
 
@@ -95,6 +99,7 @@ Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "share
 - `deathstar github setup` — GitHub auth (gh CLI, PAT, or OAuth Device Flow) for automated PR access.
 - `deathstar tailscale setup` — Create a Tailscale auth key via the API and store in SSM.
 - `deathstar repos list / clone` — List or clone GitHub repos on the remote instance (proxies to `gh` CLI via SSH/SSM).
+- `deathstar upgrade` — Pull latest code, reinstall CLI package, backup, and redeploy in one command.
 
 ## Files You Should Know
 
@@ -109,3 +114,9 @@ Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "share
 - `cli/deathstar_cli/tailscale_auth.py` — Tailscale OAuth client credentials and auth key creation.
 - `server/deathstar_server/web/routes.py` — Web UI API endpoints (`/web/api/*`).
 - `server/deathstar_server/web/conversations.py` — Server-side conversation store with JSON file persistence.
+- `server/deathstar_server/web/memory_bank.py` — Memory bank store (thumbs-up responses saved per repo).
+- `shared/deathstar_shared/version.py` — VERSION constant and `full_version()` (VERSION+git-sha).
+- `web/src/store.ts` — Zustand store (all frontend state).
+- `web/src/personas.ts` — Persona definitions and system prompts.
+- `web/src/api.ts` — Frontend API client.
+- `docker/control-api.Dockerfile` — Multi-stage build (Node.js frontend + Python backend).
