@@ -1,0 +1,48 @@
+#!/bin/bash
+set -euo pipefail
+
+MOUNT_POINT="/workspace"
+LABEL="DEATHSTAR_WORKSPACE"
+
+root_source="$(findmnt -n -o SOURCE /)"
+root_parent=""
+if [[ "$root_source" == /dev/* ]]; then
+  root_parent="/dev/$(lsblk -no PKNAME "$root_source")"
+fi
+
+device=""
+for candidate in $(lsblk -ndo NAME,TYPE | awk '$2 == "disk" { print "/dev/" $1 }'); do
+  if [[ -n "$root_parent" && "$candidate" == "$root_parent" ]]; then
+    continue
+  fi
+  device="$candidate"
+  break
+done
+
+if [[ -z "$device" ]]; then
+  echo "unable to identify the DeathStar data volume" >&2
+  exit 1
+fi
+
+for _ in $(seq 1 30); do
+  if [[ -b "$device" ]]; then
+    break
+  fi
+  sleep 2
+done
+
+if ! blkid "$device" >/dev/null 2>&1; then
+  mkfs.ext4 -L "$LABEL" "$device"
+fi
+
+mkdir -p "$MOUNT_POINT"
+uuid="$(blkid -s UUID -o value "$device")"
+grep -q "$uuid" /etc/fstab || echo "UUID=$uuid $MOUNT_POINT ext4 defaults,nofail 0 2" >> /etc/fstab
+mountpoint -q "$MOUNT_POINT" || mount "$MOUNT_POINT"
+
+mkdir -p \
+  /workspace/deathstar/logs \
+  /workspace/deathstar/backups \
+  /workspace/projects
+
+chmod 700 /workspace/deathstar

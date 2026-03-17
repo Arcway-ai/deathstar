@@ -1,0 +1,389 @@
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from deathstar_server.config import Settings
+from deathstar_server.errors import AppError
+from deathstar_server.services.gitops import GitService
+from deathstar_shared.models import ErrorCode
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _make_settings(tmp_path: Path) -> Settings:
+    return Settings(
+        workspace_root=tmp_path,
+        projects_root=tmp_path / "projects",
+        log_path=tmp_path / "log.txt",
+        backup_directory=tmp_path / "backups",
+        backup_bucket=None,
+        backup_s3_prefix="workspace-backups",
+        aws_region="us-west-1",
+        log_level="INFO",
+        openai_api_key=None,
+        anthropic_api_key=None,
+        google_api_key=None,
+        github_token=None,
+        openai_api_base_url="https://api.openai.com/v1",
+        anthropic_api_base_url="https://api.anthropic.com/v1",
+        anthropic_api_version="2023-06-01",
+        google_api_base_url="https://generativelanguage.googleapis.com/v1beta",
+        default_openai_model="gpt-4o-mini",
+        default_anthropic_model="claude-sonnet-4-5-20250514",
+        default_google_model="gemini-2.0-flash",
+        default_vertex_model="gemini-2.0-flash",
+        vertex_project_id=None,
+        vertex_location="us-central1",
+        vertex_service_account_key=None,
+        git_author_name="DeathStar",
+        git_author_email="deathstar@local",
+        tailscale_enabled=False,
+        tailscale_hostname=None,
+        ssh_user="ec2-user",
+        api_token=None,
+        enable_web_ui=False,
+    )
+
+
+def _init_git_repo(repo_path: Path, branch: str = "main") -> Path:
+    """Create a minimal git repo with one commit."""
+    repo_path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-b", branch], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=repo_path, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=repo_path, check=True, capture_output=True,
+    )
+    readme = repo_path / "README.md"
+    readme.write_text("# Test\n")
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=repo_path, check=True, capture_output=True,
+    )
+    return repo_path
+
+
+# ---------------------------------------------------------------------------
+# resolve_target
+# ---------------------------------------------------------------------------
+
+class TestResolveTarget:
+    def test_valid_path(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        projects = settings.projects_root
+        projects.mkdir(parents=True)
+        (projects / "myrepo").mkdir()
+
+        service = GitService(settings)
+        target = service.resolve_target("myrepo")
+
+        assert target == (projects / "myrepo").resolve()
+
+    def test_path_traversal_rejected(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        projects = settings.projects_root
+        projects.mkdir(parents=True)
+
+        service = GitService(settings)
+
+        with pytest.raises(AppError) as exc_info:
+            service.resolve_target("../../etc")
+        assert exc_info.value.code == ErrorCode.INVALID_REQUEST
+        assert "escapes" in exc_info.value.message
+
+    def test_nonexistent_path_rejected(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        settings.projects_root.mkdir(parents=True)
+
+        service = GitService(settings)
+
+        with pytest.raises(AppError) as exc_info:
+            service.resolve_target("does-not-exist")
+        assert exc_info.value.code == ErrorCode.INVALID_REQUEST
+        assert "does not exist" in exc_info.value.message
+
+    def test_dot_path_resolves_to_projects_root(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        settings.projects_root.mkdir(parents=True)
+
+        service = GitService(settings)
+        target = service.resolve_target(".")
+
+        assert target == settings.projects_root.resolve()
+
+
+# ---------------------------------------------------------------------------
+# build_workspace_context
+# ---------------------------------------------------------------------------
+
+class TestBuildWorkspaceContext:
+    def test_returns_context_string(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+        (repo_path / "main.py").write_text("print('hello')\n")
+        subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+
+        service = GitService(settings)
+        context = service.build_workspace_context("myrepo")
+
+        assert "Target path:" in context
+        assert "main.py" in context
+
+    def test_includes_file_contents(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+        (repo_path / "hello.py").write_text("x = 42\n")
+
+        service = GitService(settings)
+        context = service.build_workspace_context("myrepo")
+
+        assert "x = 42" in context
+
+    def test_single_file_target(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+        (repo_path / "file.py").write_text("code = True\n")
+
+        service = GitService(settings)
+        context = service.build_workspace_context("myrepo/file.py")
+
+        assert "code = True" in context
+
+
+# ---------------------------------------------------------------------------
+# apply_patch
+# ---------------------------------------------------------------------------
+
+class TestApplyPatch:
+    def test_applies_valid_patch(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+        (repo_path / "hello.py").write_text("old_value = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "add file"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+
+        patch_text = (
+            "--- a/hello.py\n"
+            "+++ b/hello.py\n"
+            "@@ -1 +1 @@\n"
+            "-old_value = 1\n"
+            "+new_value = 2\n"
+        )
+
+        service = GitService(settings)
+        result_root = service.apply_patch("myrepo", patch_text)
+
+        assert (result_root / "hello.py").read_text() == "new_value = 2\n"
+
+    def test_empty_patch_raises(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+
+        service = GitService(settings)
+
+        with pytest.raises(AppError) as exc_info:
+            service.apply_patch("myrepo", "   ")
+        assert exc_info.value.code == ErrorCode.INVALID_PROVIDER_OUTPUT
+
+
+# ---------------------------------------------------------------------------
+# collect_diff_snapshot
+# ---------------------------------------------------------------------------
+
+class TestCollectDiffSnapshot:
+    def test_collects_dirty_diff(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+
+        # Modify a tracked file so it shows as dirty (not just untracked)
+        (repo_path / "README.md").write_text("# Modified\n")
+
+        service = GitService(settings)
+        snapshot = service.collect_diff_snapshot("myrepo", "main")
+
+        assert snapshot.branch == "main"
+        assert snapshot.dirty is True
+        assert snapshot.diff_text  # should have some diff
+
+    def test_collects_branch_diff(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+
+        # Create a feature branch with changes
+        subprocess.run(
+            ["git", "switch", "-c", "feature"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+        (repo_path / "feature.py").write_text("feature code\n")
+        subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "feature"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+
+        service = GitService(settings)
+        snapshot = service.collect_diff_snapshot("myrepo", "main")
+
+        assert snapshot.branch == "feature"
+        assert snapshot.dirty is False
+        assert "feature.py" in snapshot.diff_text
+
+    def test_no_changes_on_same_branch_raises(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+
+        service = GitService(settings)
+
+        with pytest.raises(AppError) as exc_info:
+            service.collect_diff_snapshot("myrepo", "main")
+        assert exc_info.value.code == ErrorCode.INVALID_REQUEST
+
+
+# ---------------------------------------------------------------------------
+# changed_files
+# ---------------------------------------------------------------------------
+
+class TestChangedFiles:
+    def test_lists_changed_files(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+        (repo_path / "new.py").write_text("x = 1\n")
+
+        service = GitService(settings)
+        files = service.changed_files(repo_path)
+
+        assert "new.py" in files
+
+    def test_no_changes_returns_empty(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+
+        service = GitService(settings)
+        files = service.changed_files(repo_path)
+
+        assert files == []
+
+
+# ---------------------------------------------------------------------------
+# ensure_branch
+# ---------------------------------------------------------------------------
+
+class TestEnsureBranch:
+    def test_creates_new_branch(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+
+        service = GitService(settings)
+        service.ensure_branch(repo_path, "feature-x")
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo_path, check=True, capture_output=True, text=True,
+        )
+        assert result.stdout.strip() == "feature-x"
+
+    def test_no_op_if_already_on_branch(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+
+        service = GitService(settings)
+        # Already on main, so this should be a no-op
+        service.ensure_branch(repo_path, "main")
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo_path, check=True, capture_output=True, text=True,
+        )
+        assert result.stdout.strip() == "main"
+
+    def test_errors_on_existing_branch(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+
+        # Create a branch and switch back
+        subprocess.run(
+            ["git", "switch", "-c", "existing"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "switch", "main"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+
+        service = GitService(settings)
+
+        with pytest.raises(AppError) as exc_info:
+            service.ensure_branch(repo_path, "existing")
+        assert exc_info.value.code == ErrorCode.INVALID_REQUEST
+        assert "already exists" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# repo_root_for_subpath and current_branch
+# ---------------------------------------------------------------------------
+
+class TestRepoHelpers:
+    def test_repo_root_for_subpath(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+        subdir = repo_path / "sub"
+        subdir.mkdir()
+        (subdir / "file.py").write_text("x = 1\n")
+
+        service = GitService(settings)
+        root = service.repo_root_for_subpath("myrepo/sub")
+
+        assert root == repo_path.resolve()
+
+    def test_current_branch(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+
+        service = GitService(settings)
+        branch = service.current_branch(repo_path)
+
+        assert branch == "main"
+
+    def test_commit_all(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        repo_path = settings.projects_root / "myrepo"
+        _init_git_repo(repo_path)
+        (repo_path / "new.py").write_text("x = 1\n")
+
+        service = GitService(settings)
+        sha = service.commit_all(repo_path, "add new file")
+
+        assert len(sha) == 40  # full SHA
+
+        log = subprocess.run(
+            ["git", "log", "--oneline", "-1"],
+            cwd=repo_path, check=True, capture_output=True, text=True,
+        )
+        assert "add new file" in log.stdout

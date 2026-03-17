@@ -1,0 +1,64 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+bootcmd:
+  - mkdir -p /opt/deathstar
+
+write_files:
+  - path: /opt/deathstar/prepare-workspace-volume.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      ${indent(6, prepare_workspace_volume)}
+  - path: /opt/deathstar/render-runtime-env.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      ${indent(6, render_runtime_env)}
+  - path: /opt/deathstar/install-tailscale.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      ${indent(6, install_tailscale)}
+  - path: /opt/deathstar/configure-tailscale.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      ${indent(6, configure_tailscale)}
+  - path: /opt/deathstar/sync-runtime.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      ${indent(6, sync_runtime)}
+  - path: /opt/deathstar/start-runtime.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      ${indent(6, start_runtime)}
+  - path: /opt/deathstar/stop-runtime.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      ${indent(6, stop_runtime)}
+  - path: /etc/systemd/system/deathstar-runtime.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      ${indent(6, service_unit)}
+
+runcmd:
+  - [bash, -lc, "dnf install -y docker jq unzip awscli curl openssh-clients || yum install -y docker jq unzip awscli curl openssh-clients"]
+  - [bash, -lc, "mkdir -p /usr/local/lib/docker/cli-plugins && curl -SL https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose"]
+  - [bash, -lc, "curl -SL https://github.com/docker/buildx/releases/download/v0.21.2/buildx-v0.21.2.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx"]
+  - [bash, -lc, "dnf install -y 'dnf-command(config-manager)' && dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo && dnf install -y gh || true"]
+  - [bash, -lc, "systemctl enable --now docker"]
+  - [bash, -lc, "/opt/deathstar/prepare-workspace-volume.sh"]
+  - [bash, -lc, "/opt/deathstar/install-tailscale.sh"]
+  - [bash, -lc, "/opt/deathstar/configure-tailscale.sh"]
+  - [bash, -lc, "/opt/deathstar/render-runtime-env.sh"]
+  - [bash, -lc, "/opt/deathstar/sync-runtime.sh"]
+  - [bash, -lc, "systemctl daemon-reload"]
+  - [bash, -lc, "systemctl enable --now deathstar-runtime.service"]
+
+final_message: "DeathStar bootstrap complete."

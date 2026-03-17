@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ "${enable_tailscale}" != "true" ]]; then
+  exit 0
+fi
+
+if command -v tailscale >/dev/null 2>&1 && systemctl list-unit-files tailscaled.service >/dev/null 2>&1; then
+  systemctl enable --now tailscaled
+  exit 0
+fi
+
+curl -fsSL https://tailscale.com/install.sh -o /tmp/deathstar-install-tailscale.sh
+bash /tmp/deathstar-install-tailscale.sh
+systemctl enable --now tailscaled

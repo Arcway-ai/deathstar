@@ -1,0 +1,96 @@
+#!/bin/bash
+set -euo pipefail
+
+ENV_FILE="/opt/deathstar/runtime.env"
+GCP_CRED_FILE="/opt/deathstar/gcp-credentials.json"
+mkdir -p /opt/deathstar /workspace/deathstar/logs /workspace/deathstar/backups /workspace/projects
+umask 077
+: > "$ENV_FILE"
+
+append_parameter() {
+  local env_name="$1"
+  local parameter_name="$2"
+
+  if [[ -z "$parameter_name" ]]; then
+    return
+  fi
+
+  local value
+  value="$(aws ssm get-parameter \
+    --region "${aws_region}" \
+    --name "$parameter_name" \
+    --with-decryption \
+    --query 'Parameter.Value' \
+    --output text 2>/dev/null)" || true
+
+  if [[ -z "$value" || "$value" == "None" ]]; then
+    echo "WARN: parameter $parameter_name is empty or missing, skipping $env_name" >&2
+    return
+  fi
+
+  printf '%s=%s\n' "$env_name" "$value" >> "$ENV_FILE"
+}
+
+# Write a GCP credential JSON (SA key or WIF config) from SSM to a file.
+# Sets GOOGLE_APPLICATION_CREDENTIALS so google-auth picks it up automatically.
+write_gcp_credential() {
+  local parameter_name="$1"
+
+  if [[ -z "$parameter_name" ]]; then
+    return
+  fi
+
+  local value
+  value="$(aws ssm get-parameter \
+    --region "${aws_region}" \
+    --name "$parameter_name" \
+    --with-decryption \
+    --query 'Parameter.Value' \
+    --output text 2>/dev/null)" || true
+
+  if [[ -z "$value" || "$value" == "None" ]]; then
+    echo "WARN: parameter $parameter_name is empty or missing, skipping GCP credentials" >&2
+    return
+  fi
+
+  printf '%s' "$value" > "$GCP_CRED_FILE"
+  chmod 600 "$GCP_CRED_FILE"
+  printf 'GOOGLE_APPLICATION_CREDENTIALS=%s\n' "$GCP_CRED_FILE" >> "$ENV_FILE"
+}
+
+cat > "$ENV_FILE" <<EOF
+DEATHSTAR_WORKSPACE_ROOT=/workspace
+DEATHSTAR_PROJECTS_ROOT=/workspace/projects
+DEATHSTAR_LOG_PATH=/workspace/deathstar/logs/control-api.log
+DEATHSTAR_BACKUP_DIRECTORY=/workspace/deathstar/backups
+DEATHSTAR_BACKUP_BUCKET=${backup_bucket_name}
+DEATHSTAR_BACKUP_S3_PREFIX=workspace-backups
+DEATHSTAR_AWS_REGION=${aws_region}
+DEATHSTAR_LOG_LEVEL=${log_level}
+DEATHSTAR_DEFAULT_OPENAI_MODEL=${default_openai_model}
+DEATHSTAR_DEFAULT_ANTHROPIC_MODEL=${default_anthropic_model}
+DEATHSTAR_DEFAULT_GOOGLE_MODEL=${default_google_model}
+DEATHSTAR_DEFAULT_VERTEX_MODEL=${default_vertex_model}
+DEATHSTAR_VERTEX_PROJECT_ID=${vertex_project_id}
+DEATHSTAR_VERTEX_LOCATION=${vertex_location}
+DEATHSTAR_GIT_AUTHOR_NAME=${git_author_name}
+DEATHSTAR_GIT_AUTHOR_EMAIL=${git_author_email}
+DEATHSTAR_TAILSCALE_ENABLED=${enable_tailscale}
+DEATHSTAR_TAILSCALE_HOSTNAME=${tailscale_hostname}
+DEATHSTAR_SSH_USER=${ssh_user}
+DEATHSTAR_ENABLE_WEB_UI=${enable_web_ui}
+EOF
+
+append_parameter "DEATHSTAR_API_TOKEN" "${api_token_parameter_name}"
+append_parameter "OPENAI_API_KEY" "${openai_api_key_parameter_name}"
+append_parameter "ANTHROPIC_API_KEY" "${anthropic_api_key_parameter_name}"
+append_parameter "GOOGLE_API_KEY" "${google_api_key_parameter_name}"
+write_gcp_credential "${vertex_sa_key_parameter_name}"
+append_parameter "GITHUB_TOKEN" "${github_token_parameter_name}"
+
+# Configure gh CLI and git HTTPS credentials for ec2-user
+GH_TOKEN=$(grep '^GITHUB_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
+if [[ -n "$GH_TOKEN" ]] && command -v gh >/dev/null 2>&1; then
+  printf '%s' "$GH_TOKEN" | sudo -u ec2-user gh auth login --with-token 2>/dev/null || true
+  sudo -u ec2-user gh auth setup-git 2>/dev/null || true
+fi

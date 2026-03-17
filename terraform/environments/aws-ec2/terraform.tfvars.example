@@ -1,0 +1,17 @@
+aws_region        = "us-west-1"
+project_name      = "deathstar"
+instance_type     = "t3.large"
+data_volume_size_gb = 200
+
+openai_api_key_parameter_name    = "/deathstar/providers/openai/api_key"
+anthropic_api_key_parameter_name = "/deathstar/providers/anthropic/api_key"
+google_api_key_parameter_name    = "/deathstar/providers/google/api_key"
+github_token_parameter_name      = "/deathstar/integrations/github/token"
+enable_tailscale                 = true
+enable_tailscale_ssh             = true
+tailscale_auth_key_parameter_name = "/deathstar/integrations/tailscale/auth_key"
+tailscale_hostname               = "deathstar"
+tailscale_advertise_tags         = []
+
+create_backup_bucket = false
+backup_bucket_name   = ""

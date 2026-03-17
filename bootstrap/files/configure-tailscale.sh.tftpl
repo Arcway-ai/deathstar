@@ -1,0 +1,47 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ "${enable_tailscale}" != "true" ]]; then
+  exit 0
+fi
+
+if [[ -z "${tailscale_auth_key_parameter_name}" ]]; then
+  echo "tailscale is enabled but no auth key parameter name was configured" >&2
+  exit 1
+fi
+
+for _ in $(seq 1 30); do
+  if systemctl is-active --quiet tailscaled; then
+    break
+  fi
+  sleep 2
+done
+
+TS_AUTH_KEY="$(aws ssm get-parameter \
+  --region "${aws_region}" \
+  --name "${tailscale_auth_key_parameter_name}" \
+  --with-decryption \
+  --query 'Parameter.Value' \
+  --output text)"
+
+TAILSCALE_FLAGS=(
+  "--auth-key=$${TS_AUTH_KEY}"
+  "--hostname=${tailscale_hostname}"
+  "--reset"
+)
+
+if [[ "${enable_tailscale_ssh}" == "true" ]]; then
+  TAILSCALE_FLAGS+=("--ssh")
+fi
+
+if [[ -n "${tailscale_advertise_tags}" ]]; then
+  TAILSCALE_FLAGS+=("--advertise-tags=${tailscale_advertise_tags}")
+fi
+
+tailscale up "$${TAILSCALE_FLAGS[@]}"
+
+mkdir -p /opt/deathstar
+cat > /opt/deathstar/tailscale.env <<EOF
+DEATHSTAR_TAILSCALE_IP=$(tailscale ip -4 | head -n 1)
+DEATHSTAR_TAILSCALE_HOSTNAME=${tailscale_hostname}
+EOF

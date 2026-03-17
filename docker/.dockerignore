@@ -1,0 +1,8 @@
+.env
+.git
+.terraform
+.venv
+bootstrap
+docs
+scripts
+terraform

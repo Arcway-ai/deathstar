@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+
+mkdir -p /opt/deathstar/repo
+
+aws s3 sync \
+  "s3://${artifact_bucket_name}/runtime/${runtime_revision}/" \
+  /opt/deathstar/repo \
+  --delete \
+  --region "${aws_region}"
