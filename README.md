@@ -61,89 +61,6 @@ That keeps the attack surface small while preserving a consistent interface acro
 
 The main tradeoff in v1 is outbound internet access: the instance needs egress for package installs, container pulls, provider APIs, GitHub, and AWS APIs. The default security group keeps outbound open to stay reproducible; tighter egress control is documented as a hardening step.
 
-## Repo Layout
-
-```text
-deathstar/
-  cli/                         Local operator CLI
-  server/                      Remote control API and workflow engine
-  shared/                      Shared request/response and error models
-  terraform/
-    environments/aws-ec2/      Root Terraform entrypoint
-    modules/                   Network, IAM, storage, SG, instance modules
-  bootstrap/                   cloud-init and host bootstrap templates
-  docker/                      Compose and image build definitions
-  scripts/                     Helper scripts for secrets and local install
-  tests/                       Pytest test suite
-  docs/                        Architecture, security, CLI, ops, provider docs
-  .env.example                 Repo-local CLI/Terraform defaults
-  pyproject.toml               Python package metadata
-  README.md
-  LICENSE
-```
-
-## Terraform Layout
-
-```text
-terraform/
-  environments/
-    aws-ec2/
-      main.tf
-      variables.tf
-      outputs.tf
-      versions.tf
-      terraform.tfvars.example
-  modules/
-    network/
-    security/
-    iam/
-    storage/
-    instance/
-```
-
-## Remote Runtime Layout
-
-```text
-server/deathstar_server/
-  app.py
-  config.py
-  routes.py
-  logging.py
-  providers/
-    base.py
-    registry.py
-    openai.py
-    anthropic.py
-    google.py
-    vertex.py
-  services/
-    backup.py
-    gitops.py
-    github.py
-    workflow.py
-  web/
-    routes.py
-    conversations.py
-    static/
-      index.html
-      css/app.css
-      js/api.js
-      js/app.js
-```
-
-## CLI Layout
-
-```text
-cli/deathstar_cli/
-  main.py
-  config.py
-  terraform.py
-  secrets.py
-  ssm.py
-  remote.py
-  output.py
-```
-
 ## Quick Start
 
 ### 1. Prerequisites
@@ -538,6 +455,36 @@ deathstar deploy --region us-west-1
 deathstar destroy --region us-west-1
 ```
 
+### Upgrade
+
+`deathstar upgrade` handles the full upgrade lifecycle in one command:
+
+```bash
+deathstar upgrade
+```
+
+What it does:
+
+1. **Checks** for uncommitted local changes (warns if dirty)
+2. **Pulls** latest code with `git pull --ff-only`
+3. **Reinstalls** the local CLI package (auto-detects `uv` or falls back to `pip`)
+4. **Compares** local version vs remote instance version
+5. **Backs up** the remote workspace (unless `--skip-backup`)
+6. **Redeploys** via `terraform init` + `terraform apply`
+
+```bash
+# Auto-approve everything (no prompts)
+deathstar upgrade --yes
+
+# Skip the pre-upgrade backup
+deathstar upgrade --skip-backup
+
+# Force SSM transport for version check and backup
+deathstar upgrade --transport ssm
+```
+
+Version tracking uses `VERSION+git-sha` (e.g., `0.2.0+abc1234`). The `/v1/health` endpoint returns this, and the upgrade command compares it to detect when local and remote are out of sync. If they already match, it asks before redeploying.
+
 ### Total Teardown (trench-run)
 
 When you want to wipe everything — infrastructure, SSM secrets, Terraform state, and local state files — use the trench run. There is no `--yes` flag; you must type the project name to confirm.
@@ -648,7 +595,9 @@ deathstar run --provider openai --prompt "summarize this repo" --output json
 
 ## Web UI (Phone & Browser Access)
 
-DeathStar includes an optional mobile-friendly web UI served from the same FastAPI control API on port 8080. It provides a conversational chat interface for running AI workflows from any device — including phones — over Tailscale.
+DeathStar includes an optional React-based web UI served from the same FastAPI control API on port 8080. It provides a conversational chat interface with personas, repo context awareness, and a memory bank — accessible from any device over Tailscale.
+
+The frontend is built with React 19, TypeScript, Vite 6, Tailwind v4, and Zustand. It's compiled during the Docker multi-stage build (Node.js stage), so there's no separate build step for operators.
 
 ### Enabling the Web UI
 
@@ -663,28 +612,52 @@ The web UI uses the same bearer token authentication as the REST API. Enter your
 
 ### Features
 
-- **Repo picker** — select from repos in `/workspace/projects` with branch and dirty state
+- **Repo picker** — select from local repos or browse and clone from GitHub
+- **Personas** — 6 expert personas (Frontend, Full-stack, Security, DevOps, Data, Architect) with specialized system prompts that shape LLM behavior for each workflow
+- **Repo context** — CLAUDE.md, current branch, recent commits, and file tree are automatically injected into LLM prompts when a repo is selected
+- **Memory bank** — thumbs-up a response to save it as persistent context. Approved memories are automatically injected into future prompts (capped at ~4K chars to manage token budget)
+- **Branch guard** — warns when running Patch or PR workflows on `main`/`master` and prompts to confirm
 - **Conversational chat** — multi-turn conversations with AI, scoped to a repo
-- **Workflow modes** — Chat (prompt), Patch, and Review via pill buttons
-- **Markdown rendering** — full markdown with syntax-highlighted code blocks, diff coloring, and copy buttons
+- **Workflow modes** — Chat, Patch, Review, and PR via pill buttons
+- **File browser** — browse the repo file tree and view files with line numbers
+- **Markdown rendering** — full markdown with syntax-highlighted code blocks and copy buttons
 - **Conversation persistence** — conversations are stored server-side and survive page reloads and device switches
 - **Provider selection** — choose between configured providers or let the server pick the first available
-- **Dark terminal aesthetic** — mobile-first design with touch-friendly controls
+- **Dark theme** — "Imperial Command Center" aesthetic, mobile-first with touch-friendly controls
 
 ### API Endpoints
 
-All web API endpoints live under `/web/api/` and require the same bearer token as `/v1/*`. Static files (`/`, `/static/*`) are served without auth.
+All web API endpoints live under `/web/api/` and require the same bearer token as `/v1/*`. Static files (`/`, `/assets/*`) are served without auth.
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/web/api/repos` | List repos with branch and dirty state |
 | GET | `/web/api/repos/{name}/tree` | File list for a repo |
 | GET | `/web/api/repos/{name}/file?path=...` | Read a file |
+| GET | `/web/api/repos/{name}/context` | Repo context (CLAUDE.md, branch, commits, tree) |
+| POST | `/web/api/repos/{name}/branch` | Create a branch (rejects `main`/`master`) |
+| GET | `/web/api/github/repos` | List GitHub repos for the authenticated user |
+| POST | `/web/api/github/clone` | Clone a GitHub repo to the instance |
 | POST | `/web/api/chat` | Send a message (wraps workflow execution) |
 | GET | `/web/api/conversations?repo=...` | List conversations |
 | GET | `/web/api/conversations/{id}` | Full conversation detail |
 | DELETE | `/web/api/conversations/{id}` | Delete a conversation |
 | GET | `/web/api/providers` | Available providers and status |
+| GET | `/web/api/memory?repo=...` | List memory bank entries |
+| POST | `/web/api/memory` | Save a memory (thumbs-up) |
+| DELETE | `/web/api/memory/{id}` | Delete a memory |
+
+### Frontend Development
+
+To work on the frontend locally:
+
+```bash
+cd web
+npm install
+npm run dev     # Starts Vite dev server on :5173, proxies API to :8080
+```
+
+The Vite dev server proxies `/web/api/*` and `/v1/*` to `localhost:8080`, so you need the FastAPI backend running locally or port-forwarded.
 
 ### Phone Usage
 
