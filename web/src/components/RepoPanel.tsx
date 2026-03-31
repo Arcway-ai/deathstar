@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   FolderTree,
@@ -13,6 +13,7 @@ import {
   Check,
   Save,
   ChevronDown,
+  Search,
 } from "lucide-react";
 import { useStore } from "../store";
 import { buildTree } from "../fileTree";
@@ -173,8 +174,11 @@ function FileTreePanel() {
   const selectedRepo = useStore((s) => s.selectedRepo);
   const fileTree = useStore((s) => s.fileTree);
   const fileContent = useStore((s) => s.fileContent);
+  const openFile = useStore((s) => s.openFile);
   const loadFileTree = useStore((s) => s.loadFileTree);
   const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (selectedRepo && fileTree.length === 0) {
@@ -182,6 +186,28 @@ function FileTreePanel() {
       loadFileTree(selectedRepo).finally(() => setLoading(false));
     }
   }, [selectedRepo, fileTree.length, loadFileTree]);
+
+  // Cmd+P / Ctrl+P to focus search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // Fuzzy-ish search: split query into terms, all must match the path
+  const filtered = useMemo(() => {
+    if (!query.trim()) return null;
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    return fileTree.filter((path) => {
+      const lower = path.toLowerCase();
+      return terms.every((t) => lower.includes(t));
+    });
+  }, [query, fileTree]);
 
   if (!selectedRepo) {
     return (
@@ -219,33 +245,111 @@ function FileTreePanel() {
 
   return (
     <div>
-      <div className="flex items-center justify-between px-1 pb-1.5">
-        <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">
-          {selectedRepo}
-        </span>
-        <button
-          onClick={() => {
-            setLoading(true);
-            loadFileTree(selectedRepo).finally(() => setLoading(false));
+      {/* Search input */}
+      <div className="relative mb-2">
+        <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+        <input
+          ref={searchRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") { setQuery(""); searchRef.current?.blur(); }
+            // Enter opens first result
+            if (e.key === "Enter" && filtered && filtered.length > 0 && filtered[0]) {
+              openFile(selectedRepo, filtered[0]);
+              setQuery("");
+            }
           }}
-          className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors"
-          title="Refresh"
-        >
-          <RefreshCw size={10} />
-        </button>
+          placeholder="Search files…  ⌘P"
+          className="w-full rounded-md border border-border-subtle bg-bg-primary py-1.5 pl-7 pr-2 text-[11px] text-text-primary placeholder:text-text-muted/60 focus:border-accent focus:outline-none transition-colors"
+        />
+        {query && (
+          <button
+            onClick={() => setQuery("")}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-text-muted hover:text-text-secondary"
+          >
+            <X size={10} />
+          </button>
+        )}
       </div>
 
-      <div className="space-y-px">
-        {tree.map((node) => (
-          <TreeNodeRow
-            key={node.path}
-            node={node}
-            depth={0}
-            activePath={activePath}
-            repo={selectedRepo}
-          />
-        ))}
-      </div>
+      {/* Search results (flat list) */}
+      {filtered !== null ? (
+        <div>
+          <div className="flex items-center justify-between px-1 pb-1">
+            <span className="text-[10px] text-text-muted">
+              {filtered.length} result{filtered.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          {filtered.length === 0 ? (
+            <p className="px-2 py-4 text-center text-[11px] text-text-muted">
+              No files match &ldquo;{query}&rdquo;
+            </p>
+          ) : (
+            <div className="space-y-px">
+              {filtered.slice(0, 50).map((path) => {
+                const fileName = path.split("/").pop() ?? path;
+                const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+                const isActive = activePath === path;
+                return (
+                  <button
+                    key={path}
+                    onClick={() => { openFile(selectedRepo, path); setQuery(""); }}
+                    className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[11px] transition-colors ${
+                      isActive
+                        ? "bg-accent-muted text-accent"
+                        : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                    }`}
+                  >
+                    <FileText size={11} className={`shrink-0 ${isActive ? "text-accent" : "text-text-muted"}`} />
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium">{fileName}</span>
+                      {dir && <span className="ml-1.5 text-text-muted">{dir}</span>}
+                    </span>
+                  </button>
+                );
+              })}
+              {filtered.length > 50 && (
+                <p className="px-2 py-1 text-[10px] text-text-muted">
+                  +{filtered.length - 50} more…
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        /* Normal tree view */
+        <div>
+          <div className="flex items-center justify-between px-1 pb-1.5">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">
+              {selectedRepo}
+            </span>
+            <button
+              onClick={() => {
+                setLoading(true);
+                loadFileTree(selectedRepo).finally(() => setLoading(false));
+              }}
+              className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw size={10} />
+            </button>
+          </div>
+
+          <div className="space-y-px">
+            {tree.map((node) => (
+              <TreeNodeRow
+                key={node.path}
+                node={node}
+                depth={0}
+                activePath={activePath}
+                repo={selectedRepo}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

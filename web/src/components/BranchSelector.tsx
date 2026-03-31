@@ -16,6 +16,7 @@ export default function BranchSelector() {
 
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [inlineCreate, setInlineCreate] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
   const [switching, setSwitching] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -23,6 +24,7 @@ export default function BranchSelector() {
   const [error, setError] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const inlineInputRef = useRef<HTMLInputElement>(null);
 
   const currentRepo = repos.find((r) => r.name === selectedRepo);
   const currentBranch = repoContext?.branch ?? currentRepo?.branch ?? "unknown";
@@ -34,21 +36,28 @@ export default function BranchSelector() {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setOpen(false);
         setCreating(false);
+        setInlineCreate(false);
         setError(null);
       }
     }
-    if (open) document.addEventListener("mousedown", handleClick);
+    if (open || inlineCreate) document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
+  }, [open, inlineCreate]);
 
   // Focus input when creating
   useEffect(() => {
     if (creating) inputRef.current?.focus();
   }, [creating]);
 
+  // Focus inline input
+  useEffect(() => {
+    if (inlineCreate) inlineInputRef.current?.focus();
+  }, [inlineCreate]);
+
   const handleOpen = () => {
     setOpen(!open);
     setCreating(false);
+    setInlineCreate(false);
     setError(null);
     if (!open) loadBranches();
   };
@@ -76,6 +85,7 @@ export default function BranchSelector() {
       await createAndSwitchBranch(name);
       setNewBranchName("");
       setCreating(false);
+      setInlineCreate(false);
       setOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create branch");
@@ -122,29 +132,73 @@ export default function BranchSelector() {
   if (!currentRepo) return null;
 
   return (
-    <div className="relative flex items-center gap-1" ref={dropdownRef}>
-      <button
-        onClick={handleOpen}
-        className="flex items-center gap-1.5 rounded-md bg-bg-surface px-2 py-1 text-xs hover:bg-bg-hover transition-colors"
-        title="Switch branch"
-      >
-        <GitBranch size={12} className="text-text-muted" />
-        <span className="font-mono text-text-secondary max-w-[100px] truncate">
-          {currentBranch}
-        </span>
-        {isDirty && (
-          <span className="h-1.5 w-1.5 rounded-full bg-warning" title="Uncommitted changes" />
-        )}
-      </button>
-      {onDefaultBranch && !isDirty && (
+    <div className="relative" ref={dropdownRef}>
+      <div className="flex items-center gap-1">
         <button
-          onClick={handleSync}
-          disabled={syncing}
-          className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-text-muted hover:text-accent hover:bg-bg-hover transition-colors disabled:opacity-50"
-          title="Pull latest from origin"
+          onClick={handleOpen}
+          className="flex items-center gap-1.5 rounded-md bg-bg-surface px-2 py-1 text-xs hover:bg-bg-hover transition-colors"
+          title="Switch branch"
         >
-          <RefreshCw size={10} className={syncing ? "animate-spin" : ""} />
+          <GitBranch size={12} className="text-text-muted" />
+          <span className="font-mono text-text-secondary max-w-[100px] truncate">
+            {currentBranch}
+          </span>
+          {isDirty && (
+            <span className="h-1.5 w-1.5 rounded-full bg-warning" title="Uncommitted changes" />
+          )}
         </button>
+        <button
+          onClick={() => { setInlineCreate(!inlineCreate); setError(null); setNewBranchName(""); }}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:text-accent hover:bg-bg-hover transition-colors"
+          title="New branch"
+        >
+          <Plus size={12} />
+        </button>
+        {onDefaultBranch && !isDirty && (
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-text-muted hover:text-accent hover:bg-bg-hover transition-colors disabled:opacity-50"
+            title="Pull latest from origin"
+          >
+            <RefreshCw size={10} className={syncing ? "animate-spin" : ""} />
+          </button>
+        )}
+      </div>
+
+      {/* Inline new-branch input (no dropdown needed) */}
+      {inlineCreate && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-border-subtle bg-bg-surface p-2 shadow-xl animate-fade-in">
+          <div className="flex gap-1.5">
+            <input
+              ref={inlineInputRef}
+              type="text"
+              value={newBranchName}
+              onChange={(e) => setNewBranchName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreate();
+                if (e.key === "Escape") { setInlineCreate(false); setNewBranchName(""); }
+              }}
+              placeholder="new-branch-name"
+              className="flex-1 rounded-md border border-border-subtle bg-bg-primary px-2 py-1 text-xs font-mono text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
+            />
+            <button
+              onClick={handleCreate}
+              disabled={!newBranchName.trim() || switching !== null}
+              className="rounded-md bg-accent px-2 py-1 text-xs font-medium text-white hover:bg-accent/90 disabled:opacity-40 transition-colors"
+            >
+              {switching === newBranchName.trim() ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                "Create"
+              )}
+            </button>
+          </div>
+          <p className="mt-1 text-[10px] text-text-muted">
+            Branch from <span className="font-mono">{currentBranch}</span>
+          </p>
+          {error && <p className="mt-1 text-[10px] text-red-400">{error}</p>}
+        </div>
       )}
 
       {open && (
