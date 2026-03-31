@@ -2,136 +2,143 @@
 
 ## Goals
 
-DeathStar is built around one idea: the local CLI is the stable operator surface, while the remote EC2 instance is the place where provider execution, secrets, git state, and workspace automation live.
+DeathStar is a Terraform-built remote AI coding workstation on AWS. The web UI is the primary interface for interactive development, while the local CLI manages infrastructure, secrets, and deployments. The remote EC2 instance runs the Claude Agent SDK, manages git state, and hosts all workspace automation.
 
 ## High-Level Components
 
+### Web UI
+
+The React + Vite frontend is the primary development interface:
+
+- Multi-workflow agent sessions (Chat, Code, PR, Review, Docs, Audit, Plan)
+- Real-time streaming via WebSocket with tool-use progress
+- Repo selection, branch management, and PR integration
+- Syntax-highlighted file viewer and inline terminal (xterm.js over WebSocket PTY)
+- Persona system (Frontend, Full-stack, Security, DevOps, Data, Architect)
+- Structured output panels for reviews and plans
+- Memory bank for persistent context across conversations
+- Feedback tracking (thumbs up/down) per message
+
 ### Local CLI
 
-The local `deathstar` CLI is the primary interface for:
+The `deathstar` CLI handles:
 
 - Terraform-driven deploy and destroy
+- Blue/green code-only redeploy (no instance replacement)
+- One-command upgrade (pull + reinstall + backup + redeploy)
 - Tailscale-backed connect
-- remote workflow execution
-- status, logs, backup, and restore
+- Secrets management via SSM Parameter Store
+- GitHub and Tailscale auth setup
+- Remote repo management
+- Backup and restore
+
+### Claude Agent SDK
+
+The web UI chat pipeline is powered by the Claude Agent SDK:
+
+- Each workflow mode maps to different tool permissions and `ClaudeAgentOptions`
+- Per-workflow `max_turns` (Chat: 30, Code: unlimited, PR: unlimited, Review: 50, Docs: 50, Audit: 50, Plan: 30)
+- Plugin system for mode-specific behavior (security guidance, code review, PR review toolkit)
+- Session continuity via `session_id` for multi-turn conversations
+- Tool-use streaming translated to SSE events for the frontend
 
 ### Terraform
 
 Terraform provisions:
 
-- a dedicated VPC
-- a public subnet with no inbound exposure by default
-- an EC2 instance profile with SSM and least-privilege secret access
-- an encrypted workspace EBS volume
-- an artifact bucket for syncing the runtime bundle
-- an optional backup bucket
+- A dedicated VPC with public subnet
+- An EC2 instance profile with SSM and least-privilege secret access
+- Encrypted root and workspace EBS volumes
+- An artifact bucket for syncing the runtime bundle
+- An optional backup bucket
 
 ### Remote Host Bootstrap
 
 cloud-init on the instance:
 
-- installs Docker
-- formats and mounts the workspace volume at `/workspace`
-- renders runtime environment from Parameter Store
-- syncs the runtime bundle from S3
-- starts the Docker Compose service
+- Installs Docker (including buildx and compose plugin for AL2023)
+- Formats and mounts the workspace volume at `/workspace`
+- Renders runtime environment from Parameter Store
+- Syncs the runtime bundle from S3
+- Starts the Docker Compose service
 
 ### Remote Control API
 
-The control API:
+The FastAPI control API:
 
-- is reached through Tailscale by default
-- uses SSM only as a fallback path
-- normalizes provider calls across OpenAI, Anthropic, and Google
-- manages backup and restore
-- executes patch, PR, and review workflows against remote git repos
+- Serves the built React frontend as static files
+- Runs Claude Agent SDK sessions via WebSocket
+- Manages conversations, memory bank, and feedback in SQLite
+- Provides REST endpoints for repo management, branch operations, and file viewing
+- Provides a WebSocket PTY terminal
+- Is reached through Tailscale by default (SSM as break-glass fallback)
+- Uses optional bearer token auth (`DEATHSTAR_API_TOKEN`)
 
 ## Data Flow
 
 ### Deploy
 
-1. Local CLI loads repo-local config.
+1. Local CLI loads repo-local config from `.env`.
 2. CLI runs Terraform in `terraform/environments/aws-ec2`.
-3. Terraform uploads runtime files from the repo into the artifact bucket.
+3. Terraform uploads runtime files into the artifact bucket.
 4. Terraform launches the EC2 instance with cloud-init.
-5. The instance syncs the runtime files and starts the control API.
+5. The instance syncs runtime files and starts the control API.
 
-### Run Workflow
+### Redeploy (Code-Only)
 
-1. CLI reads Terraform outputs to find the instance.
-2. CLI resolves the DeathStar node on the tailnet and calls the control API directly over Tailscale.
-3. CLI sends a normalized workflow request.
-4. The server builds provider-specific requests behind a common adapter interface.
-5. The server returns a normalized response envelope.
+1. CLI packages the current repo into S3.
+2. CLI triggers the remote host to pull the new bundle.
+3. Docker rebuilds with the new code (multi-stage: Node.js frontend + Python backend).
+4. Blue/green container swap for zero-downtime updates.
 
-### Patch Workflow
+### Web UI Chat
 
-1. The user points `--workspace-subpath` at a repo or subdirectory under `/workspace/projects`.
-2. The server builds scoped file context.
-3. The chosen provider returns a unified diff.
-4. DeathStar optionally applies the diff with `git apply`.
+1. User selects a repo and workflow mode in the frontend.
+2. Frontend opens a WebSocket connection to `/web/api/agent`.
+3. Repo context (CLAUDE.md, branch, recent commits, file tree) is injected into the system prompt.
+4. The server runs a Claude Agent SDK session with mode-appropriate tool permissions.
+5. Tool-use events and text deltas stream back to the frontend as SSE-style WebSocket messages.
+6. Conversation history is persisted in SQLite for continuity.
 
-### PR Workflow
+### Legacy CLI Workflows
 
-1. The server builds a clean diff snapshot.
-2. A separate provider call drafts title, body, and summary.
-3. If requested, DeathStar creates a branch, commits changes, pushes it, and opens a GitHub PR.
-
-### Review Workflow
-
-1. The server builds a diff snapshot.
-2. A separate provider call gets only the review prompt and the diff context.
-3. The review result comes back as its own independent response.
-
-That separate-call design is how DeathStar gives the PR writer and reviewer their own fresh context instead of reusing the implementation exchange.
+The CLI `deathstar run` command still supports prompt, patch, PR, and review workflows via the multi-provider layer (OpenAI, Anthropic, Google). These are separate from the web UI's Agent SDK pipeline.
 
 ## Runtime Layout
 
 ### Host Paths
 
-- `/opt/deathstar`
-  Runtime scripts, env files, and synced repo bundle
-- `/workspace/projects`
-  Persistent git repos and project files
-- `/workspace/deathstar/logs`
-  Persistent runtime logs
-- `/workspace/deathstar/backups`
-  Local workspace archives
+- `/opt/deathstar` — Runtime scripts, env files, and synced repo bundle
+- `/workspace/projects` — Persistent git repos and project files
+- `/workspace/deathstar/deathstar.db` — SQLite database (conversations, memory, feedback, usage)
+- `/workspace/deathstar/logs` — Persistent runtime logs
+- `/workspace/deathstar/backups` — Local workspace archives
 
 ### Container Service
 
-There is one container in v1:
+One container in v1: `control-api`
 
-- `control-api`
+It exposes port `8080` on the host and serves:
 
-It exposes:
+- Static frontend files at `/`
+- Web API at `/web/api/*` (bearer token required)
+- WebSocket agent at `/web/api/agent`
+- WebSocket terminal at `/web/api/terminal`
+- Health endpoint at `/v1/health` (public, returns VERSION+git-sha)
 
-- `8080` on the host
+### SQLite Persistence
 
-The security boundary for that API is:
+All state lives in a single SQLite database with WAL mode:
 
-- zero inbound security-group rules from the internet or VPC
-- private tailnet transport for operators
-- SSM as an explicit fallback path
+- Conversations and messages
+- Memory bank entries (per-repo persistent context from thumbs-up responses)
+- Feedback records (thumbs up/down per message)
+- Usage logs
 
 ## Terraform Module Responsibilities
 
-- `network`
-  Dedicated VPC, subnet, IGW, route table
-- `security`
-  No-ingress SG by default, optional future web UI ingress
-- `storage`
-  Runtime artifact bucket and optional backup bucket
-- `iam`
-  EC2 role, instance profile, Parameter Store and S3 permissions
-- `instance`
-  EC2 instance, encrypted root volume, encrypted workspace EBS volume
-
-## Why This Shape
-
-The architecture favors:
-
-- simple rebuilds
-- minimal exposed surface
-- clear boundaries between operator UX and provider execution
-- future extension into richer agent tooling without breaking the CLI contract
+- `network` — Dedicated VPC, subnet, IGW, route table
+- `security` — No-ingress SG by default, optional web UI ingress with explicit port and allowed CIDRs
+- `storage` — Runtime artifact bucket and optional backup bucket
+- `iam` — EC2 role, instance profile, Parameter Store and S3 permissions
+- `instance` — EC2 instance, encrypted root volume, encrypted workspace EBS volume

@@ -84,7 +84,19 @@ function BlockView({ block }: { block: AgentContentBlock }) {
 function TextBlockView({ text }: { text: string }) {
   return (
     <div className="prose max-w-none text-sm text-text-primary">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={{
+          a({ children, ...props }) {
+            return (
+              <a {...props} target="_blank" rel="noopener noreferrer">
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
         {text}
       </ReactMarkdown>
     </div>

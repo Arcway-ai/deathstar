@@ -2,41 +2,23 @@
 
 ## Philosophy
 
-The local CLI is the canonical interface to DeathStar.
+The local CLI manages infrastructure and deployment. The web UI is the primary interface for interactive AI workflows.
 
-- same command style across providers
-- same request envelope across workflows
-- remote runtime handles provider-specific differences
-- local machine orchestrates infrastructure and uses Tailscale as the default operator transport
+- CLI handles deploy, destroy, redeploy, upgrade, secrets, and remote administration
+- Web UI handles chat, code generation, PR drafting, reviews, and all interactive agent sessions
+- CLI retains legacy `run` command for scripted/headless workflows
+
+## Installation
+
+```bash
+uv tool install -e . --force
+```
 
 ## Commands
 
-### `deathstar secrets`
-
-Upload remote-only secrets into AWS SSM Parameter Store.
-
-Examples:
-
-```bash
-deathstar secrets bootstrap --region us-west-1
-deathstar secrets put --provider openai --region us-west-1
-deathstar secrets put --integration tailscale --region us-west-1
-printf %s "$OPENAI_API_KEY" | deathstar secrets put --provider openai --region us-west-1 --stdin
-```
-
-Default behavior:
-
-- `bootstrap` prompts for OpenAI, Anthropic, Google, and optionally Tailscale or GitHub
-- the prompt is hidden, so pasted keys are not echoed to the terminal
-- press Enter during `bootstrap` to skip a key you do not want to store yet
-- `put` targets one provider, integration, or explicit parameter name at a time
-- `--stdin` supports non-interactive automation without putting the value in shell history
-
 ### `deathstar deploy`
 
-Deploy or update the AWS stack.
-
-Example:
+Deploy or update the full AWS stack (Terraform apply).
 
 ```bash
 deathstar deploy --region us-west-1
@@ -44,141 +26,142 @@ deathstar deploy --region us-west-1
 
 ### `deathstar destroy`
 
-Destroy the AWS stack.
-
-Example:
+Tear down the AWS stack.
 
 ```bash
 deathstar destroy --region us-west-1
+```
+
+### `deathstar trench-run`
+
+Total teardown: infrastructure, secrets, and Terraform state. Requires typing the project name to confirm.
+
+```bash
+deathstar trench-run --region us-west-1
+```
+
+### `deathstar redeploy`
+
+Code-only push. Packages the repo to S3 and rebuilds Docker without replacing the EC2 instance. Uses blue/green container swap for zero-downtime updates.
+
+```bash
+deathstar redeploy
+```
+
+### `deathstar upgrade`
+
+Pull latest code, reinstall CLI, backup, and redeploy in one command.
+
+```bash
+deathstar upgrade
 ```
 
 ### `deathstar connect`
 
 Open an interactive shell on the instance.
 
-Example:
-
 ```bash
 deathstar connect
 deathstar connect --transport ssm
 ```
 
-Default behavior:
+Default transport is Tailscale SSH. Use `--transport ssm` as a break-glass fallback.
 
-- `auto` resolves to Tailscale SSH when the deployment has Tailscale enabled
-- `ssm` is the break-glass fallback
+### `deathstar secrets`
 
-### `deathstar run`
-
-The shared workflow command.
-
-Core options:
-
-- `--provider openai|anthropic|google`
-- `--workflow prompt|patch|pr|review`
-- `--workspace-subpath <path-under-/workspace/projects>`
-- `--prompt "..."` 
-- `--model <provider-model-override>`
-- `--transport auto|tailscale|ssm`
-- `--output text|json`
-
-Patch-specific:
-
-- `--write`
-
-PR-specific:
-
-- `--base-branch main`
-- `--head-branch deathstar/...`
-- `--open-pr`
-- `--draft-pr`
-
-Examples:
+Manage remote-only secrets in AWS SSM Parameter Store.
 
 ```bash
-deathstar run --provider openai --prompt "Explain the current repo"
+# Bootstrap all secrets (interactive, hidden input)
+deathstar secrets bootstrap --region us-west-1
+
+# Update a single secret
+deathstar secrets put --provider anthropic --region us-west-1
+deathstar secrets put --integration tailscale --region us-west-1
+deathstar secrets put --integration github --region us-west-1
+
+# Non-interactive automation
+printf %s "$ANTHROPIC_API_KEY" | deathstar secrets put --provider anthropic --region us-west-1 --stdin
+```
+
+### `deathstar github setup`
+
+Configure GitHub authentication on the remote instance. Supports gh CLI, PAT, or OAuth Device Flow.
+
+```bash
+deathstar github setup
+```
+
+### `deathstar tailscale setup`
+
+Create a Tailscale auth key via the API and store it in SSM.
+
+```bash
+deathstar tailscale setup
+```
+
+### `deathstar repos`
+
+Manage GitHub repos on the remote instance.
+
+```bash
+deathstar repos list
+deathstar repos clone owner/repo
+```
+
+### `deathstar status`
+
+Shows remote runtime health, version (VERSION+git-sha), and configuration.
+
+### `deathstar logs`
+
+Tails the remote control API log file.
+
+```bash
+deathstar logs --tail 200
+```
+
+### `deathstar backup`
+
+Archives `/workspace/projects` and optionally uploads to S3.
+
+```bash
+deathstar backup --label before-rebuild
+```
+
+### `deathstar restore`
+
+Restores the latest or specified backup archive.
+
+```bash
+deathstar restore
+deathstar restore --backup-id 20260311T120000Z-before-rebuild.tar.gz
+```
+
+### `deathstar run` (Legacy)
+
+Execute AI workflows from the CLI. Retains multi-provider support for scripted/headless use cases.
+
+```bash
+deathstar run --provider anthropic --prompt "Explain the service layout"
 
 deathstar run \
   --workflow patch \
   --provider anthropic \
   --workspace-subpath repos/api \
   --write \
-  --prompt "Add missing error handling to the auth path"
-
-deathstar run \
-  --workflow pr \
-  --provider google \
-  --workspace-subpath repos/api \
-  --base-branch main \
-  --open-pr \
-  --prompt "Draft the PR title and body for these changes"
-
-deathstar run \
-  --workflow review \
-  --provider openai \
-  --workspace-subpath repos/api \
-  --base-branch main \
-  --prompt "Review these changes for regressions and test gaps"
+  --prompt "Fix the panic in the request handler"
 ```
 
-### `deathstar status`
-
-Shows remote runtime health and configuration.
-
-### `deathstar logs`
-
-Tails the remote control API log file.
-
-### `deathstar backup`
-
-Archives `/workspace/projects`.
-
-### `deathstar restore`
-
-Restores the latest or specified backup archive.
-
-## Output Contract
-
-`run` uses one response envelope regardless of provider:
-
-- `request_id`
-- `workflow`
-- `status`
-- `provider`
-- `model`
-- `content`
-- `duration_ms`
-- `usage`
-- `error`
-- `artifacts`
-
-`artifacts` changes by workflow:
-
-- `patch`
-  includes the diff and, when applied, changed files and git status
-- `pr`
-  includes title, body, branch, commit SHA, changed files, and optional PR URL
-- `review`
-  includes branch metadata and changed files
-
-## JSON Mode
-
-Every read-style command supports `--output json`.
-
-That is useful for:
-
-- scripting
-- shell pipelines
-- CI automation
-- post-processing workflow artifacts
+Options: `--provider`, `--workflow`, `--workspace-subpath`, `--prompt`, `--model`, `--transport`, `--output`
 
 ## Transport Model
 
-- `deploy` and `destroy`
-  use Terraform and AWS APIs directly from the local machine
-- `run`, `status`, `logs`, `backup`, `restore`
-  use Tailscale by default when enabled on the deployment
-- `connect`
-  uses Tailscale SSH by default
-- `ssm`
-  is retained for recovery and debugging when the tailnet path is unavailable
+- `deploy` and `destroy` use Terraform and AWS APIs directly
+- `run`, `status`, `logs`, `backup`, `restore` use Tailscale by default
+- `connect` uses Tailscale SSH by default
+- `ssm` is retained for recovery when the tailnet path is unavailable
+
+## JSON Mode
+
+Read-style commands support `--output json` for scripting and CI automation.

@@ -218,6 +218,14 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeHighlight]}
             components={{
+              // Open links in a new tab
+              a({ children, ...props }) {
+                return (
+                  <a {...props} target="_blank" rel="noopener noreferrer">
+                    {children}
+                  </a>
+                );
+              },
               // Wrap code blocks with copy button
               pre({ children, ...props }) {
                 return (

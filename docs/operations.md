@@ -2,11 +2,11 @@
 
 ## Prerequisites
 
+- Python 3.11+ and [uv](https://docs.astral.sh/uv/)
 - Terraform 1.6+
 - AWS CLI v2
 - Tailscale on the local operator device
-- AWS Session Manager plugin for break-glass fallback
-- Python 3.11+
+- AWS Session Manager plugin (break-glass fallback)
 - AWS permissions for EC2, VPC, IAM, S3, and SSM
 
 ## Initial Setup
@@ -16,47 +16,54 @@
 Copy `.env.example` to `.env` and set:
 
 - AWS profile and region
-- instance sizing
+- Instance sizing
 - Parameter Store paths
-- optional backup bucket settings
+- Optional backup bucket settings
+- `DEATHSTAR_API_TOKEN` for web UI auth
 
 ### 2. Install The CLI
 
 ```bash
-./scripts/install-cli.sh
+uv tool install -e . --force
 ```
 
 ### 3. Seed Secrets
-
-Preferred path: use the local CLI so pasted values are hidden while you enter them.
 
 ```bash
 deathstar secrets bootstrap --region us-west-1
 ```
 
-The bootstrap flow hides pasted input, confirms each value, and lets you press Enter to skip items you do not want to store yet.
+The bootstrap flow hides pasted input, confirms each value, and lets you press Enter to skip items. At minimum you need:
+
+- **Anthropic API key** — required for the Claude Agent SDK (web UI)
+- **Tailscale auth key** — required when Tailscale is enabled (recommended default)
+- **GitHub token** — optional, needed for PR automation and repo cloning
 
 Targeted updates:
 
 ```bash
-deathstar secrets put --provider openai --region us-west-1
 deathstar secrets put --provider anthropic --region us-west-1
-deathstar secrets put --provider google --region us-west-1
 deathstar secrets put --integration tailscale --region us-west-1
 deathstar secrets put --integration github --region us-west-1
 ```
 
-Non-interactive automation:
+### 4. GitHub Auth (Optional)
+
+For remote GitHub access (repo cloning, PR automation):
 
 ```bash
-printf %s "$OPENAI_API_KEY" | deathstar secrets put --provider openai --region us-west-1 --stdin
+deathstar github setup
 ```
 
-The GitHub token is optional unless you want remote PR automation. The Tailscale auth key is required when Tailscale is enabled, which is the recommended default.
+Supports gh CLI, guided PAT entry, or OAuth Device Flow.
 
-The legacy `scripts/put-provider-secret.sh` helper still exists as a compatibility fallback. If you omit the secret value argument, it also prompts with hidden input.
+### 5. Tailscale Auth (Optional)
 
-If your tailnet uses restrictive access controls, make sure its network and SSH policy allows your operator device to reach the DeathStar host and log in as `ubuntu`.
+To create a Tailscale auth key via the API:
+
+```bash
+deathstar tailscale setup
+```
 
 ## Deploy
 
@@ -66,9 +73,46 @@ deathstar deploy --region us-west-1
 
 What happens:
 
-- Terraform provisions the network, S3, IAM, and EC2 resources
-- runtime files are uploaded into the artifact bucket
-- the instance boots, mounts the workspace volume, renders secrets, and starts the API
+- Terraform provisions network, S3, IAM, and EC2 resources
+- Runtime files are uploaded into the artifact bucket
+- The instance boots, mounts the workspace volume, renders secrets, and starts the API
+- Multi-stage Docker build: Node.js builds the React frontend, Python builds the backend
+
+## Access the Web UI
+
+After deployment, access the web UI over Tailscale:
+
+```
+http://<tailscale-hostname>:8080
+```
+
+The web UI provides:
+
+- Multi-workflow agent chat (Chat, Code, PR, Review, Docs, Audit, Plan)
+- Repo selection and branch management
+- File viewer with syntax highlighting
+- Integrated terminal (WebSocket PTY)
+- Model selection with speed/price metadata
+- Persona system for different development contexts
+- Memory bank for persistent context across conversations
+
+## Redeploy (Code-Only)
+
+Push code changes without replacing the EC2 instance:
+
+```bash
+deathstar redeploy
+```
+
+This packages the repo to S3, rebuilds Docker, and performs a blue/green container swap for zero-downtime updates.
+
+## Upgrade
+
+Pull latest code, reinstall CLI, backup, and redeploy in one step:
+
+```bash
+deathstar upgrade
+```
 
 ## Connect
 
@@ -77,81 +121,16 @@ deathstar connect
 deathstar connect --transport ssm
 ```
 
-Use the remote shell to:
+By default uses Tailscale SSH. Use `--transport ssm` as a fallback.
 
-- clone repos into `/workspace/projects`
-- inspect logs or container state directly if needed
-- perform manual repair work
-
-By default `deathstar connect` uses Tailscale SSH. Use `--transport ssm` only as a fallback.
-
-## Phone Access
-
-The current phone-access path is Tailscale plus SSH, not the full local CLI.
-
-Recommended flow:
-
-1. Install the Tailscale mobile app and join the same tailnet as the DeathStar instance.
-2. Open a mobile SSH client that can use the tailnet connection.
-3. Connect to `ubuntu@<tailscale-hostname>`.
-4. Work inside `/workspace/projects` or inspect the runtime directly.
-
-Useful commands from a phone session:
+## Clone Repos
 
 ```bash
-cd /workspace/projects
-git status
-docker ps
-docker logs --tail 200 deathstar-control-api
-ls /workspace/deathstar/backups
+deathstar repos list
+deathstar repos clone owner/repo
 ```
 
-Current limitation:
-
-- the project does not yet ship a phone-native client or mobile web workflow UI
-- the best mobile experience today is secure shell-based administration over Tailscale
-
-## Run Workflows
-
-### Prompt
-
-```bash
-deathstar run --provider openai --prompt "Explain the service layout"
-```
-
-### Patch
-
-```bash
-deathstar run \
-  --workflow patch \
-  --provider anthropic \
-  --workspace-subpath repos/api \
-  --write \
-  --prompt "Fix the panic in the request handler"
-```
-
-### PR
-
-```bash
-deathstar run \
-  --workflow pr \
-  --provider google \
-  --workspace-subpath repos/api \
-  --base-branch main \
-  --open-pr \
-  --prompt "Write a clean PR summary for these changes"
-```
-
-### Review
-
-```bash
-deathstar run \
-  --workflow review \
-  --provider openai \
-  --workspace-subpath repos/api \
-  --base-branch main \
-  --prompt "Review these changes for bugs and missing tests"
-```
+Repos are cloned to `/workspace/projects` on the remote instance and become available in the web UI repo selector.
 
 ## Backups
 
@@ -173,7 +152,7 @@ Restore a specific backup:
 deathstar restore --backup-id 20260311T120000Z-before-rebuild.tar.gz
 ```
 
-By default backups are stored locally on the workspace volume. If a backup bucket is configured, the same archive is uploaded to S3 as well.
+Backups include `/workspace/projects` and the SQLite database. If a backup bucket is configured, the archive is also uploaded to S3.
 
 ## Logs
 
@@ -189,12 +168,10 @@ deathstar destroy --region us-west-1
 
 Notes:
 
-- if you created a backup bucket and did not enable force destroy, Terraform will preserve its contents
-- destroying the stack without off-instance backups removes the instance and its workspace volume
+- If a backup bucket exists with force destroy disabled, Terraform preserves its contents
+- Destroying the stack without off-instance backups removes the instance and workspace volume
 
 ## Rebuild Flow
-
-Recommended rebuild sequence:
 
 1. `deathstar backup --label pre-rebuild`
 2. `deathstar destroy`
@@ -207,28 +184,30 @@ Recommended rebuild sequence:
 
 Check:
 
-- your laptop is logged into the same tailnet
-- the instance joined the tailnet successfully during bootstrap
-- the configured Tailscale hostname matches what you expect
+- Your laptop is on the same tailnet
+- The instance joined the tailnet during bootstrap
+- The configured Tailscale hostname matches
 
-Use `--transport ssm` as a fallback if needed.
+Use `--transport ssm` as a fallback.
 
 ### Session Manager plugin missing
 
-The CLI will fail only when you explicitly choose `--transport ssm`. Install the AWS Session Manager plugin locally for break-glass access.
+Install the AWS Session Manager plugin locally. Only needed for `--transport ssm`.
 
-### Provider not configured
+### Agent SDK errors
 
-The control API returns a normalized `provider_not_configured` error when the expected Parameter Store secret is missing or empty.
+The web UI shows errors inline. Check server logs for details:
+
+```bash
+deathstar logs --tail 200
+```
+
+Common causes: missing Anthropic API key, rate limiting, network issues.
 
 ### GitHub PR creation fails
 
 Check:
 
-- the repo remote points to GitHub
-- the GitHub token exists remotely
-- the remote repo can push to origin
-
-### Patch apply fails
-
-The provider returned a diff that `git apply` could not apply cleanly. Retry with a tighter prompt or narrower workspace path.
+- The repo remote points to GitHub
+- The GitHub token exists remotely
+- The remote has push access to origin

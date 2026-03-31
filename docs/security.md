@@ -2,148 +2,146 @@
 
 ## Secure Defaults
 
-DeathStar v1 is designed to keep the remote box reachable without opening the usual admin surface area.
+DeathStar keeps the remote instance reachable without opening the usual admin surface area.
 
 - No public SSH ingress by default
 - The EC2 security group starts with zero inbound rules
-- Tailscale is the primary operator network
-- The control API is meant to be reached over Tailscale
+- Tailscale is the primary operator network — all traffic stays on the tailnet
 - AWS SSM is retained as a break-glass path
 - IMDSv2 is required on the instance
 - Root and workspace EBS volumes are encrypted
-- Provider API keys, the Tailscale auth key, and the optional GitHub token are expected in SSM Parameter Store as `SecureString`
-- The local CLI can upload secrets with hidden prompts so pasted values do not echo to the terminal
-- Provider calls happen on the remote instance, not on the operator laptop
+- Secrets live in SSM Parameter Store as `SecureString`
+- The CLI uploads secrets with hidden prompts so pasted values never echo to the terminal
+- All AI provider calls happen on the remote instance, not on the operator laptop
 
 ## What Is Exposed
 
 By default:
 
-- No inbound ports are exposed
-- No SSH port is opened
-- No web UI port is opened
-- The control API listens on the host, but the security group still has zero inbound rules
-- The instance may still have outbound internet access and, by default, a public IP so it can bootstrap, reach AWS APIs, talk to providers, and reach git remotes
+- No inbound ports are open from the internet
+- No SSH port is exposed
+- The control API (port 8080) listens on the host but the security group has zero inbound rules — only Tailscale traffic reaches it
+- The instance has outbound internet access and a public IP for bootstrapping, AWS APIs, provider calls, and git remotes
 
-That public-IP-with-no-ingress design is a deliberate v1 tradeoff. It keeps the deployment self-contained and reproducible without forcing NAT gateways or a full set of VPC endpoints.
+The public-IP-with-no-ingress design is a deliberate tradeoff. It keeps the deployment self-contained without forcing NAT gateways or VPC endpoints.
+
+## Web UI Auth
+
+The web UI is served by the control API on port 8080:
+
+- **Static files** (`/`, `/index.html`, CSS, JS) bypass auth — the shell is publicly loadable over Tailscale but non-functional without a valid token
+- **API routes** (`/web/api/*`) require a bearer token (`DEATHSTAR_API_TOKEN`)
+- **WebSocket endpoints** (`/web/api/agent`, `/web/api/terminal`) require the same bearer token on connection
+- **Health endpoint** (`/v1/health`) is always public (returns VERSION+git-sha)
+- Auth is enforced by FastAPI middleware — no route can accidentally skip it
+
+The bearer token is set via environment variable and stored in SSM Parameter Store. Without it, all API calls return 401.
+
+## WebSocket Security
+
+Two WebSocket endpoints exist:
+
+- **Agent WebSocket** (`/web/api/agent`) — runs Claude Agent SDK sessions. The agent can read/write files, run bash commands, and access git within the workspace. Tool permissions are scoped per workflow mode.
+- **Terminal WebSocket** (`/web/api/terminal`) — provides a full PTY shell on the remote instance. This is equivalent to SSH access.
+
+Both require bearer token auth on the initial connection handshake.
 
 ## Trust Boundaries
 
 ### Local Machine
 
-The local machine holds:
-
-- AWS credentials used for Terraform and SSM access
-- the local Tailscale identity used for private operator access
-- no provider API keys by default
-- no GitHub token by default unless the user chooses otherwise
+- AWS credentials for Terraform and SSM access
+- Tailscale identity for private operator access
+- No provider API keys by default
+- No GitHub token unless the user chooses otherwise
 
 ### AWS Control Plane
-
-AWS is trusted for:
 
 - EC2 and EBS hosting
 - SSM break-glass administration
 - SSM Parameter Store secret storage
-- optional S3 backup storage
+- Optional S3 backup storage
 
 ### Tailscale Control Plane
 
-Tailscale is trusted for:
-
-- device identity
-- encrypted operator transport
-- private reachability from laptop and phone
-- SSH access policy if Tailscale SSH is enabled
-
-In v1, Tailscale identity and tailnet policy are also the primary access-control boundary for the private control API.
+- Device identity and encrypted transport
+- Private reachability from laptop and phone
+- SSH access policy (if Tailscale SSH is enabled)
+- Primary access-control boundary for the control API
 
 ### Remote Runtime
 
-The remote runtime holds:
-
-- provider API keys fetched from Parameter Store at startup
-- optional GitHub token for remote push and PR creation
-- git working copies under `/workspace/projects`
-- generated logs under `/workspace/deathstar/logs`
+- Anthropic API key fetched from Parameter Store at startup
+- Optional GitHub token for push and PR creation
+- Git working copies under `/workspace/projects`
+- SQLite database at `/workspace/deathstar/deathstar.db` (conversations, memory, feedback)
+- Runtime logs under `/workspace/deathstar/logs`
 
 ## Secrets Handling
 
-Provider and integration secrets are not committed to the repo and are not stored in Terraform variables as plaintext values.
+Secrets are never committed to the repo or stored in Terraform variables as plaintext.
 
-Recommended paths:
+SSM Parameter Store paths:
 
-- `/deathstar/providers/openai/api_key`
-- `/deathstar/providers/anthropic/api_key`
-- `/deathstar/providers/google/api_key`
-- `/deathstar/integrations/tailscale/auth_key`
-- `/deathstar/integrations/github/token`
+- `/deathstar/providers/anthropic/api_key` — required for Claude Agent SDK
+- `/deathstar/integrations/tailscale/auth_key` — required when Tailscale is enabled
+- `/deathstar/integrations/github/token` — optional, for PR automation
+- `/deathstar/api_token` — bearer token for web UI auth
 
-The instance role gets read-only access to the configured parameter names. The local CLI only passes parameter names into Terraform.
+The instance role gets read-only access to configured parameter names. The CLI only passes parameter names into Terraform.
 
-For secret upload, prefer `deathstar secrets bootstrap` or `deathstar secrets put`. Those commands use hidden terminal input by default and avoid placing the secret in the shell command line.
+For secret upload, use `deathstar secrets bootstrap` or `deathstar secrets put`. Both use hidden terminal input and avoid placing secrets in shell command lines.
 
-## Workflow Data Exposure
+## Agent Data Exposure
 
-Prompt, patch, PR, and review workflows are executed on the remote instance.
+The Claude Agent SDK runs on the remote instance with access to workspace files:
 
-- `prompt` can be prompt-only, or include scoped workspace context when `--workspace-subpath` is provided
-- `patch` reads workspace files under the target path and sends that context to the chosen provider
-- `pr` sends the git diff and metadata needed to draft a clean PR summary
-- `review` sends the diff to a separate provider call with fresh context
+- **Chat mode**: Read-only access to files via Glob, Grep, Read tools
+- **Code/PR modes**: Full read/write access including Bash execution
+- **Review/Audit modes**: Read access plus Bash for analysis
+- **All modes**: Repo context (CLAUDE.md, file tree, recent commits, branch) is injected into the system prompt
 
-This means code from the targeted remote workspace can be sent to the selected provider. Users should keep workspace scope tight and avoid sending sensitive repositories unless that is explicitly intended.
+Code from the workspace is sent to the Anthropic API as part of agent sessions. Users should be aware that any file the agent reads is transmitted to the provider.
+
+The memory bank persists useful responses per repo. These are re-injected into future prompts within a token budget.
 
 ## GitHub PR Automation
 
-PR creation is optional and separate from AI provider access.
-
-- GitHub is assumed for PR automation in v1
-- a GitHub token lives remotely in Parameter Store
-- the remote runtime uses that token to push branches and call the GitHub API
-- the local CLI never needs the GitHub token for normal operation
+- GitHub is assumed for PR automation
+- The GitHub token lives remotely in Parameter Store
+- The runtime uses it to push branches and call the GitHub API
+- The CLI never needs the GitHub token for normal operation
+- GitHub auth can be configured via `deathstar github setup` (gh CLI, PAT, or OAuth Device Flow)
 
 ## Threat Model
 
-DeathStar v1 primarily defends against:
+DeathStar primarily defends against:
 
-- opportunistic internet scanning
-- accidental secret leakage into local shell history
-- unnecessary exposure of SSH
-- exposing the control API to the public internet
-- mixing local operator credentials with provider credentials
-- provider-specific CLI sprawl that encourages users to bypass the remote control plane
+- Opportunistic internet scanning (no inbound rules)
+- Accidental secret leakage into shell history (hidden prompts)
+- Unnecessary exposure of SSH (Tailscale-only by default)
+- Exposing the control API to the public internet (security group + Tailscale)
+- Unauthorized web UI access (bearer token auth)
 
 It does not fully defend against:
 
-- a compromised AWS account
-- malicious code already running inside the instance
-- supply-chain compromise in upstream OS packages or container base images
-- exfiltration through allowed outbound access
-- prompt-induced leakage of workspace contents after a user explicitly targets those files
+- A compromised AWS account
+- Malicious code already running inside the instance
+- Supply-chain compromise in upstream packages or container base images
+- Exfiltration through allowed outbound access
+- Prompt-induced leakage of workspace contents (the agent can read any workspace file)
+- A compromised Tailscale tailnet (would expose the control API)
 
 ## Production Hardening Gaps
 
-These are intentional v1 simplifications and should be revisited for production deployments:
+Intentional simplifications to revisit for multi-user or production deployments:
 
-- outbound egress is broad rather than tightly allowlisted
+- Outbound egress is broad rather than tightly allowlisted
 - Tailscale tailnet policy is managed outside this repo
 - Terraform state defaults to local unless the user configures a remote backend
-- the runtime container image is not pinned to an immutable digest
-- SSM Parameter Store uses the default AWS-managed key unless the user supplies a stronger KMS strategy
-- backups are file-level workspace archives, not full-system disaster recovery
-- PR automation assumes GitHub remotes rather than supporting multiple VCS hosts
-
-## Safe Later Extensions
-
-The Terraform security group module already has a narrow optional ingress path for a future web UI:
-
-- disabled by default
-- explicit port
-- explicit allowed CIDRs
-
-Any future web UI should keep the same stance:
-
-- authenticated
-- tightly scoped
-- not exposed by accident
+- The runtime container image is not pinned to an immutable digest
+- SSM Parameter Store uses the default AWS-managed key (bring your own KMS for stricter setups)
+- Backups are file-level workspace archives, not full disaster recovery
+- Single bearer token for all users (no per-user auth or RBAC)
+- WebSocket terminal provides full shell access — equivalent to SSH
+- SQLite database is not encrypted at the application layer (relies on EBS encryption)
