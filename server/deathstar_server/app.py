@@ -51,21 +51,18 @@ app.include_router(agent_ws_router)
 app.include_router(terminal_router)
 app.include_router(webhook_router)
 
-# Prefer React build output (web/dist), fall back to vanilla static dir
+# Mount React build output (web/dist/assets)
 _react_dist = Path(__file__).parent / "web" / "dist"
-_legacy_static = Path(__file__).parent / "web" / "static"
-_static_dir = _react_dist if _react_dist.is_dir() else _legacy_static
-if _static_dir.is_dir():
-    _mount_path = "/assets" if _static_dir == _react_dist and (_static_dir / "assets").is_dir() else "/static"
-    _mount_dir = str(_static_dir / "assets") if _mount_path == "/assets" else str(_static_dir)
-    app.mount(_mount_path, StaticFiles(directory=_mount_dir), name="web-static")
+_assets_dir = _react_dist / "assets"
+if _assets_dir.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="web-static")
 
 # Paths that skip bearer-token auth
 _PUBLIC_PATHS = {
     "/v1/health", "/", "/index.html", "/favicon.svg",
     "/web/api/auth/session", "/web/api/webhooks/github",
 }
-_PUBLIC_PREFIXES = ("/static/", "/assets/")
+_PUBLIC_PREFIXES = ("/assets/",)
 
 # API path prefixes that require auth — everything else is an SPA route
 _API_PREFIXES = ("/v1/", "/web/api/")
@@ -165,14 +162,9 @@ async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSON
 
 def _serve_index_html(request: Request):
     """Serve index.html and set a session cookie for web UI auth."""
-    _react_dist = Path(__file__).parent / "web" / "dist"
-    if (_react_dist / "index.html").is_file():
-        index_path = _react_dist / "index.html"
-    else:
-        index_path = Path(__file__).parent / "web" / "static" / "index.html"
-
+    index_path = Path(__file__).parent / "web" / "dist" / "index.html"
     if not index_path.is_file():
-        return JSONResponse(status_code=404, content={"detail": "index.html not found"})
+        return JSONResponse(status_code=404, content={"detail": "index.html not found — run 'cd web && npm run build'"})
 
     html = index_path.read_text()
     response = HTMLResponse(html)
@@ -193,12 +185,8 @@ def serve_index(request: Request):
 
 @app.get("/favicon.svg")
 def serve_favicon():
-    _project_root = Path(__file__).parent.parent.parent
     candidates = [
         Path(__file__).parent / "web" / "dist" / "favicon.svg",
-        Path(__file__).parent / "web" / "static" / "favicon.svg",
-        _project_root / "web" / "dist" / "favicon.svg",
-        _project_root / "web" / "public" / "favicon.svg",
         Path("/app/web/dist/favicon.svg"),
         Path("/app/web/public/favicon.svg"),
     ]

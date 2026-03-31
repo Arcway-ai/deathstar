@@ -37,7 +37,7 @@ where = ["cli", "server", "shared"]
 include = ["deathstar_cli*", "deathstar_server*", "deathstar_shared*"]
 
 [tool.setuptools.package-data]
-deathstar_server = ["web/static/**/*", "web/dist/**/*"]
+deathstar_server = ["web/dist/**/*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "deathstar_shared.version.VERSION"}
