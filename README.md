@@ -480,10 +480,34 @@ uv run pytest tests/ -v
 
 The test suite covers the Anthropic provider, workflows, backup/restore, git operations, input validation, API routes, web UI routes, auth middleware, CLI configuration, and the Claude Agent SDK integration.
 
+## Contributing
+
+Contributions are welcome! Here's how to get involved:
+
+1. **Fork** the repo and create a feature branch from `main`
+2. **Make your changes** — follow the conventions in [CLAUDE.md](CLAUDE.md)
+3. **Run the checks** before submitting:
+   ```bash
+   uv run ruff check cli server shared tests
+   uv run pytest tests/ -v
+   cd web && npx tsc --noEmit && npm run build
+   ```
+4. **Open a pull request** against `main` with a clear description of what and why
+
+### Guidelines
+
+- Keep PRs focused — one feature or fix per PR
+- Add tests for new backend functionality
+- Don't break existing tests
+- Follow the existing code style (ruff for Python, TypeScript strict mode for frontend)
+- Update docs if your change affects user-facing behavior
+
+All PRs require review and approval before merging. CI must pass (lint, test, typecheck, frontend build).
+
 ## Docs
 
 - [`docs/architecture.md`](docs/architecture.md)
 - [`docs/security.md`](docs/security.md)
 - [`docs/operations.md`](docs/operations.md)
 - [`docs/cli.md`](docs/cli.md)
-- [`docs/provider-interface.md`](docs/provider-interface.md)
+- [`docs/agent-system.md`](docs/agent-system.md)
