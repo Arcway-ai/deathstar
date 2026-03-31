@@ -15,12 +15,13 @@ const tabs: { id: SidebarView; icon: typeof MessageSquare; label: string }[] = [
 export default function Sidebar() {
   const view = useStore((s) => s.sidebarView);
   const setSidebarView = useStore((s) => s.setSidebarView);
+  const sidebarOpen = useStore((s) => s.sidebarOpen);
 
   // Guard against stale persisted values from old sidebar views
   const safeView: SidebarView = view === "conversations" || view === "memory" ? view : "conversations";
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border-subtle bg-bg-primary">
+    <aside className={`absolute left-0 top-0 z-40 flex h-full w-72 shrink-0 flex-col border-r border-border-subtle bg-bg-primary transition-transform duration-200 md:relative md:z-auto md:translate-x-0 ${sidebarOpen ? "translate-x-0 animate-slide-left" : "-translate-x-full"}`}>
       {/* Tab bar */}
       <div className="flex items-center border-b border-border-subtle">
         {tabs.map((tab) => (
@@ -54,6 +55,7 @@ function ConversationList() {
   const conversationId = useStore((s) => s.conversationId);
   const selectedRepo = useStore((s) => s.selectedRepo);
   const deleteConversation = useStore((s) => s.deleteConversation);
+  const toggleSidebar = useStore((s) => s.toggleSidebar);
 
   if (conversations.length === 0) {
     return (
@@ -76,6 +78,8 @@ function ConversationList() {
           onClick={() => {
             if (selectedRepo) {
               navigate(`/${encodeURIComponent(selectedRepo)}/c/${encodeURIComponent(c.id)}`);
+              // Close sidebar on mobile after selection
+              if (window.innerWidth < 768) toggleSidebar();
             }
           }}
         >

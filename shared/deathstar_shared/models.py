@@ -382,3 +382,4 @@ class RepoContextResponse(DeathStarModel):
     claude_md: str | None = None
     file_tree: list[str]
     conflict_files: list[str] = []
+    branch_switched_from: str | None = None

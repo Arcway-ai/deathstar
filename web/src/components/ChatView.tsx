@@ -57,7 +57,7 @@ export default function ChatView() {
       <div
         ref={scrollRef}
         onScroll={checkIfNearBottom}
-        className="relative z-10 flex-1 overflow-y-auto px-4 py-4 scroll-smooth"
+        className="relative z-10 flex-1 overflow-y-auto px-3 py-3 scroll-smooth sm:px-4 sm:py-4"
       >
         {messages.length === 0 && !sending ? (
           <EmptyState repo={selectedRepo!} personaName={persona.shortName} />
@@ -86,6 +86,19 @@ export default function ChatView() {
                 <ThinkingDeathStar />
               </div>
             )}
+          </div>
+        )}
+
+        {/* Jump to latest — anchored inside the scroll container */}
+        {!isNearBottom && sending && (
+          <div className="sticky bottom-3 z-20 flex justify-center pointer-events-none">
+            <button
+              onClick={scrollToBottom}
+              className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-surface/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-lg backdrop-blur transition-colors hover:bg-bg-surface hover:text-text-primary"
+            >
+              <ArrowDown size={12} />
+              Jump to latest
+            </button>
           </div>
         )}
       </div>
@@ -122,19 +135,8 @@ export default function ChatView() {
       )}
 
       {/* Input area */}
-      <div className="border-t border-border-subtle bg-bg-primary px-4 pb-4 pt-2">
+      <div className="border-t border-border-subtle bg-bg-primary px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
         <div className="mx-auto max-w-3xl">
-          {!isNearBottom && sending && (
-            <div className="flex justify-end mb-1.5">
-              <button
-                onClick={scrollToBottom}
-                className="flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-surface/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-lg backdrop-blur transition-colors hover:bg-bg-surface hover:text-text-primary"
-              >
-                <ArrowDown size={12} />
-                Jump to latest
-              </button>
-            </div>
-          )}
           <WorkflowPills />
           <InputBar />
         </div>

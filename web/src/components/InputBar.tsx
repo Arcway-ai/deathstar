@@ -130,7 +130,7 @@ export default function InputBar() {
           </button>
         )}
       </div>
-      <p className="mt-1 text-center text-[10px] text-text-muted">
+      <p className="mt-1 hidden text-center text-[10px] text-text-muted sm:block">
         Shift+Enter for new line · Enter to send
         {isAgentActive && " · Esc to stop"}
       </p>

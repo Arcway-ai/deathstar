@@ -4,6 +4,7 @@ import {
   TerminalSquare,
   FolderGit2,
   GitBranch,
+  Menu,
 } from "lucide-react";
 import { useStore } from "../store";
 import ClaudeAuth from "./ClaudeAuth";
@@ -19,19 +20,33 @@ export default function TopBar() {
   const terminalOpen = useStore((s) => s.terminalOpen);
   const toggleRightPanel = useStore((s) => s.toggleRightPanel);
   const rightPanelOpen = useStore((s) => s.rightPanelOpen);
+  const toggleSidebar = useStore((s) => s.toggleSidebar);
   const repoContext = useStore((s) => s.repoContext);
+  const claudeAuth = useStore((s) => s.claudeAuth);
+  const isAuthed = claudeAuth.authenticated;
 
   const currentRepo = repos.find((r) => r.name === selectedRepo);
   const isDirty = currentRepo?.dirty ?? false;
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-primary px-3">
+    <header className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border-subtle bg-bg-primary px-2 sm:gap-2 sm:px-3">
+      {/* Mobile sidebar toggle */}
+      {isAuthed && selectedRepo && (
+        <button
+          onClick={toggleSidebar}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors md:hidden"
+          title="Toggle sidebar"
+        >
+          <Menu size={18} />
+        </button>
+      )}
       {/* Left: brand */}
       <span
         className="font-display text-sm font-bold tracking-wide text-text-primary select-none cursor-pointer"
         onClick={() => navigate("/")}
       >
-        DEATHSTAR
+        <span className="hidden sm:inline">DEATHSTAR</span>
+        <span className="sm:hidden">DS</span>
       </span>
 
       <ThemeSelector />

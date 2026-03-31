@@ -148,6 +148,33 @@ def repo_file(name: str, path: str = Query(..., min_length=1)) -> dict[str, str]
     return {"path": path, "content": content}
 
 
+def _detect_default_branch(repo_root: Path) -> str:
+    """Detect the default branch (main or master) for a repo."""
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip().removeprefix("refs/remotes/origin/")
+    except subprocess.CalledProcessError:
+        pass
+    # Fallback: check if main exists, else master
+    for candidate in ("main", "master"):
+        check = subprocess.run(
+            ["git", "rev-parse", "--verify", candidate],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if check.returncode == 0:
+            return candidate
+    return "main"
+
+
 @web_router.get("/repos/{name}/context", response_model=RepoContextResponse)
 def repo_context(name: str) -> RepoContextResponse:
     """Return repo context for LLM enrichment: branch, commits, CLAUDE.md, file tree."""
@@ -160,11 +187,84 @@ def repo_context(name: str) -> RepoContextResponse:
     except Exception:
         pass  # Best-effort — don't block context loading
 
+    # Fetch with prune to detect deleted remote branches
+    try:
+        subprocess.run(
+            ["git", "fetch", "--prune"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass  # Best-effort
+
     # Branch
+    branch_switched_from: str | None = None
     try:
         branch = git_service.current_branch(repo_root)
     except AppError:
         branch = "unknown"
+
+    # Detect if the current branch's remote tracking branch was deleted
+    # (e.g. after a PR merge on GitHub)
+    if branch not in ("main", "master", "unknown"):
+        try:
+            tracking = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            # If the upstream is gone, tracking fails or returns empty
+            if tracking.returncode != 0:
+                # Confirm the branch previously had a remote (not a purely local branch)
+                remote_check = subprocess.run(
+                    ["git", "config", f"branch.{branch}.remote"],
+                    cwd=str(repo_root),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if remote_check.returncode == 0 and remote_check.stdout.strip():
+                    # Remote tracking existed but upstream branch is gone — switch to default
+                    default_branch = _detect_default_branch(repo_root)
+                    logger.info(
+                        "branch %s remote tracking gone — switching to %s",
+                        branch, default_branch,
+                    )
+                    branch_switched_from = branch
+                    try:
+                        subprocess.run(
+                            ["git", "checkout", default_branch],
+                            cwd=str(repo_root),
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        )
+                        subprocess.run(
+                            ["git", "pull", "--ff-only"],
+                            cwd=str(repo_root),
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=30,
+                        )
+                        # Clean up the stale local branch
+                        subprocess.run(
+                            ["git", "branch", "-D", branch],
+                            cwd=str(repo_root),
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        branch = default_branch
+                    except subprocess.CalledProcessError:
+                        branch_switched_from = None  # Switch failed, stay put
+        except Exception:
+            pass  # Best-effort detection
 
     # Recent commits (last 5)
     recent_commits: list[str] = []
@@ -228,6 +328,7 @@ def repo_context(name: str) -> RepoContextResponse:
         claude_md=claude_md,
         file_tree=file_tree,
         conflict_files=conflict_files,
+        branch_switched_from=branch_switched_from,
     )
 
 

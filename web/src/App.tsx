@@ -114,6 +114,8 @@ export default function App() {
       <TopBar />
       <div className="relative flex flex-1 overflow-hidden">
         {isAuthed && <Sidebar />}
+        {/* Mobile sidebar backdrop */}
+        {isAuthed && <SidebarBackdrop />}
         <div className="flex flex-1 flex-col overflow-hidden">
           <main className="flex flex-1 flex-col overflow-hidden">
             {!isAuthed ? (
@@ -133,5 +135,17 @@ export default function App() {
       <Superlaser />
       <ToastContainer />
     </div>
+  );
+}
+
+function SidebarBackdrop() {
+  const sidebarOpen = useStore((s) => s.sidebarOpen);
+  const toggleSidebar = useStore((s) => s.toggleSidebar);
+  if (!sidebarOpen) return null;
+  return (
+    <div
+      className="fixed inset-0 z-30 bg-black/50 md:hidden"
+      onClick={toggleSidebar}
+    />
   );
 }

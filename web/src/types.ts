@@ -102,6 +102,7 @@ export interface RepoContext {
   claude_md: string | null;
   file_tree: string[];
   conflict_files: string[];
+  branch_switched_from: string | null;
 }
 
 export interface UsageMetrics {

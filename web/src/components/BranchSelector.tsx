@@ -105,6 +105,9 @@ export default function BranchSelector() {
     try {
       const defaultBranch = branches.find((b) => b === "main" || b === "master") ?? "main";
       await syncBranch(defaultBranch);
+      if (isDefault(currentBranch)) {
+        setOpen(false);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sync failed");
     } finally {
@@ -114,10 +117,12 @@ export default function BranchSelector() {
 
   const isDefault = (b: string) => b === "main" || b === "master";
 
+  const onDefaultBranch = isDefault(currentBranch);
+
   if (!currentRepo) return null;
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative flex items-center gap-1" ref={dropdownRef}>
       <button
         onClick={handleOpen}
         className="flex items-center gap-1.5 rounded-md bg-bg-surface px-2 py-1 text-xs hover:bg-bg-hover transition-colors"
@@ -131,6 +136,16 @@ export default function BranchSelector() {
           <span className="h-1.5 w-1.5 rounded-full bg-warning" title="Uncommitted changes" />
         )}
       </button>
+      {onDefaultBranch && !isDirty && (
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-text-muted hover:text-accent hover:bg-bg-hover transition-colors disabled:opacity-50"
+          title="Pull latest from origin"
+        >
+          <RefreshCw size={10} className={syncing ? "animate-spin" : ""} />
+        </button>
+      )}
 
       {open && (
         <div className="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-border-subtle bg-bg-surface shadow-xl">
@@ -138,21 +153,19 @@ export default function BranchSelector() {
           <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2">
             <span className="text-xs font-medium text-text-secondary">Branches</span>
             <div className="flex items-center gap-1">
-              {!isDefault(currentBranch) && (
-                <button
-                  onClick={handleSync}
-                  disabled={syncing || isDirty}
-                  className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs transition-colors ${
-                    isDirty
-                      ? "text-text-muted opacity-40 cursor-not-allowed"
-                      : "text-text-secondary hover:text-accent hover:bg-bg-hover disabled:opacity-50"
-                  }`}
-                  title={isDirty ? "Save changes before syncing" : "Rebase onto origin/main"}
-                >
-                  <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
-                  Sync
-                </button>
-              )}
+              <button
+                onClick={handleSync}
+                disabled={syncing || isDirty}
+                className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs transition-colors ${
+                  isDirty
+                    ? "text-text-muted opacity-40 cursor-not-allowed"
+                    : "text-text-secondary hover:text-accent hover:bg-bg-hover disabled:opacity-50"
+                }`}
+                title={isDirty ? "Save changes before syncing" : onDefaultBranch ? "Pull latest from origin" : "Rebase onto origin/main"}
+              >
+                <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
+                {onDefaultBranch ? "Pull" : "Sync"}
+              </button>
               <button
                 onClick={() => { setCreating(!creating); setError(null); }}
                 className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-accent hover:bg-bg-hover transition-colors"

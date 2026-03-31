@@ -194,6 +194,13 @@ export const useStore = create<Store>()(persist((set, get) => ({
         api.fetchCommits(name),
       ]);
       set({ repoContext: context, conversations, commits });
+      if (context.branch_switched_from) {
+        toast.info(
+          "Branch cleaned up",
+          `"${context.branch_switched_from}" was deleted on remote (PR merged?). Switched to ${context.branch}.`,
+        );
+        await get().loadBranches();
+      }
     } catch {
       // context fetch may fail if endpoint not yet available
       try {
@@ -980,7 +987,15 @@ function _ensureAgentSocket(): void {
           api.fetchCommits(s.selectedRepo),
         ]).then(([context, repos, commits]) => {
           useStore.setState({ repoContext: context, repos, commits });
-          toast.success("Branch updated", `Changes applied to ${context.branch}`);
+          if (context.branch_switched_from) {
+            toast.info(
+              "Branch cleaned up",
+              `"${context.branch_switched_from}" was deleted on remote (PR merged?). Switched to ${context.branch}.`,
+            );
+            useStore.getState().loadBranches();
+          } else {
+            toast.success("Branch updated", `Changes applied to ${context.branch}`);
+          }
         }).catch(() => { /* ignore */ });
       }
     },
