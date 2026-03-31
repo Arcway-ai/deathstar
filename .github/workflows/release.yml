@@ -15,8 +15,26 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
+  check-duplicate:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Check if release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" &>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Release $GITHUB_REF_NAME already exists — skipping"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
-    needs: ci
+    needs: [ci, check-duplicate]
+    if: needs.check-duplicate.outputs.exists == 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +61,8 @@ jobs:
           path: dist/
 
   github-release:
-    needs: build
+    needs: [build, check-duplicate]
+    if: needs.check-duplicate.outputs.exists == 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,7 +126,8 @@ jobs:
             dist/*
 
   publish-pypi:
-    needs: build
+    needs: [build, check-duplicate]
+    if: needs.check-duplicate.outputs.exists == 'false'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
