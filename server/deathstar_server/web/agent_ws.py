@@ -631,6 +631,27 @@ def _generate_branch_name(prompt: str) -> str:
     return f"deathstar/{timestamp}-{slug}"
 
 
+def _agent_already_opened_pr(text: str, blocks: list[dict]) -> bool:
+    """Detect whether the agent already created a pull request.
+
+    Checks for:
+    - GitHub PR URLs in the agent's text output
+    - ``gh pr create`` in Bash tool calls
+    """
+    # Check accumulated text for PR URLs
+    if re.search(r"https://github\.com/[^/]+/[^/]+/pull/\d+", text):
+        return True
+    # Check tool calls for gh pr create
+    for block in blocks:
+        if block.get("type") == "tool_use" and block.get("tool") == "Bash":
+            inp = block.get("input", "")
+            if isinstance(inp, dict):
+                inp = inp.get("command", "")
+            if "gh pr create" in str(inp):
+                return True
+    return False
+
+
 async def _post_agent_open_pr(
     websocket: WebSocket,
     session: AgentSession,
@@ -884,8 +905,13 @@ async def _read_messages(websocket: WebSocket, session: AgentSession, *, prompt:
                     )
 
                 # PR post-processing: commit, push, open PR
+                # Skip if the agent already created a PR (detected via tool
+                # calls or PR URLs in the output).
                 if session.workflow == WorkflowKind.PR and not message.is_error:
-                    await _post_agent_open_pr(websocket, session, prompt)
+                    if _agent_already_opened_pr(accumulated_text, accumulated_blocks):
+                        logger.info("agent already opened a PR — skipping post-processing")
+                    else:
+                        await _post_agent_open_pr(websocket, session, prompt)
 
                 msg_id = conversation_store.add_assistant_message(
                     session.conversation_id,

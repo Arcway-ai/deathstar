@@ -83,6 +83,281 @@ def version() -> None:
     typer.echo(full_version())
 
 
+# ---------------------------------------------------------------------------
+# AWS regions offered during init (covers most common choices)
+# ---------------------------------------------------------------------------
+_AWS_REGIONS = [
+    ("us-east-1", "US East (N. Virginia)"),
+    ("us-east-2", "US East (Ohio)"),
+    ("us-west-1", "US West (N. California)"),
+    ("us-west-2", "US West (Oregon)"),
+    ("eu-west-1", "EU (Ireland)"),
+    ("eu-west-2", "EU (London)"),
+    ("eu-central-1", "EU (Frankfurt)"),
+    ("ap-southeast-1", "Asia Pacific (Singapore)"),
+    ("ap-northeast-1", "Asia Pacific (Tokyo)"),
+]
+
+_INSTANCE_TYPES = [
+    ("t3.medium", "2 vCPU / 4 GB  — light work"),
+    ("t3.large", "2 vCPU / 8 GB  — recommended default"),
+    ("t3.xlarge", "4 vCPU / 16 GB — heavy builds"),
+    ("m5.xlarge", "4 vCPU / 16 GB — sustained workloads"),
+    ("m5.2xlarge", "8 vCPU / 32 GB — parallel agents"),
+]
+
+
+def _numbered_pick(label: str, options: list[tuple[str, str]], default_value: str) -> str:
+    """Present a numbered list and return the selected value."""
+    typer.echo(f"\n  {label}")
+    default_idx = 0
+    for i, (value, desc) in enumerate(options, 1):
+        marker = " *" if value == default_value else ""
+        typer.echo(f"    [{i}] {value:<20} {desc}{marker}")
+        if value == default_value:
+            default_idx = i
+    while True:
+        raw = input(f"  Select [default: {default_idx}]: ").strip()
+        if not raw:
+            return default_value
+        try:
+            idx = int(raw)
+            if 1 <= idx <= len(options):
+                return options[idx - 1][0]
+        except ValueError:
+            pass
+        typer.echo("  Invalid choice — try again.")
+
+
+def _prompt(label: str, default: str = "", secret: bool = False) -> str:
+    """Simple prompt with an optional default."""
+    suffix = f" [{default}]" if default else ""
+    if secret:
+        import getpass
+        value = getpass.getpass(f"  {label}{suffix}: ").strip()
+    else:
+        value = input(f"  {label}{suffix}: ").strip()
+    return value or default
+
+
+@app.command()
+def init() -> None:
+    """Initialize your DeathStar. Guided setup that writes a .env file.
+
+    A new crew member runs this once to configure their station. It collects
+    your call sign, preferred sector (region), ship class (instance type),
+    and crew manifest (git identity), then writes everything to .env.
+    """
+    from deathstar_cli.config import find_project_root
+
+    try:
+        project_root = find_project_root()
+    except RuntimeError:
+        typer.echo("Error: could not locate the DeathStar project root.", err=True)
+        raise typer.Exit(code=1)
+
+    env_path = project_root / ".env"
+    if env_path.exists():
+        typer.echo("")
+        typer.echo("  ⚠ A .env file already exists.")
+        if not typer.confirm("  Overwrite with a fresh configuration?"):
+            raise typer.Exit(0)
+
+    typer.echo("")
+    typer.echo("  ╔══════════════════════════════════════════════════════════════╗")
+    typer.echo("  ║                                                              ║")
+    typer.echo("  ║   D E A T H S T A R   —   S T A T I O N   S E T U P        ║")
+    typer.echo("  ║                                                              ║")
+    typer.echo("  ║   \"The ability to destroy a planet is insignificant          ║")
+    typer.echo("  ║    next to the power of the Force.\"                          ║")
+    typer.echo("  ║                                                              ║")
+    typer.echo("  ║   Welcome, operator. Let's get your battle station online.   ║")
+    typer.echo("  ║                                                              ║")
+    typer.echo("  ╚══════════════════════════════════════════════════════════════╝")
+
+    # ── Call sign (project name) ──────────────────────────────────────────
+    typer.echo("")
+    typer.echo("  ── CALL SIGN ─────────────────────────────────────────────────")
+    typer.echo("  Your call sign identifies this station in AWS and on Tailscale.")
+    typer.echo("  Each crew member should use a unique name (e.g., deathstar-luke).")
+    typer.echo("")
+
+    while True:
+        callsign = _prompt("Call sign", "deathstar")
+        if re.match(r"^[a-zA-Z0-9_-]+$", callsign):
+            break
+        typer.echo("  Call signs may only contain letters, numbers, hyphens, and underscores.")
+
+    # ── Sector assignment (AWS region) ────────────────────────────────────
+    typer.echo("")
+    typer.echo("  ── SECTOR ASSIGNMENT ─────────────────────────────────────────")
+    typer.echo("  Choose which galactic sector to deploy in.")
+    region = _numbered_pick("Available sectors:", _AWS_REGIONS, "us-west-1")
+
+    # ── AWS Profile ───────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo("  ── IMPERIAL CREDENTIALS ──────────────────────────────────────")
+    typer.echo("  The AWS CLI profile used for Terraform and SSM operations.")
+    aws_profile = _prompt("AWS profile name", "default")
+
+    # ── Ship class (instance type) ────────────────────────────────────────
+    typer.echo("")
+    typer.echo("  ── SHIP CLASS ────────────────────────────────────────────────")
+    typer.echo("  Select the firepower for your station.")
+    instance_type = _numbered_pick("Available ships:", _INSTANCE_TYPES, "t3.large")
+
+    # ── Storage ───────────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo("  ── CARGO BAY ─────────────────────────────────────────────────")
+    data_volume = _prompt("Workspace volume size in GB", "200")
+    try:
+        int(data_volume)
+    except ValueError:
+        typer.echo("  Invalid number — using 200 GB.")
+        data_volume = "200"
+
+    # ── Crew manifest (git identity) ──────────────────────────────────────
+    typer.echo("")
+    typer.echo("  ── CREW MANIFEST ─────────────────────────────────────────────")
+    typer.echo("  Git identity for automated commits made by the station.")
+
+    # Try to detect from git config
+    default_name = "DeathStar"
+    default_email = "deathstar@local"
+    try:
+        result = subprocess.run(
+            ["git", "config", "user.name"], capture_output=True, text=True, check=True
+        )
+        if result.stdout.strip():
+            default_name = result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    try:
+        result = subprocess.run(
+            ["git", "config", "user.email"], capture_output=True, text=True, check=True
+        )
+        if result.stdout.strip():
+            default_email = result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    git_name = _prompt("Git author name", default_name)
+    git_email = _prompt("Git author email", default_email)
+
+    # ── Tailscale ─────────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo("  ── SECURE COMMS (TAILSCALE) ──────────────────────────────────")
+    typer.echo("  Tailscale creates a private encrypted tunnel to your station.")
+    typer.echo("  Highly recommended — without it, you'll need SSM for access.")
+    enable_tailscale = typer.confirm("  Enable Tailscale?", default=True)
+
+    # ── API Token ─────────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo("  ── SHIELD GENERATOR (API TOKEN) ──────────────────────────────")
+    typer.echo("  Optional bearer token to protect the control API.")
+    typer.echo("  If only accessible via Tailscale, you can leave this blank.")
+    api_token = _prompt("API token (blank to skip)", "", secret=True)
+
+    # ── GitHub OAuth ──────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo("  ── REBEL ALLIANCE LINK (GITHUB) ──────────────────────────────")
+    typer.echo("  OAuth App client ID for `deathstar github setup`.")
+    typer.echo("  Create at: https://github.com/settings/applications/new")
+    typer.echo("  (Enable Device Flow, then paste the Client ID here)")
+    github_client_id = _prompt("GitHub OAuth Client ID (blank to skip)", "")
+
+    # ── Write .env ────────────────────────────────────────────────────────
+    lines = [
+        "# DeathStar configuration — generated by `deathstar init`",
+        f"DEATHSTAR_PROJECT_NAME={callsign}",
+        f"DEATHSTAR_REGION={region}",
+        f"DEATHSTAR_AWS_PROFILE={aws_profile}",
+        "DEATHSTAR_TERRAFORM_DIR=terraform/environments/aws-ec2",
+        f"DEATHSTAR_INSTANCE_TYPE={instance_type}",
+        "DEATHSTAR_ROOT_VOLUME_SIZE_GB=30",
+        f"DEATHSTAR_DATA_VOLUME_SIZE_GB={data_volume}",
+        "",
+        "# Parameter Store locations for remote-only secrets",
+        f"DEATHSTAR_OPENAI_PARAMETER_NAME=/{callsign}/providers/openai/api_key",
+        f"DEATHSTAR_ANTHROPIC_PARAMETER_NAME=/{callsign}/providers/anthropic/api_key",
+        f"DEATHSTAR_GOOGLE_PARAMETER_NAME=/{callsign}/providers/google/api_key",
+        f"DEATHSTAR_VERTEX_PARAMETER_NAME=/{callsign}/providers/vertex/service_account_key",
+        f"DEATHSTAR_GITHUB_PARAMETER_NAME=/{callsign}/integrations/github/token",
+        "",
+        "# Vertex AI (optional)",
+        "DEATHSTAR_VERTEX_PROJECT_ID=",
+        "DEATHSTAR_VERTEX_LOCATION=us-central1",
+        "",
+        "# Off-instance backups (optional)",
+        "DEATHSTAR_CREATE_BACKUP_BUCKET=false",
+        "DEATHSTAR_BACKUP_BUCKET_NAME=",
+        "DEATHSTAR_FORCE_DESTROY_BACKUP_BUCKET=false",
+        "",
+        "# Web UI",
+        "DEATHSTAR_ENABLE_WEB_UI=false",
+        "DEATHSTAR_WEB_UI_PORT=8443",
+        "DEATHSTAR_WEB_UI_ALLOWED_CIDRS=",
+        "",
+        "# Git identity for automated commits",
+        f"DEATHSTAR_GIT_AUTHOR_NAME={git_name}",
+        f"DEATHSTAR_GIT_AUTHOR_EMAIL={git_email}",
+        "",
+        "# Tailscale",
+        f"DEATHSTAR_ENABLE_TAILSCALE={'true' if enable_tailscale else 'false'}",
+        f"DEATHSTAR_ENABLE_TAILSCALE_SSH={'true' if enable_tailscale else 'false'}",
+        f"DEATHSTAR_TAILSCALE_AUTH_PARAMETER_NAME=/{callsign}/integrations/tailscale/auth_key",
+        "DEATHSTAR_TAILSCALE_HOSTNAME=",
+        "DEATHSTAR_TAILSCALE_ADVERTISE_TAGS=",
+        "",
+        "# API authentication",
+        f"DEATHSTAR_API_TOKEN={api_token}",
+        "",
+        "# GitHub OAuth App",
+        f"DEATHSTAR_GITHUB_APP_CLIENT_ID={github_client_id}",
+        "",
+        "# Tailscale OAuth (optional — enables automatic node cleanup on upgrade)",
+        "DEATHSTAR_TAILSCALE_OAUTH_CLIENT_ID=",
+        "DEATHSTAR_TAILSCALE_OAUTH_CLIENT_SECRET=",
+        "",
+        "# Event system",
+        "GITHUB_WEBHOOK_SECRET=",
+        "GITHUB_POLL_INTERVAL=10",
+        "",
+        "# Transport defaults",
+        "DEATHSTAR_REMOTE_TRANSPORT=auto",
+        "DEATHSTAR_CONNECT_TRANSPORT=auto",
+    ]
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    typer.echo("")
+    typer.echo("  ╔══════════════════════════════════════════════════════════════╗")
+    typer.echo("  ║                                                              ║")
+    typer.echo("  ║   STATION ONLINE                                             ║")
+    typer.echo("  ║                                                              ║")
+    typer.echo(f"  ║   Call sign : {callsign:<44} ║")
+    typer.echo(f"  ║   Sector   : {region:<44} ║")
+    typer.echo(f"  ║   Ship     : {instance_type:<44} ║")
+    typer.echo(f"  ║   Tailscale: {'enabled' if enable_tailscale else 'disabled':<44} ║")
+    typer.echo("  ║                                                              ║")
+    typer.echo("  ║   Configuration written to .env                              ║")
+    typer.echo("  ║                                                              ║")
+    typer.echo("  ║   Next steps:                                                ║")
+    typer.echo("  ║     1. deathstar secrets bootstrap    (store API keys)       ║")
+    if enable_tailscale:
+        typer.echo("  ║     2. deathstar tailscale setup      (Tailscale auth key)  ║")
+        typer.echo("  ║     3. deathstar github setup         (GitHub token)        ║")
+        typer.echo("  ║     4. deathstar deploy               (launch the station)  ║")
+    else:
+        typer.echo("  ║     2. deathstar github setup         (GitHub token)        ║")
+        typer.echo("  ║     3. deathstar deploy               (launch the station)  ║")
+    typer.echo("  ║                                                              ║")
+    typer.echo("  ║   \"The Force will be with you. Always.\"                      ║")
+    typer.echo("  ║                                                              ║")
+    typer.echo("  ╚══════════════════════════════════════════════════════════════╝")
+    typer.echo("")
+
+
 @secrets_app.command("put")
 def secrets_put(
     provider: ProviderName | None = typer.Option(None, "--provider"),
