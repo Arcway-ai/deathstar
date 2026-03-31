@@ -5,8 +5,11 @@ import {
   FolderGit2,
   GitBranch,
   Menu,
+  RefreshCw,
 } from "lucide-react";
+import { useState } from "react";
 import { useStore } from "../store";
+import * as api from "../api";
 import ClaudeAuth from "./ClaudeAuth";
 import ModelSelector from "./ModelSelector";
 import PersonaSelector from "./PersonaSelector";
@@ -24,6 +27,7 @@ export default function TopBar() {
   const repoContext = useStore((s) => s.repoContext);
   const claudeAuth = useStore((s) => s.claudeAuth);
   const isAuthed = claudeAuth.authenticated;
+  const [refreshing, setRefreshing] = useState(false);
 
   const currentRepo = repos.find((r) => r.name === selectedRepo);
   const isDirty = currentRepo?.dirty ?? false;
@@ -97,6 +101,30 @@ export default function TopBar() {
           {isDirty && (
             <span className="h-1.5 w-1.5 rounded-full bg-warning" title="Uncommitted changes" />
           )}
+        </button>
+      )}
+
+      {selectedRepo && (
+        <button
+          onClick={async () => {
+            setRefreshing(true);
+            const s = useStore.getState();
+            await Promise.allSettled([
+              s.loadRepos(),
+              s.loadCommits(),
+              s.loadBranches(),
+              s.loadPullRequests(),
+              selectedRepo
+                ? api.fetchRepoContext(selectedRepo).then((ctx) => useStore.setState({ repoContext: ctx }))
+                : Promise.resolve(),
+            ]);
+            setRefreshing(false);
+          }}
+          disabled={refreshing}
+          className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors disabled:opacity-50"
+          title="Refresh repo state"
+        >
+          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
         </button>
       )}
 

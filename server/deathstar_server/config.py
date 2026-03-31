@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,22 @@ def _optional(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    raw = raw.strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "Invalid integer for %s=%r, using default %d", name, raw, default,
+        )
+        return default
 
 
 @dataclass(frozen=True)
@@ -27,6 +44,8 @@ class Settings:
     tailscale_hostname: str | None
     ssh_user: str
     api_token: str | None
+    github_webhook_secret: str | None
+    github_poll_interval_seconds: int
 
 
 def load_settings() -> Settings:
@@ -57,4 +76,6 @@ def load_settings() -> Settings:
         tailscale_hostname=_optional(os.getenv("DEATHSTAR_TAILSCALE_HOSTNAME")),
         ssh_user=os.getenv("DEATHSTAR_SSH_USER", "ubuntu"),
         api_token=_optional(os.getenv("DEATHSTAR_API_TOKEN")),
+        github_webhook_secret=_optional(os.getenv("GITHUB_WEBHOOK_SECRET")),
+        github_poll_interval_seconds=_int_env("GITHUB_POLL_INTERVAL", 10),
     )

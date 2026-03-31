@@ -53,6 +53,11 @@ def _build_web_app(tmp_path: Path, api_token: str | None = None):
     mock_app_state.git_service = mock_git
     mock_app_state.conversation_store = convo_store
 
+    # Event bus — mock with a no-op publish
+    mock_event_bus = MagicMock()
+    mock_event_bus.publish.return_value = 0
+    mock_app_state.event_bus = mock_event_bus
+
     # Inject mock before importing app/routes
     for mod_name in list(sys.modules):
         if mod_name.startswith("deathstar_server.app") or \

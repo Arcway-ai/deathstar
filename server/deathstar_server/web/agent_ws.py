@@ -308,6 +308,35 @@ def _usage_dict(usage) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Event forwarding
+# ---------------------------------------------------------------------------
+
+
+async def _forward_events(ws: WebSocket, repo: str | None) -> None:
+    """Subscribe to the event bus and forward repo events to a WebSocket client."""
+    from deathstar_server.app_state import event_bus
+
+    try:
+        async with event_bus.subscribe(repo) as events:
+            async for event in events:
+                try:
+                    await ws.send_json({
+                        "type": "repo_event",
+                        "event_type": event.event_type,
+                        "repo": event.repo,
+                        "source": event.source,
+                        "data": event.data,
+                        "timestamp": event.timestamp,
+                    })
+                except (WebSocketDisconnect, RuntimeError):
+                    break
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.warning("event forwarding error for repo=%s", repo, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
 
@@ -353,6 +382,7 @@ async def agent_ws(
     await websocket.accept()
 
     session: AgentSession | None = None
+    event_forward_task: asyncio.Task | None = None
 
     try:
         while True:
@@ -408,6 +438,19 @@ async def agent_ws(
                 except Exception:
                     pass
 
+            elif msg_type == "subscribe_events":
+                # Start forwarding repo events to this client
+                repo = msg.get("repo")
+                if not repo:
+                    await _send(websocket, "error", code="INVALID_REQUEST", message="repo is required for subscribe_events")
+                    continue
+                if event_forward_task:
+                    event_forward_task.cancel()
+                event_forward_task = asyncio.create_task(
+                    _forward_events(websocket, repo),
+                    name="event-forward",
+                )
+
             else:
                 await _send(websocket, "error", code="UNKNOWN_MESSAGE", message=f"unknown message type: {msg_type}")
 
@@ -416,6 +459,9 @@ async def agent_ws(
     except Exception:
         logger.exception("agent_ws error")
     finally:
+        # Cancel event forwarding
+        if event_forward_task:
+            event_forward_task.cancel()
         # Detach WebSocket but keep session alive for reconnection
         if session:
             session.websocket = None

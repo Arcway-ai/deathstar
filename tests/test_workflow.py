@@ -47,6 +47,8 @@ def _make_settings(tmp_path: Path) -> Settings:
         tailscale_hostname=None,
         ssh_user="ubuntu",
         api_token=None,
+        github_webhook_secret=None,
+        github_poll_interval_seconds=30,
     )
 
 

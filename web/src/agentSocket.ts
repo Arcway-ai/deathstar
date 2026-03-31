@@ -25,6 +25,14 @@ export interface AgentStatusEvent {
   max_retries?: number;
 }
 
+export interface RepoEventData {
+  event_type: string;
+  repo: string;
+  source: string;
+  data: Record<string, unknown>;
+  timestamp: number;
+}
+
 export interface AgentCallbacks {
   onTextDelta: (text: string) => void;
   onThinking: (text: string) => void;
@@ -38,6 +46,7 @@ export interface AgentCallbacks {
   onStateChange: (state: ConnectionState) => void;
   onCompactDone?: (summary: string) => void;
   onStatus?: (event: AgentStatusEvent) => void;
+  onRepoEvent?: (event: RepoEventData) => void;
 }
 
 export interface AgentResult {
@@ -137,6 +146,22 @@ export class AgentSocket {
     this.sendJson({ type: "compact" });
   }
 
+  /** Subscribe to real-time repo events for a given repo. */
+  subscribeEvents(repo: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.connect();
+      const originalOnOpen = this.ws?.onopen;
+      if (this.ws) {
+        this.ws.onopen = (ev) => {
+          if (typeof originalOnOpen === "function") originalOnOpen.call(this.ws!, ev);
+          this.sendJson({ type: "subscribe_events", repo });
+        };
+      }
+      return;
+    }
+    this.sendJson({ type: "subscribe_events", repo });
+  }
+
   /** Disconnect the WebSocket. */
   disconnect(): void {
     if (this.ws) {
@@ -203,6 +228,9 @@ export class AgentSocket {
         this.callbacks.onCompactDone?.(
           (msg.summary as string) ?? "Context compacted",
         );
+        break;
+      case "repo_event":
+        this.callbacks.onRepoEvent?.(msg as unknown as RepoEventData);
         break;
       case "error":
         this.callbacks.onError(

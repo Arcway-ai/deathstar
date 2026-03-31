@@ -8,6 +8,7 @@ from deathstar_server.services.github import GitHubService
 from deathstar_server.services.gitops import GitService
 from deathstar_server.web.database import Database
 from deathstar_server.web.conversations import ConversationStore
+from deathstar_server.services.event_bus import EventBus
 from deathstar_server.web.feedback import FeedbackStore
 from deathstar_server.web.memory_bank import MemoryBank
 
@@ -31,3 +32,4 @@ db = Database(settings.workspace_root / "deathstar" / "deathstar.db")
 conversation_store = ConversationStore(db)
 memory_bank = MemoryBank(db)
 feedback_store = FeedbackStore(db)
+event_bus = EventBus()

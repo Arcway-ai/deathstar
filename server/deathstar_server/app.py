@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import hmac
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from deathstar_server.app_state import settings
+from deathstar_server.app_state import event_bus, settings
 from deathstar_server.errors import AppError
 from deathstar_server.routes import router
+from deathstar_server.services.github_poller import GitHubPoller
 from deathstar_server.session import (
     SESSION_COOKIE_NAME,
     cookie_params,
@@ -20,6 +22,7 @@ from deathstar_server.session import (
 from deathstar_server.web.agent_ws import agent_ws_router
 from deathstar_server.web.routes import web_router
 from deathstar_server.web.terminal import terminal_router
+from deathstar_server.web.webhooks import webhook_router
 from deathstar_shared.models import ErrorCode
 
 logger = logging.getLogger(__name__)
@@ -30,11 +33,23 @@ if not settings.api_token:
         "Set DEATHSTAR_API_TOKEN or store it in SSM to enable auth."
     )
 
-app = FastAPI(title="DeathStar Control API", version="0.1.0")
+_github_poller = GitHubPoller(settings, event_bus)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start/stop background services."""
+    await _github_poller.start()
+    yield
+    await _github_poller.stop()
+
+
+app = FastAPI(title="DeathStar Control API", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
 app.include_router(web_router)
 app.include_router(agent_ws_router)
 app.include_router(terminal_router)
+app.include_router(webhook_router)
 
 # Prefer React build output (web/dist), fall back to vanilla static dir
 _react_dist = Path(__file__).parent / "web" / "dist"
@@ -46,7 +61,10 @@ if _static_dir.is_dir():
     app.mount(_mount_path, StaticFiles(directory=_mount_dir), name="web-static")
 
 # Paths that skip bearer-token auth
-_PUBLIC_PATHS = {"/v1/health", "/", "/index.html", "/favicon.svg", "/web/api/auth/session"}
+_PUBLIC_PATHS = {
+    "/v1/health", "/", "/index.html", "/favicon.svg",
+    "/web/api/auth/session", "/web/api/webhooks/github",
+}
 _PUBLIC_PREFIXES = ("/static/", "/assets/")
 
 # API path prefixes that require auth — everything else is an SPA route

@@ -9,6 +9,8 @@ export interface ToastMessage {
   title: string;
   description?: string;
   duration?: number;
+  persistent?: boolean;
+  action?: { label: string; onClick: () => void };
 }
 
 /* ── Global toast state (lightweight, no extra deps) ──────────── */
@@ -40,6 +42,22 @@ toast.info = (title: string, description?: string) =>
   toast("info", title, description, 4000);
 toast.warning = (title: string, description?: string) =>
   toast("warning", title, description, 5000);
+
+/** Persistent toast that stays until dismissed. Optionally includes an action button. */
+toast.persistent = (
+  type: ToastType,
+  title: string,
+  description?: string,
+  action?: { label: string; onClick: () => void },
+) => {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  toasts = [...toasts, { id, type, title, description, persistent: true, action }];
+  emit();
+  return id;
+};
+
+/** Dismiss a toast by ID (useful for clearing persistent toasts programmatically). */
+toast.dismiss = (id: string) => dismiss(id);
 
 function dismiss(id: string) {
   toasts = toasts.filter((t) => t.id !== id);
@@ -77,10 +95,10 @@ function ToastItem({ t }: { t: ToastMessage }) {
   const Icon = icons[t.type];
 
   useEffect(() => {
-    if (!t.duration) return;
+    if (t.persistent || !t.duration) return;
     const timer = setTimeout(() => setExiting(true), t.duration);
     return () => clearTimeout(timer);
-  }, [t.duration]);
+  }, [t.duration, t.persistent]);
 
   useEffect(() => {
     if (!exiting) return;
@@ -91,6 +109,8 @@ function ToastItem({ t }: { t: ToastMessage }) {
   return (
     <div
       className={`flex items-start gap-3 rounded-lg border px-4 py-3 shadow-lg backdrop-blur-sm transition-all duration-300 ${styles[t.type]} ${
+        t.persistent ? "ring-1 ring-white/10" : ""
+      } ${
         exiting ? "translate-x-[120%] opacity-0" : "translate-x-0 opacity-100"
       }`}
     >
@@ -101,6 +121,14 @@ function ToastItem({ t }: { t: ToastMessage }) {
           <p className="mt-0.5 text-xs text-text-muted line-clamp-2">
             {t.description}
           </p>
+        )}
+        {t.action && (
+          <button
+            onClick={() => { t.action!.onClick(); setExiting(true); }}
+            className="mt-1.5 rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium hover:bg-white/20 transition-colors"
+          >
+            {t.action.label}
+          </button>
         )}
       </div>
       <button

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import * as api from "./api";
 import { AgentSocket } from "./agentSocket";
-import type { AgentResult, AgentStatusEvent } from "./agentSocket";
+import type { AgentResult, AgentStatusEvent, RepoEventData } from "./agentSocket";
 import { toast } from "./components/Toast";
 import { defaultPersona, getPersonaById } from "./personas";
 import { defaultTheme, applyTheme } from "./themes";
@@ -187,6 +187,12 @@ export const useStore = create<Store>()(persist((set, get) => ({
 
   selectRepo: async (name) => {
     set({ selectedRepo: name, repoContext: null, fileTree: [], fileContent: null, conversationId: null, activeConversation: null, branches: [], commits: [] });
+
+    // Subscribe to real-time events for this repo
+    if (_agentSocket) {
+      _agentSocket.subscribeEvents(name);
+    }
+
     try {
       const [context, conversations, commits] = await Promise.all([
         api.fetchRepoContext(name),
@@ -1061,6 +1067,59 @@ function _ensureAgentSocket(): void {
             }
           : null,
       }));
+    },
+
+    onRepoEvent: (event: RepoEventData) => {
+      const s = useStore.getState();
+      if (!s.selectedRepo || event.repo !== s.selectedRepo) return;
+
+      const refreshContext = () =>
+        api.fetchRepoContext(event.repo).then((ctx) => useStore.setState({ repoContext: ctx })).catch(() => {});
+      const refreshCommits = () =>
+        api.fetchCommits(event.repo).then((c) => useStore.setState({ commits: c })).catch(() => {});
+      const refreshBranches = () => useStore.getState().loadBranches();
+      const refreshPRs = () =>
+        api.fetchPullRequests(event.repo).then((prs) => useStore.setState({ pullRequests: prs })).catch(() => {});
+      const refreshRepos = () =>
+        api.fetchRepos().then((r) => useStore.setState({ repos: r })).catch(() => {});
+
+      switch (event.event_type) {
+        case "push": {
+          const sender = (event.data.sender as string) || "Someone";
+          const ref = (event.data.ref as string) || "";
+          const branch = ref.replace("refs/heads/", "");
+          const commitCount = Array.isArray(event.data.commits) ? event.data.commits.length : 0;
+          const desc = commitCount > 0
+            ? `${sender} pushed ${commitCount} commit${commitCount > 1 ? "s" : ""} to ${branch}`
+            : `${sender} pushed to ${branch}`;
+          toast.persistent("info", "Branch updated", desc, {
+            label: "Sync now",
+            onClick: () => useStore.getState().syncBranch(),
+          });
+          void Promise.all([refreshContext(), refreshCommits(), refreshBranches()]);
+          break;
+        }
+        case "pr_update":
+          toast.info("PR updated", `#${event.data.number} ${event.data.title}`);
+          refreshPRs();
+          break;
+        case "ci_status":
+          toast.info("CI status", `${event.data.context}: ${event.data.state}`);
+          break;
+        case "local_commit":
+          refreshCommits();
+          refreshContext();
+          refreshRepos();
+          break;
+        case "local_checkout":
+          refreshContext();
+          refreshBranches();
+          refreshCommits();
+          break;
+        case "branch_update":
+          refreshBranches();
+          break;
+      }
     },
 
     onStateChange: () => {

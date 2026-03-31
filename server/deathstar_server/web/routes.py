@@ -9,8 +9,15 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from deathstar_server.app_state import git_service, settings
+from deathstar_server.app_state import event_bus, git_service, settings
 from deathstar_server.errors import AppError
+from deathstar_server.services.event_bus import (
+    EVENT_BRANCH_UPDATE,
+    EVENT_LOCAL_CHECKOUT,
+    EVENT_LOCAL_COMMIT,
+    RepoEvent,
+    SOURCE_LOCAL,
+)
 from deathstar_shared.models import (
     ApplySuggestionsRequest,
     ApplySuggestionsResponse,
@@ -415,6 +422,14 @@ def create_branch(name: str, request: BranchRequest) -> dict[str, str]:
             f"failed to create branch: {(exc.stderr or '').strip()[:200]}",
             status_code=500,
         ) from exc
+    # Publish branch_update event
+    event_bus.publish(RepoEvent(
+        event_type=EVENT_BRANCH_UPDATE,
+        repo=name,
+        source=SOURCE_LOCAL,
+        data={"action": "created", "branch": request.branch},
+    ))
+
     return {"branch": request.branch}
 
 
@@ -458,6 +473,14 @@ def checkout_branch(name: str, request: CheckoutRequest) -> dict:
             status_code=500,
         ) from exc
 
+    # Publish local_checkout event
+    event_bus.publish(RepoEvent(
+        event_type=EVENT_LOCAL_CHECKOUT,
+        repo=name,
+        source=SOURCE_LOCAL,
+        data={"from_branch": auto_commit_branch or "unknown", "to_branch": request.branch},
+    ))
+
     result: dict = {"branch": request.branch}
     if auto_committed:
         result["auto_committed"] = True
@@ -496,6 +519,14 @@ def delete_branch(name: str, request: BranchRequest) -> dict[str, str]:
             f"failed to delete branch: {(exc.stderr or '').strip()[:200]}",
             status_code=500,
         ) from exc
+    # Publish branch_update event
+    event_bus.publish(RepoEvent(
+        event_type=EVENT_BRANCH_UPDATE,
+        repo=name,
+        source=SOURCE_LOCAL,
+        data={"action": "deleted", "branch": request.branch},
+    ))
+
     return {"branch": request.branch}
 
 
@@ -643,6 +674,18 @@ def quick_save(name: str, body: QuickSaveRequest | None = None) -> dict:
             f"failed to commit: {str(exc)[:200]}",
             status_code=500,
         ) from exc
+
+    # Publish local_commit event
+    try:
+        branch = git_service.current_branch(repo_root)
+    except subprocess.CalledProcessError:
+        branch = "unknown"
+    event_bus.publish(RepoEvent(
+        event_type=EVENT_LOCAL_COMMIT,
+        repo=name,
+        source=SOURCE_LOCAL,
+        data={"sha": sha or "", "message": message, "branch": branch},
+    ))
 
     return {"saved": True, "message": message, "sha": sha}
 
