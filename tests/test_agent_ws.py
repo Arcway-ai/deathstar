@@ -91,6 +91,8 @@ class TestSessionEviction:
         stale = mod.AgentSession(
             conversation_id="stale-1",
             repo="test",
+            branch=None,
+            working_dir=Path("/tmp/test-ws/projects/test"),
             workflow=WorkflowKind.PROMPT,
             client=mock_client,
             created_at=time.time() - mod._SESSION_TTL_SECONDS - 100,
@@ -101,6 +103,8 @@ class TestSessionEviction:
         fresh = mod.AgentSession(
             conversation_id="fresh-1",
             repo="test",
+            branch=None,
+            working_dir=Path("/tmp/test-ws/projects/test"),
             workflow=WorkflowKind.PROMPT,
             client=MagicMock(),
         )
@@ -251,3 +255,124 @@ class TestProtectedBranchPush:
         mod = _import_agent_ws()
         result = mod._check_protected_branch_push("Bash", "git push origin main")
         assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# Branch locking lifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestBranchLocking:
+    def test_release_session_removes_lock(self):
+        mod = _import_agent_ws()
+        session = mod.AgentSession(
+            conversation_id="lock-test-1",
+            repo="my-repo",
+            branch="feature/x",
+            working_dir=Path("/tmp/test-ws/projects/my-repo"),
+            workflow=WorkflowKind.PROMPT,
+            client=MagicMock(),
+        )
+        mod._sessions["lock-test-1"] = session
+        mod._branch_locks[("my-repo", "feature/x")] = "lock-test-1"
+
+        mod._release_session(session)
+
+        assert "lock-test-1" not in mod._sessions
+        assert ("my-repo", "feature/x") not in mod._branch_locks
+
+    def test_release_session_does_not_remove_other_lock(self):
+        mod = _import_agent_ws()
+        session = mod.AgentSession(
+            conversation_id="lock-test-2",
+            repo="my-repo",
+            branch="feature/y",
+            working_dir=Path("/tmp/test-ws/projects/my-repo"),
+            workflow=WorkflowKind.PROMPT,
+            client=MagicMock(),
+        )
+        mod._sessions["lock-test-2"] = session
+        # Lock held by a different session
+        mod._branch_locks[("my-repo", "feature/y")] = "someone-else"
+
+        mod._release_session(session)
+
+        assert "lock-test-2" not in mod._sessions
+        # Lock should NOT be removed since it belongs to a different session
+        assert mod._branch_locks[("my-repo", "feature/y")] == "someone-else"
+
+        # Cleanup
+        mod._branch_locks.pop(("my-repo", "feature/y"), None)
+
+    def test_release_session_no_branch(self):
+        mod = _import_agent_ws()
+        session = mod.AgentSession(
+            conversation_id="lock-test-3",
+            repo="my-repo",
+            branch=None,
+            working_dir=Path("/tmp/test-ws/projects/my-repo"),
+            workflow=WorkflowKind.PROMPT,
+            client=MagicMock(),
+        )
+        mod._sessions["lock-test-3"] = session
+
+        mod._release_session(session)
+
+        assert "lock-test-3" not in mod._sessions
+
+    def test_get_active_branches_returns_snapshot(self):
+        mod = _import_agent_ws()
+        mod._branch_locks[("repo-a", "branch-1")] = "conv-1"
+        mod._branch_locks[("repo-a", "branch-2")] = "conv-2"
+
+        snapshot = mod.get_active_branches()
+
+        assert snapshot == {("repo-a", "branch-1"): "conv-1", ("repo-a", "branch-2"): "conv-2"}
+        # Snapshot should be a copy
+        snapshot[("repo-a", "branch-3")] = "conv-3"
+        assert ("repo-a", "branch-3") not in mod._branch_locks
+
+        # Cleanup
+        mod._branch_locks.pop(("repo-a", "branch-1"), None)
+        mod._branch_locks.pop(("repo-a", "branch-2"), None)
+
+
+# ---------------------------------------------------------------------------
+# Branch name validation
+# ---------------------------------------------------------------------------
+
+
+class TestBranchValidation:
+    def test_valid_branch_names(self):
+        mod = _import_agent_ws()
+        assert mod._validate_branch_name("feature/auth") is True
+        assert mod._validate_branch_name("bugfix/login-fix") is True
+        assert mod._validate_branch_name("main") is True
+        assert mod._validate_branch_name("deathstar/20260329-fix") is True
+        assert mod._validate_branch_name("user/john.doe/fix") is True
+
+    def test_rejects_empty(self):
+        mod = _import_agent_ws()
+        assert mod._validate_branch_name("") is False
+
+    def test_rejects_path_traversal(self):
+        mod = _import_agent_ws()
+        assert mod._validate_branch_name("../etc/passwd") is False
+        assert mod._validate_branch_name("feature/../../etc") is False
+
+    def test_rejects_leading_dash(self):
+        mod = _import_agent_ws()
+        assert mod._validate_branch_name("-bad-name") is False
+
+    def test_rejects_lock_suffix(self):
+        mod = _import_agent_ws()
+        assert mod._validate_branch_name("branch.lock") is False
+
+    def test_rejects_special_chars(self):
+        mod = _import_agent_ws()
+        assert mod._validate_branch_name("branch name with spaces") is False
+        assert mod._validate_branch_name("branch;rm -rf /") is False
+
+    def test_rejects_too_long(self):
+        mod = _import_agent_ws()
+        assert mod._validate_branch_name("a" * 257) is False

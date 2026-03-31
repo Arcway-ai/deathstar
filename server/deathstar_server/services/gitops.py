@@ -188,6 +188,10 @@ class GitService:
 
         return branch
 
+    def primary_branch(self, repo_root: Path) -> str:
+        """Return the current branch of the primary checkout."""
+        return self.current_branch(repo_root)
+
     def has_uncommitted_changes(self, repo_root: Path, pathspec: str = ".") -> bool:
         return bool(
             self._run(

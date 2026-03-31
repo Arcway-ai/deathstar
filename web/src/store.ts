@@ -95,10 +95,6 @@ interface Store {
   /* ── Workflow + Persona ─────────────────────────────────────── */
   workflow: WorkflowKind;
   setWorkflow: (w: WorkflowKind) => void;
-  writeChanges: boolean;
-  setWriteChanges: (v: boolean) => void;
-  openPR: boolean;
-  setOpenPR: (v: boolean) => void;
   autoAccept: boolean;
   setAutoAccept: (v: boolean) => void;
   persona: Persona;
@@ -290,6 +286,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
       set({ repoContext: context, repos, commits });
     } catch { /* ignore */ }
     await get().loadBranches();
+    await get().loadConversations(selectedRepo);
   },
 
   createAndSwitchBranch: async (branch) => {
@@ -427,7 +424,9 @@ export const useStore = create<Store>()(persist((set, get) => ({
 
   loadConversations: async (repo) => {
     try {
-      const conversations = await api.fetchConversations(repo);
+      const { repoContext } = get();
+      const branch = repoContext?.branch;
+      const conversations = await api.fetchConversations(repo, branch ?? undefined);
       set({ conversations });
     } catch { /* ignore */ }
   },
@@ -466,7 +465,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
   abortStream: null,
 
   sendMessage: async (message) => {
-    const { selectedRepo, workflow, persona, conversationId, openPR, selectedModel, repoContext, memories, selectedPR } = get();
+    const { selectedRepo, workflow, persona, conversationId, selectedModel, repoContext, memories, selectedPR } = get();
     if (!selectedRepo) return;
 
     // Auto-generate review prompt when no text is provided
@@ -523,18 +522,17 @@ export const useStore = create<Store>()(persist((set, get) => ({
             messages: [optimisticMsg],
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
+            branch: repoContext?.branch ?? null,
           },
     }));
-
-    // When "Open PR" is toggled on Code workflow, send "pr" to the backend
-    const effectiveWorkflow = workflow === "patch" && openPR ? "pr" : workflow;
 
     // Use the singleton agent socket
     _ensureAgentSocket();
     _agentSocket!.start({
       repo: selectedRepo,
+      branch: repoContext?.branch ?? undefined,
       message: effectiveMessage,
-      workflow: effectiveWorkflow,
+      workflow,
       conversation_id: conversationId ?? undefined,
       model: selectedModel ?? undefined,
       system,
@@ -589,10 +587,6 @@ export const useStore = create<Store>()(persist((set, get) => ({
     }
     set(updates);
   },
-  writeChanges: false,
-  setWriteChanges: (v) => set({ writeChanges: v }),
-  openPR: false,
-  setOpenPR: (v) => set({ openPR: v }),
   autoAccept: true,
   setAutoAccept: (v) => set({ autoAccept: v }),
   persona: defaultPersona,
@@ -859,7 +853,6 @@ export const useStore = create<Store>()(persist((set, get) => ({
   partialize: (state) => ({
     // Only persist UI preferences — repo/conversation live in the URL
     workflow: state.workflow,
-    openPR: state.openPR,
     autoAccept: state.autoAccept,
     persona: state.persona,
     selectedProvider: state.selectedProvider,
@@ -1088,6 +1081,16 @@ function _ensureAgentSocket(): void {
           const sender = (event.data.sender as string) || "Someone";
           const ref = (event.data.ref as string) || "";
           const branch = ref.replace("refs/heads/", "");
+          const currentBranch = s.repoContext?.branch;
+
+          // If we're already on the pushed branch, this is most likely our
+          // own push (from the agent or terminal).  No need to show a "Sync
+          // now" toast — just silently refresh context so the UI stays fresh.
+          if (currentBranch && branch === currentBranch) {
+            void Promise.all([refreshContext(), refreshCommits()]);
+            break;
+          }
+
           const commitCount = Array.isArray(event.data.commits) ? event.data.commits.length : 0;
           const desc = commitCount > 0
             ? `${sender} pushed ${commitCount} commit${commitCount > 1 ? "s" : ""} to ${branch}`

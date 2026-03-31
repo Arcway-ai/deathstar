@@ -164,6 +164,7 @@ export interface ConversationSummary {
   message_count: number;
   created_at: string;
   updated_at: string;
+  branch: string | null;
 }
 
 export interface ConversationDetail {
@@ -173,6 +174,7 @@ export interface ConversationDetail {
   messages: ConversationMessage[];
   created_at: string;
   updated_at: string;
+  branch: string | null;
 }
 
 export interface ProviderStatus {

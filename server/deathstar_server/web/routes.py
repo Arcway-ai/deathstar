@@ -337,6 +337,30 @@ def repo_context(name: str) -> RepoContextResponse:
     )
 
 
+class WorktreeResponse(BaseModel):
+    path: str
+    branch: str
+    head_sha: str
+    is_primary: bool
+
+
+@web_router.get("/repos/{name}/worktrees", response_model=list[WorktreeResponse])
+def list_worktrees(name: str) -> list[WorktreeResponse]:
+    """List active git worktrees for a repo."""
+    from deathstar_server.app_state import worktree_manager
+    repo_root = git_service.resolve_target(name)
+    worktrees = worktree_manager.list_worktrees(repo_root)
+    return [
+        WorktreeResponse(
+            path=str(wt.path),
+            branch=wt.branch,
+            head_sha=wt.head_sha,
+            is_primary=wt.is_primary,
+        )
+        for wt in worktrees
+    ]
+
+
 @web_router.get("/repos/{name}/branches")
 def list_branches(name: str) -> dict[str, object]:
     """List local branches and identify the current one."""
@@ -891,7 +915,7 @@ def list_github_repos() -> list[GitHubRepoInfo]:
 
 
 @web_router.post("/github/clone")
-def clone_github_repo(request: CloneRequest) -> dict[str, str]:
+def clone_github_repo(request: CloneRequest) -> dict[str, str | None]:
     """Clone a GitHub repo into the projects directory."""
     if not settings.github_token:
         raise AppError(
@@ -1035,8 +1059,11 @@ async def apply_suggestions(request: ApplySuggestionsRequest) -> ApplySuggestion
 
 
 @web_router.get("/conversations", response_model=list[ConversationSummary])
-def list_conversations(repo: str | None = Query(default=None)) -> list[ConversationSummary]:
-    return _get_conversation_store().list_conversations(repo)
+def list_conversations(
+    repo: str | None = Query(default=None),
+    branch: str | None = Query(default=None),
+) -> list[ConversationSummary]:
+    return _get_conversation_store().list_conversations(repo, branch)
 
 
 @web_router.get("/conversations/{conversation_id}", response_model=ConversationDetail)

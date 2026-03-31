@@ -137,6 +137,12 @@ export async function syncBranch(
   });
 }
 
+export async function fetchWorktrees(
+  name: string,
+): Promise<{ path: string; branch: string; head_sha: string; is_primary: boolean }[]> {
+  return request(`/repos/${encodeURIComponent(name)}/worktrees`);
+}
+
 export async function fetchCommits(
   name: string,
   limit = 30,
@@ -172,8 +178,11 @@ export async function fetchPullRequests(
 
 /* ── Conversations ─────────────────────────────────────────────── */
 
-export async function fetchConversations(repo?: string): Promise<ConversationSummary[]> {
-  const params = repo ? `?repo=${encodeURIComponent(repo)}` : "";
+export async function fetchConversations(repo?: string, branch?: string): Promise<ConversationSummary[]> {
+  const parts: string[] = [];
+  if (repo) parts.push(`repo=${encodeURIComponent(repo)}`);
+  if (branch) parts.push(`branch=${encodeURIComponent(branch)}`);
+  const params = parts.length > 0 ? `?${parts.join("&")}` : "";
   return request<ConversationSummary[]>(`/conversations${params}`);
 }
 

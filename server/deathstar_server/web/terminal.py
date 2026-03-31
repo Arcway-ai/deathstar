@@ -14,6 +14,7 @@ import termios
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from deathstar_server.app_state import settings
+from deathstar_server.errors import AppError
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +45,15 @@ def _authenticate(websocket: WebSocket) -> bool:
 async def terminal_ws(
     websocket: WebSocket,
     repo: str | None = Query(default=None),
+    branch: str | None = Query(default=None),
 ):
     """WebSocket terminal endpoint.
 
     Query params:
       - repo: optional repo name to cd into on start
+      - branch: optional branch name to resolve via worktree
     """
-    logger.info("terminal WS connection attempt from %s (repo=%s)", websocket.client, repo)
+    logger.info("terminal WS connection attempt from %s (repo=%s branch=%s)", websocket.client, repo, branch)
 
     if not _authenticate(websocket):
         logger.warning("terminal auth failed for %s", websocket.client)
@@ -80,7 +83,20 @@ async def terminal_ws(
             await websocket.close(code=4003, reason="invalid repo name")
             return
         if repo_path.is_dir():
-            cwd = str(repo_path)
+            # Resolve via worktree manager if branch is specified
+            if branch:
+                try:
+                    from deathstar_server.app_state import worktree_manager
+                    resolved = worktree_manager.resolve_working_dir(repo, branch)
+                    cwd = str(resolved)
+                except AppError as exc:
+                    logger.warning(
+                        "terminal: failed to resolve worktree for %s/%s: %s — falling back to repo root",
+                        repo, branch, exc.message,
+                    )
+                    cwd = str(repo_path)
+            else:
+                cwd = str(repo_path)
 
     # Spawn PTY + shell
     logger.info("terminal %s: spawning PTY in %s", session_id, cwd)

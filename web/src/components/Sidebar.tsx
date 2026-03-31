@@ -54,8 +54,11 @@ function ConversationList() {
   const conversations = useStore((s) => s.conversations);
   const conversationId = useStore((s) => s.conversationId);
   const selectedRepo = useStore((s) => s.selectedRepo);
+  const repoContext = useStore((s) => s.repoContext);
   const deleteConversation = useStore((s) => s.deleteConversation);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
+
+  const currentBranch = repoContext?.branch;
 
   if (conversations.length === 0) {
     return (
@@ -67,39 +70,49 @@ function ConversationList() {
 
   return (
     <div className="space-y-0.5">
-      {conversations.map((c) => (
-        <div
-          key={c.id}
-          className={`group flex items-center gap-2 rounded-md px-2 py-2 cursor-pointer transition-colors ${
-            c.id === conversationId
-              ? "bg-accent-muted text-accent"
-              : "text-text-secondary hover:bg-bg-hover"
-          }`}
-          onClick={() => {
-            if (selectedRepo) {
-              navigate(`/${encodeURIComponent(selectedRepo)}/c/${encodeURIComponent(c.id)}`);
-              // Close sidebar on mobile after selection
-              if (window.innerWidth < 768) toggleSidebar();
-            }
-          }}
-        >
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-medium">{c.title}</p>
-            <p className="text-[10px] text-text-muted">
-              {c.message_count} messages
-            </p>
-          </div>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              deleteConversation(c.id);
+      {conversations.map((c) => {
+        const showBranchBadge = c.branch && c.branch !== currentBranch;
+        return (
+          <div
+            key={c.id}
+            className={`group flex items-center gap-2 rounded-md px-2 py-2 cursor-pointer transition-colors ${
+              c.id === conversationId
+                ? "bg-accent-muted text-accent"
+                : "text-text-secondary hover:bg-bg-hover"
+            }`}
+            onClick={() => {
+              if (selectedRepo) {
+                navigate(`/${encodeURIComponent(selectedRepo)}/c/${encodeURIComponent(c.id)}`);
+                // Close sidebar on mobile after selection
+                if (window.innerWidth < 768) toggleSidebar();
+              }
             }}
-            className="invisible flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted hover:bg-error/20 hover:text-error group-hover:visible"
           >
-            <Trash2 size={12} />
-          </button>
-        </div>
-      ))}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-medium">{c.title}</p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-text-muted">
+                  {c.message_count} messages
+                </span>
+                {showBranchBadge && (
+                  <span className="rounded bg-bg-hover px-1 py-0.5 text-[9px] text-text-muted">
+                    {c.branch}
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteConversation(c.id);
+              }}
+              className="invisible flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted hover:bg-error/20 hover:text-error group-hover:visible"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }

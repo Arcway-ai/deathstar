@@ -272,6 +272,7 @@ class ConversationSummary(DeathStarModel):
     message_count: int
     created_at: datetime
     updated_at: datetime
+    branch: str | None = None
 
 
 class ConversationDetail(DeathStarModel):
@@ -281,6 +282,7 @@ class ConversationDetail(DeathStarModel):
     messages: list[ConversationMessage]
     created_at: datetime
     updated_at: datetime
+    branch: str | None = None
 
 
 # ---------------------------------------------------------------------------

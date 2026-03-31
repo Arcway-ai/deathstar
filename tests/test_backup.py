@@ -33,6 +33,8 @@ def _make_settings(tmp_path: Path) -> Settings:
         api_token=None,
         github_webhook_secret=None,
         github_poll_interval_seconds=30,
+        max_worktrees_per_repo=6,
+        max_total_worktrees=16,
     )
 
 

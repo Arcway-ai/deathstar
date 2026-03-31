@@ -9,6 +9,7 @@ export type ConnectionState = "disconnected" | "connecting" | "connected";
 
 export interface AgentStartConfig {
   repo: string;
+  branch?: string;
   message: string;
   workflow: string;
   conversation_id?: string;

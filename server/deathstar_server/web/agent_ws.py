@@ -32,6 +32,7 @@ from claude_agent_sdk.types import (
     ThinkingBlock,
 )
 
+from deathstar_server.errors import AppError
 from deathstar_shared.models import WorkflowKind
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,8 @@ _SESSION_TTL_SECONDS = 15 * 60  # 15 minutes
 class AgentSession:
     conversation_id: str
     repo: str
+    branch: str | None
+    working_dir: Path
     workflow: WorkflowKind
     client: ClaudeSDKClient
     created_at: float = field(default_factory=time.time)
@@ -60,6 +63,37 @@ class AgentSession:
 
 
 _sessions: dict[str, AgentSession] = {}
+
+# Maps (repo, branch) -> conversation_id that holds the lock
+_branch_locks: dict[tuple[str, str], str] = {}
+
+
+_BRANCH_NAME_RE = re.compile(r"^[a-zA-Z0-9._/\-]+$")
+
+
+def _validate_branch_name(branch: str) -> bool:
+    """Validate a branch name to prevent injection via crafted branch strings."""
+    if not branch or len(branch) > 256:
+        return False
+    if branch.startswith("-") or branch.startswith("."):
+        return False
+    if ".." in branch or branch.endswith(".lock"):
+        return False
+    return bool(_BRANCH_NAME_RE.match(branch))
+
+
+def _release_session(session: AgentSession) -> None:
+    """Release a session's branch lock and remove it from the session map."""
+    _sessions.pop(session.conversation_id, None)
+    if session.branch:
+        lock_key = (session.repo, session.branch)
+        if _branch_locks.get(lock_key) == session.conversation_id:
+            _branch_locks.pop(lock_key, None)
+
+
+def get_active_branches() -> dict[tuple[str, str], str]:
+    """Return a snapshot of active branch locks for external consumers (e.g. reaper)."""
+    return dict(_branch_locks)
 
 _AUTH_ERROR_HINTS = (
     "auth", "unauthorized", "unauthenticated", "token", "credential",
@@ -214,12 +248,15 @@ async def _evict_stale_sessions() -> None:
         if now - s.last_active > _SESSION_TTL_SECONDS
     ]
     for k in stale:
-        session = _sessions.pop(k)
+        session = _sessions.get(k)
+        if not session:
+            continue
+        _release_session(session)
         try:
             await session.client.disconnect()
         except Exception:
             pass
-        logger.info("evicted stale agent session %s", k)
+        logger.info("evicted stale agent session %s (branch=%s)", k, session.branch)
 
 
 # ---------------------------------------------------------------------------
@@ -462,9 +499,13 @@ async def agent_ws(
         # Cancel event forwarding
         if event_forward_task:
             event_forward_task.cancel()
-        # Detach WebSocket but keep session alive for reconnection
         if session:
-            session.websocket = None
+            # Release branch lock so another session can use this branch
+            _release_session(session)
+            try:
+                await session.client.disconnect()
+            except Exception:
+                pass
 
 
 async def _handle_start(
@@ -473,7 +514,7 @@ async def _handle_start(
     existing_session: AgentSession | None,
 ) -> AgentSession | None:
     """Handle a 'start' message — create or reuse an agent session."""
-    from deathstar_server.app_state import conversation_store, git_service
+    from deathstar_server.app_state import conversation_store, worktree_manager
 
     repo = msg.get("repo", "")
     message = msg.get("message", "")
@@ -482,24 +523,67 @@ async def _handle_start(
     model = msg.get("model")
     system_prompt = msg.get("system")
     auto_accept = msg.get("auto_accept", False)
+    branch = msg.get("branch") or None  # Normalize empty string to None
 
     try:
         workflow = WorkflowKind(workflow_str)
     except ValueError:
         workflow = WorkflowKind.PROMPT
 
-    logger.info("agent start: repo=%s workflow=%s conv=%s model=%s", repo, workflow_str, conversation_id, model)
+    logger.info(
+        "agent start: repo=%s branch=%s workflow=%s conv=%s model=%s",
+        repo, branch, workflow_str, conversation_id, model,
+    )
 
-    # Resolve repo directory
-    repo_root = git_service.resolve_target(repo)
-    logger.info("resolved repo root: %s", repo_root)
+    # Validate branch name
+    if branch and not _validate_branch_name(branch):
+        await _send(
+            websocket, "error",
+            code="INVALID_REQUEST",
+            message=f"Invalid branch name: '{branch}'",
+        )
+        return existing_session
 
-    # Ensure .claudeignore exists so the CLI doesn't scan heavy dirs
-    _ensure_claudeignore(repo_root)
+    # Check branch lock BEFORE creating worktree (issue 5)
+    if branch:
+        lock_key = (repo, branch)
+        holder = _branch_locks.get(lock_key)
+        if holder and holder != conversation_id and holder in _sessions:
+            await _send(
+                websocket, "error",
+                code="BRANCH_LOCKED",
+                message=f"Branch '{branch}' is already in use by another session.",
+            )
+            return existing_session
+        # Register lock immediately to prevent races (issue 8)
+        _branch_locks[lock_key] = conversation_id or "__pending__"
+
+    # Resolve working directory via worktree manager
+    try:
+        cwd = worktree_manager.resolve_working_dir(repo, branch)
+    except AppError as exc:
+        # Release the lock we just acquired since we can't proceed
+        if branch:
+            _branch_locks.pop((repo, branch), None)
+        await _send(
+            websocket, "error",
+            code="WORKTREE_ERROR",
+            message=f"Failed to resolve working directory: {exc.message}",
+        )
+        return existing_session
+
+    logger.info("resolved working dir: %s (branch=%s)", cwd, branch)
+
+    # Ensure .claudeignore exists in the working directory
+    _ensure_claudeignore(cwd)
 
     # Get or create conversation
-    conversation_id = conversation_store.get_or_create(conversation_id, repo)
+    conversation_id = conversation_store.get_or_create(conversation_id, repo, branch)
     conversation_store.add_user_message(conversation_id, message)
+
+    # Update branch lock with real conversation_id
+    if branch:
+        _branch_locks[(repo, branch)] = conversation_id
 
     # Look up existing SDK session ID for multi-turn continuity
     sdk_session_id = conversation_store.get_session_id(conversation_id)
@@ -514,18 +598,18 @@ async def _handle_start(
     else:
         # Pre-flight auth check before creating a new client
         if not _check_claude_auth():
+            if branch:
+                _branch_locks.pop((repo, branch), None)
             await _send(
                 websocket, "error",
                 code="AUTH_REQUIRED",
                 message="Claude is not authenticated. Open the Claude menu in the top bar to connect your account.",
             )
-            # Return a stub session so the WS loop continues
             return None
 
         # Create a new ClaudeSDKClient
         if existing_session:
-            # Clean up old session
-            _sessions.pop(existing_session.conversation_id, None)
+            _release_session(existing_session)
             try:
                 await existing_session.client.disconnect()
             except Exception:
@@ -565,14 +649,14 @@ async def _handle_start(
 
         options = _build_options(
             workflow=workflow,
-            cwd=str(repo_root),
+            cwd=str(cwd),
             system_prompt=system_prompt,
             model=model,
             session_id=sdk_session_id,
             can_use_tool=can_use_tool,
         )
 
-        logger.info("creating ClaudeSDKClient with cwd=%s, workflow=%s", repo_root, workflow)
+        logger.info("creating ClaudeSDKClient with cwd=%s, workflow=%s", cwd, workflow)
         client = ClaudeSDKClient(options=options)
         try:
             logger.info("connecting ClaudeSDKClient...")
@@ -586,12 +670,16 @@ async def _handle_start(
                 else f"Failed to start Claude agent: {exc}"
             )
             logger.error("ClaudeSDKClient.connect() failed: %s", exc, exc_info=True)
+            if branch:
+                _branch_locks.pop((repo, branch), None)
             await _send(websocket, "error", code=error_code, message=error_msg)
             return None
 
         session = AgentSession(
             conversation_id=conversation_id,
             repo=repo,
+            branch=branch,
+            working_dir=cwd,
             workflow=workflow,
             client=client,
             websocket=websocket,
@@ -666,7 +754,7 @@ async def _post_agent_open_pr(
     """
     from deathstar_server.app_state import git_service, github_service
 
-    repo_root = git_service.resolve_target(session.repo)
+    repo_root = session.working_dir
     current = git_service.current_branch(repo_root)
     has_uncommitted = git_service.has_uncommitted_changes(repo_root)
 
@@ -773,6 +861,9 @@ async def _read_messages(websocket: WebSocket, session: AgentSession, *, prompt:
 
     started = time.perf_counter()
     accumulated_text = ""
+    # Track text sent to WS via stream deltas so AssistantMessage blocks
+    # never re-send what was already streamed (fixes duplicate messages).
+    delta_sent_text = ""
     accumulated_blocks: list[dict] = []
     msg_count = 0
 
@@ -792,19 +883,26 @@ async def _read_messages(websocket: WebSocket, session: AgentSession, *, prompt:
                 logger.info("  AssistantMessage blocks: %s", [type(b).__name__ for b in message.content])
                 for block in message.content:
                     if isinstance(block, TextBlock):
-                        # Only append to accumulated_text if we haven't already
-                        # received this text via StreamEvent deltas (which arrive
-                        # first). Without this guard, the text appears twice.
-                        if not accumulated_text.endswith(block.text):
+                        # Stream deltas already delivered this text to the
+                        # WebSocket.  Only send from AssistantMessage if the
+                        # text was genuinely NOT seen via deltas (e.g. SDK
+                        # skipped streaming).  The previous `endswith` check
+                        # broke when multiple text blocks existed in a turn.
+                        already_sent = (
+                            block.text in delta_sent_text
+                            or block.text in accumulated_text
+                        )
+                        if not already_sent:
                             accumulated_text += block.text
                             await _send(websocket, "text_delta", text=block.text)
-                        # Always track in blocks for storage
+                        elif not accumulated_text.endswith(block.text) and block.text not in accumulated_text:
+                            accumulated_text += block.text
+                        # Track in blocks for DB storage
                         if accumulated_blocks and accumulated_blocks[-1].get("type") == "text":
-                            # Block text is already there from stream deltas — skip merge
-                            if not accumulated_blocks[-1]["text"].endswith(block.text):
+                            if block.text not in accumulated_blocks[-1]["text"]:
                                 accumulated_blocks[-1]["text"] += block.text
                         else:
-                            if not any(b.get("type") == "text" and b["text"].endswith(block.text) for b in accumulated_blocks):
+                            if not any(b.get("type") == "text" and block.text in b["text"] for b in accumulated_blocks):
                                 accumulated_blocks.append({"type": "text", "text": block.text})
                     elif isinstance(block, ToolUseBlock):
                         logger.info("  ToolUse: %s", block.name)
@@ -858,6 +956,7 @@ async def _read_messages(websocket: WebSocket, session: AgentSession, *, prompt:
                         text = delta.get("text", "")
                         if text:
                             accumulated_text += text
+                            delta_sent_text += text
                             # Merge into last text block
                             if accumulated_blocks and accumulated_blocks[-1].get("type") == "text":
                                 accumulated_blocks[-1]["text"] += text
@@ -894,7 +993,7 @@ async def _read_messages(websocket: WebSocket, session: AgentSession, *, prompt:
                     )
                     conversation_store.update_session_id(session.conversation_id, None)
                     # Also tear down the cached client so next request builds a new one
-                    _sessions.pop(session.conversation_id, None)
+                    _release_session(session)
                     try:
                         await session.client.disconnect()
                     except Exception:

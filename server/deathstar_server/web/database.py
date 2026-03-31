@@ -9,7 +9,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -22,10 +22,12 @@ CREATE TABLE IF NOT EXISTS conversations (
     title TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    sdk_session_id TEXT
+    sdk_session_id TEXT,
+    branch TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_repo ON conversations(repo);
 CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversations_repo_branch ON conversations(repo, branch);
 
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
@@ -136,6 +138,14 @@ class Database:
         if from_version < 3:
             conn.execute("ALTER TABLE messages ADD COLUMN agent_blocks TEXT")
             logger.info("migration v3: added agent_blocks column to messages")
+
+        if from_version < 4:
+            conn.execute("ALTER TABLE conversations ADD COLUMN branch TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversations_repo_branch "
+                "ON conversations(repo, branch)"
+            )
+            logger.info("migration v4: added branch column to conversations")
 
         conn.execute(
             "UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,)

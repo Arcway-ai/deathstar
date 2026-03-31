@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 from contextlib import asynccontextmanager
@@ -9,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from deathstar_server.app_state import event_bus, settings
+from deathstar_server.app_state import event_bus, settings, worktree_manager
 from deathstar_server.errors import AppError
 from deathstar_server.routes import router
 from deathstar_server.services.github_poller import GitHubPoller
@@ -36,11 +37,43 @@ if not settings.api_token:
 _github_poller = GitHubPoller(settings, event_bus)
 
 
+async def _worktree_reaper() -> None:
+    """Periodically clean up stale worktrees not tied to active sessions."""
+    from deathstar_server.web.agent_ws import get_active_branches
+
+    while True:
+        await asyncio.sleep(300)  # Every 5 minutes
+        try:
+            # Take a snapshot to avoid iteration over a mutating dict
+            locks_snapshot = get_active_branches()
+            projects = settings.projects_root
+            if not projects.is_dir():
+                continue
+            for entry in projects.iterdir():
+                if not entry.is_dir() or entry.name.startswith("."):
+                    continue
+                git_dir = entry / ".git"
+                if not git_dir.exists():
+                    continue
+                # Collect active branches for this repo from snapshot
+                active = {
+                    branch for (repo, branch), _ in locks_snapshot.items()
+                    if repo == entry.name
+                }
+                removed = worktree_manager.cleanup_stale(entry, active)
+                if removed:
+                    logger.info("worktree reaper: cleaned %d stale worktrees for %s", removed, entry.name)
+        except Exception:
+            logger.warning("worktree reaper error", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start/stop background services."""
     await _github_poller.start()
+    reaper_task = asyncio.create_task(_worktree_reaper(), name="worktree-reaper")
     yield
+    reaper_task.cancel()
     await _github_poller.stop()
 
 

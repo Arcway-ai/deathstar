@@ -5,7 +5,6 @@ import {
   BookOpen,
   ShieldCheck,
   Map,
-  GitPullRequest,
   Zap,
 } from "lucide-react";
 import { useStore } from "../store";
@@ -28,7 +27,7 @@ const workflows: {
     id: "patch",
     label: "Code",
     icon: Code2,
-    hint: "Write code changes — apply to your repo and optionally open a PR",
+    hint: "Write code changes directly in your repo",
   },
   {
     id: "review",
@@ -59,25 +58,9 @@ const workflows: {
 export default function WorkflowPills() {
   const workflow = useStore((s) => s.workflow);
   const setWorkflow = useStore((s) => s.setWorkflow);
-  const writeChanges = useStore((s) => s.writeChanges);
-  const setWriteChanges = useStore((s) => s.setWriteChanges);
-  const openPR = useStore((s) => s.openPR);
-  const setOpenPR = useStore((s) => s.setOpenPR);
   const autoAccept = useStore((s) => s.autoAccept);
   const setAutoAccept = useStore((s) => s.setAutoAccept);
   const active = workflows.find((w) => w.id === workflow);
-
-  const handleWriteChanges = (checked: boolean) => {
-    setWriteChanges(checked);
-    // Can't open PR without applying changes
-    if (!checked) setOpenPR(false);
-  };
-
-  const handleOpenPR = (checked: boolean) => {
-    setOpenPR(checked);
-    // Opening a PR requires applying changes
-    if (checked) setWriteChanges(true);
-  };
 
   return (
     <div className="mb-2">
@@ -108,31 +91,6 @@ export default function WorkflowPills() {
           <Zap size={12} />
           Auto-accept
         </label>
-
-        {/* Code workflow toggles */}
-        {workflow === "patch" && (
-          <>
-            <label className="ml-2 flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary">
-              <input
-                type="checkbox"
-                checked={writeChanges}
-                onChange={(e) => handleWriteChanges(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border-default accent-accent"
-              />
-              Apply changes
-            </label>
-            <label className="ml-2 flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title="Create a branch, commit, push, and open a pull request">
-              <input
-                type="checkbox"
-                checked={openPR}
-                onChange={(e) => handleOpenPR(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border-default accent-accent"
-              />
-              <GitPullRequest size={12} />
-              Open PR
-            </label>
-          </>
-        )}
 
       </div>
 

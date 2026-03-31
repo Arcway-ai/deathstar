@@ -24,13 +24,16 @@ export default function TerminalPanel() {
   const [maximized, setMaximized] = useState(false);
   const closeTerminal = useStore((s) => s.closeTerminal);
 
+  const repoContext = useStore((s) => s.repoContext);
+
   const buildWsUrl = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const repoParam = selectedRepo
-      ? `?repo=${encodeURIComponent(selectedRepo)}`
-      : "";
-    return `${protocol}//${window.location.host}/web/api/terminal${repoParam}`;
-  }, [selectedRepo]);
+    const params: string[] = [];
+    if (selectedRepo) params.push(`repo=${encodeURIComponent(selectedRepo)}`);
+    if (repoContext?.branch) params.push(`branch=${encodeURIComponent(repoContext.branch)}`);
+    const query = params.length > 0 ? `?${params.join("&")}` : "";
+    return `${protocol}//${window.location.host}/web/api/terminal${query}`;
+  }, [selectedRepo, repoContext?.branch]);
 
   const connect = useCallback(() => {
     const term = xtermRef.current;

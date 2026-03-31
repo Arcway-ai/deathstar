@@ -6,6 +6,7 @@ from deathstar_server.services import agent as agent_service  # noqa: F401
 from deathstar_server.services.backup import BackupService
 from deathstar_server.services.github import GitHubService
 from deathstar_server.services.gitops import GitService
+from deathstar_server.services.worktree import WorktreeManager
 from deathstar_server.web.database import Database
 from deathstar_server.web.conversations import ConversationStore
 from deathstar_server.services.event_bus import EventBus
@@ -25,6 +26,7 @@ os.environ.pop("CLAUDE_API_KEY", None)
 git_service = GitService(settings)
 github_service = GitHubService(settings)
 backup_service = BackupService(settings)
+worktree_manager = WorktreeManager(settings)
 
 # SQLite database — single file, backed up with the rest of /workspace
 db = Database(settings.workspace_root / "deathstar" / "deathstar.db")

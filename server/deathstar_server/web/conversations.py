@@ -26,21 +26,31 @@ class ConversationStore:
     # Public API
     # ------------------------------------------------------------------
 
-    def list_conversations(self, repo: str | None = None) -> list[ConversationSummary]:
+    def list_conversations(
+        self, repo: str | None = None, branch: str | None = None,
+    ) -> list[ConversationSummary]:
         conn = self._db.get_conn()
+        base = (
+            "SELECT c.id, c.repo, c.title, c.created_at, c.updated_at, c.branch, "
+            "(SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) AS message_count "
+            "FROM conversations c"
+        )
+        conditions: list[str] = []
+        params: list[str] = []
         if repo:
-            rows = conn.execute(
-                "SELECT c.id, c.repo, c.title, c.created_at, c.updated_at, "
-                "(SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) AS message_count "
-                "FROM conversations c WHERE c.repo = ? ORDER BY c.updated_at DESC",
-                (repo,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT c.id, c.repo, c.title, c.created_at, c.updated_at, "
-                "(SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) AS message_count "
-                "FROM conversations c ORDER BY c.updated_at DESC",
-            ).fetchall()
+            conditions.append("c.repo = ?")
+            params.append(repo)
+        if branch:
+            # Show conversations for this branch AND legacy ones (branch IS NULL)
+            conditions.append("(c.branch = ? OR c.branch IS NULL)")
+            params.append(branch)
+
+        query = base
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY c.updated_at DESC"
+
+        rows = conn.execute(query, params).fetchall()
         return [
             ConversationSummary(
                 id=r["id"],
@@ -49,6 +59,7 @@ class ConversationStore:
                 message_count=r["message_count"],
                 created_at=r["created_at"],
                 updated_at=r["updated_at"],
+                branch=r["branch"],
             )
             for r in rows
         ]
@@ -56,7 +67,7 @@ class ConversationStore:
     def get_conversation(self, conversation_id: str) -> ConversationDetail | None:
         conn = self._db.get_conn()
         c = conn.execute(
-            "SELECT id, repo, title, created_at, updated_at "
+            "SELECT id, repo, title, created_at, updated_at, branch "
             "FROM conversations WHERE id = ?",
             (conversation_id,),
         ).fetchone()
@@ -87,6 +98,7 @@ class ConversationStore:
             ],
             created_at=c["created_at"],
             updated_at=c["updated_at"],
+            branch=c["branch"],
         )
 
     def delete_conversation(self, conversation_id: str) -> bool:
@@ -97,7 +109,9 @@ class ConversationStore:
         conn.commit()
         return cur.rowcount > 0
 
-    def get_or_create(self, conversation_id: str | None, repo: str) -> str:
+    def get_or_create(
+        self, conversation_id: str | None, repo: str, branch: str | None = None,
+    ) -> str:
         conn = self._db.get_conn()
         if conversation_id:
             row = conn.execute(
@@ -109,9 +123,9 @@ class ConversationStore:
         cid = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            "INSERT INTO conversations (id, repo, title, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (cid, repo, "New conversation", now, now),
+            "INSERT INTO conversations (id, repo, title, created_at, updated_at, branch) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (cid, repo, "New conversation", now, now, branch),
         )
         conn.commit()
         return cid

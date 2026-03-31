@@ -46,6 +46,8 @@ class Settings:
     api_token: str | None
     github_webhook_secret: str | None
     github_poll_interval_seconds: int
+    max_worktrees_per_repo: int
+    max_total_worktrees: int
 
 
 def load_settings() -> Settings:
@@ -78,4 +80,6 @@ def load_settings() -> Settings:
         api_token=_optional(os.getenv("DEATHSTAR_API_TOKEN")),
         github_webhook_secret=_optional(os.getenv("GITHUB_WEBHOOK_SECRET")),
         github_poll_interval_seconds=_int_env("GITHUB_POLL_INTERVAL", 10),
+        max_worktrees_per_repo=_int_env("DEATHSTAR_MAX_WORKTREES_PER_REPO", 6),
+        max_total_worktrees=_int_env("DEATHSTAR_MAX_TOTAL_WORKTREES", 16),
     )

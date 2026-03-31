@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { GitBranch, Plus, Check, Loader2, Trash2, RefreshCw } from "lucide-react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { GitBranch, Plus, Check, Loader2, Trash2, RefreshCw, GitPullRequest, ExternalLink } from "lucide-react";
 import { useStore } from "../store";
 
 export default function BranchSelector() {
@@ -13,6 +13,18 @@ export default function BranchSelector() {
   const createAndSwitchBranch = useStore((s) => s.createAndSwitchBranch);
   const deleteBranch = useStore((s) => s.deleteBranch);
   const syncBranch = useStore((s) => s.syncBranch);
+  const pullRequests = useStore((s) => s.pullRequests);
+
+  // Map branch names to their open PRs
+  const branchPRMap = useMemo(() => {
+    const map = new Map<string, { number: number; url: string; draft: boolean }>();
+    for (const pr of pullRequests) {
+      if (pr.state === "open") {
+        map.set(pr.head_branch, { number: pr.number, url: pr.url, draft: pr.draft });
+      }
+    }
+    return map;
+  }, [pullRequests]);
 
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -145,6 +157,19 @@ export default function BranchSelector() {
           </span>
           {isDirty && (
             <span className="h-1.5 w-1.5 rounded-full bg-warning" title="Uncommitted changes" />
+          )}
+          {branchPRMap.has(currentBranch) && (
+            <a
+              href={branchPRMap.get(currentBranch)!.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-0.5 rounded bg-accent/15 px-1 py-0.5 text-[10px] text-accent hover:bg-accent/25 transition-colors"
+              title={`PR #${branchPRMap.get(currentBranch)!.number}${branchPRMap.get(currentBranch)!.draft ? " (draft)" : ""}`}
+            >
+              <GitPullRequest size={9} />
+              #{branchPRMap.get(currentBranch)!.number}
+            </a>
           )}
         </button>
         <button
@@ -310,8 +335,22 @@ export default function BranchSelector() {
                       <span className="w-3 shrink-0" />
                     )}
                     <span className="font-mono truncate">{branch}</span>
+                    {branchPRMap.has(branch) && (
+                      <a
+                        href={branchPRMap.get(branch)!.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="ml-auto shrink-0 flex items-center gap-0.5 rounded bg-accent/15 px-1 py-0.5 text-[10px] text-accent hover:bg-accent/25 transition-colors"
+                        title={`Open PR #${branchPRMap.get(branch)!.number}${branchPRMap.get(branch)!.draft ? " (draft)" : ""}`}
+                      >
+                        <GitPullRequest size={9} />
+                        #{branchPRMap.get(branch)!.number}
+                        <ExternalLink size={8} />
+                      </a>
+                    )}
                     {isDefault(branch) && (
-                      <span className="ml-auto shrink-0 rounded bg-bg-hover px-1 py-0.5 text-[10px] text-text-muted">
+                      <span className={`${branchPRMap.has(branch) ? "" : "ml-auto "}shrink-0 rounded bg-bg-hover px-1 py-0.5 text-[10px] text-text-muted`}>
                         default
                       </span>
                     )}
