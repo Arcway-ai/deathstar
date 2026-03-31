@@ -56,7 +56,7 @@ The GitHub token is optional unless you want remote PR automation. The Tailscale
 
 The legacy `scripts/put-provider-secret.sh` helper still exists as a compatibility fallback. If you omit the secret value argument, it also prompts with hidden input.
 
-If your tailnet uses restrictive access controls, make sure its network and SSH policy allows your operator device to reach the DeathStar host and log in as `ec2-user`.
+If your tailnet uses restrictive access controls, make sure its network and SSH policy allows your operator device to reach the DeathStar host and log in as `ubuntu`.
 
 ## Deploy
 
@@ -93,7 +93,7 @@ Recommended flow:
 
 1. Install the Tailscale mobile app and join the same tailnet as the DeathStar instance.
 2. Open a mobile SSH client that can use the tailnet connection.
-3. Connect to `ec2-user@<tailscale-hostname>`.
+3. Connect to `ubuntu@<tailscale-hostname>`.
 4. Work inside `/workspace/projects` or inspect the runtime directly.
 
 Useful commands from a phone session:

@@ -2,46 +2,9 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
-
-from deathstar_shared.models import (
-    ProviderName,
-    ProviderStatus,
-    UsageMetrics,
-    WorkflowKind,
-    WorkflowResponse,
-)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_workflow_response(**overrides) -> WorkflowResponse:
-    defaults = dict(
-        request_id="test-id",
-        workflow=WorkflowKind.PROMPT,
-        status="succeeded",
-        provider=ProviderName.ANTHROPIC,
-        model="claude-sonnet-4-5-20250514",
-        content="Hello from the AI!",
-        workspace_subpath="my-project",
-        duration_ms=150,
-        usage=UsageMetrics(input_tokens=20, output_tokens=10, total_tokens=30),
-    )
-    defaults.update(overrides)
-    return WorkflowResponse(**defaults)
-
-
-def _make_provider_status() -> dict[str, ProviderStatus]:
-    return {
-        "openai": ProviderStatus(configured=False, default_model="gpt-4o-mini"),
-        "anthropic": ProviderStatus(configured=True, default_model="claude-sonnet-4-5-20250514"),
-        "google": ProviderStatus(configured=False, default_model="gemini-2.0-flash"),
-    }
-
 
 def _build_web_app(tmp_path: Path, api_token: str | None = None):
     """Build a FastAPI app with web UI enabled and mocked dependencies."""
@@ -64,8 +27,8 @@ def _build_web_app(tmp_path: Path, api_token: str | None = None):
     mock_settings.github_token = "ghp-test"
     mock_settings.tailscale_enabled = False
     mock_settings.tailscale_hostname = None
-    mock_settings.ssh_user = "ec2-user"
-    mock_settings.enable_web_ui = True
+    mock_settings.ssh_user = "ubuntu"
+
 
     mock_git = MagicMock()
     mock_git.current_branch.return_value = "main"
@@ -74,22 +37,18 @@ def _build_web_app(tmp_path: Path, api_token: str | None = None):
     mock_git.select_files.return_value = [repo / "main.py"]
     mock_git.read_text.return_value = "print('hello')"
 
-    mock_workflow = MagicMock()
-    mock_workflow.execute = AsyncMock(return_value=_make_workflow_response())
-    mock_workflow.providers = MagicMock()
-    mock_workflow.providers.status.return_value = _make_provider_status()
-
     mock_backup = MagicMock()
     mock_backup.latest_log_lines.return_value = ["line1"]
 
+    from deathstar_server.web.database import Database
     from deathstar_server.web.conversations import ConversationStore
 
-    convo_store = ConversationStore(tmp_path / "conversations")
+    test_db = Database(tmp_path / "deathstar.db")
+    convo_store = ConversationStore(test_db)
 
     # Create mock app_state module
     mock_app_state = MagicMock()
     mock_app_state.settings = mock_settings
-    mock_app_state.workflow_service = mock_workflow
     mock_app_state.backup_service = mock_backup
     mock_app_state.git_service = mock_git
     mock_app_state.conversation_store = convo_store
@@ -119,19 +78,19 @@ def _build_web_app(tmp_path: Path, api_token: str | None = None):
     from deathstar_server.app import app
     from fastapi.testclient import TestClient
 
-    return TestClient(app), mock_workflow, mock_git, convo_store
+    return TestClient(app), mock_git, convo_store
 
 
 @pytest.fixture
 def web_client(tmp_path):
-    client, workflow, git, store = _build_web_app(tmp_path)
-    yield client, workflow, git, store
+    client, git, store = _build_web_app(tmp_path)
+    yield client, git, store
 
 
 @pytest.fixture
 def web_client_auth(tmp_path):
-    client, workflow, git, store = _build_web_app(tmp_path, api_token="secret-token")
-    yield client, workflow, git, store
+    client, git, store = _build_web_app(tmp_path, api_token="secret-token")
+    yield client, git, store
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +99,7 @@ def web_client_auth(tmp_path):
 
 class TestReposEndpoint:
     def test_lists_repos(self, web_client):
-        client, _, git, _ = web_client
+        client, git, _ = web_client
         resp = client.get("/web/api/repos")
         assert resp.status_code == 200
         repos = resp.json()
@@ -150,12 +109,12 @@ class TestReposEndpoint:
         assert repos[0]["dirty"] is False
 
     def test_repos_requires_auth(self, web_client_auth):
-        client, _, _, _ = web_client_auth
+        client, _, _ = web_client_auth
         resp = client.get("/web/api/repos")
         assert resp.status_code == 401
 
     def test_repos_with_auth(self, web_client_auth):
-        client, _, _, _ = web_client_auth
+        client, _, _ = web_client_auth
         resp = client.get("/web/api/repos", headers={"Authorization": "Bearer secret-token"})
         assert resp.status_code == 200
 
@@ -166,7 +125,7 @@ class TestReposEndpoint:
 
 class TestRepoTreeEndpoint:
     def test_returns_file_list(self, web_client):
-        client, _, git, _ = web_client
+        client, git, _ = web_client
         resp = client.get("/web/api/repos/my-project/tree")
         assert resp.status_code == 200
         files = resp.json()
@@ -180,7 +139,7 @@ class TestRepoTreeEndpoint:
 
 class TestRepoFileEndpoint:
     def test_reads_file(self, web_client):
-        client, _, git, _ = web_client
+        client, git, _ = web_client
         resp = client.get("/web/api/repos/my-project/file?path=main.py")
         assert resp.status_code == 200
         data = resp.json()
@@ -188,81 +147,8 @@ class TestRepoFileEndpoint:
         assert data["content"] == "print('hello')"
 
     def test_rejects_missing_path(self, web_client):
-        client, _, _, _ = web_client
+        client, _, _ = web_client
         resp = client.get("/web/api/repos/my-project/file")
-        assert resp.status_code == 422
-
-
-# ---------------------------------------------------------------------------
-# POST /web/api/chat
-# ---------------------------------------------------------------------------
-
-class TestChatEndpoint:
-    def test_sends_message(self, web_client):
-        client, workflow, _, _ = web_client
-        resp = client.post("/web/api/chat", json={
-            "repo": "my-project",
-            "message": "explain this code",
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "succeeded"
-        assert data["content"] == "Hello from the AI!"
-        assert data["conversation_id"]
-        workflow.execute.assert_called_once()
-
-    def test_creates_conversation(self, web_client):
-        client, _, _, store = web_client
-        resp = client.post("/web/api/chat", json={
-            "repo": "my-project",
-            "message": "hello",
-        })
-        data = resp.json()
-        cid = data["conversation_id"]
-        convo = store.get_conversation(cid)
-        assert convo is not None
-        assert len(convo.messages) == 2  # user + assistant
-
-    def test_continues_conversation(self, web_client):
-        client, _, _, store = web_client
-        resp1 = client.post("/web/api/chat", json={
-            "repo": "my-project",
-            "message": "first",
-        })
-        cid = resp1.json()["conversation_id"]
-
-        resp2 = client.post("/web/api/chat", json={
-            "repo": "my-project",
-            "message": "second",
-            "conversation_id": cid,
-        })
-        assert resp2.json()["conversation_id"] == cid
-        convo = store.get_conversation(cid)
-        assert len(convo.messages) == 4  # 2 user + 2 assistant
-
-    def test_chat_with_explicit_provider(self, web_client):
-        client, workflow, _, _ = web_client
-        resp = client.post("/web/api/chat", json={
-            "repo": "my-project",
-            "message": "test",
-            "provider": "anthropic",
-        })
-        assert resp.status_code == 200
-
-    def test_chat_rejects_empty_message(self, web_client):
-        client, _, _, _ = web_client
-        resp = client.post("/web/api/chat", json={
-            "repo": "my-project",
-            "message": "",
-        })
-        assert resp.status_code == 422
-
-    def test_chat_rejects_path_traversal(self, web_client):
-        client, _, _, _ = web_client
-        resp = client.post("/web/api/chat", json={
-            "repo": "../etc",
-            "message": "test",
-        })
         assert resp.status_code == 422
 
 
@@ -272,14 +158,14 @@ class TestChatEndpoint:
 
 class TestConversationsEndpoints:
     def test_list_conversations(self, web_client):
-        client, _, _, store = web_client
+        client, _, store = web_client
         store.get_or_create(None, "my-project")
         resp = client.get("/web/api/conversations")
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
     def test_list_conversations_filtered(self, web_client):
-        client, _, _, store = web_client
+        client, _, store = web_client
         store.get_or_create(None, "my-project")
         store.get_or_create(None, "other-project")
         resp = client.get("/web/api/conversations?repo=my-project")
@@ -288,7 +174,7 @@ class TestConversationsEndpoints:
         assert resp.json()[0]["repo"] == "my-project"
 
     def test_get_conversation(self, web_client):
-        client, _, _, store = web_client
+        client, _, store = web_client
         cid = store.get_or_create(None, "my-project")
         store.add_user_message(cid, "hello")
         resp = client.get(f"/web/api/conversations/{cid}")
@@ -298,36 +184,21 @@ class TestConversationsEndpoints:
         assert len(data["messages"]) == 1
 
     def test_get_conversation_not_found(self, web_client):
-        client, _, _, _ = web_client
+        client, _, _ = web_client
         resp = client.get("/web/api/conversations/nonexistent")
         assert resp.status_code == 404
 
     def test_delete_conversation(self, web_client):
-        client, _, _, store = web_client
+        client, _, store = web_client
         cid = store.get_or_create(None, "my-project")
         resp = client.delete(f"/web/api/conversations/{cid}")
         assert resp.status_code == 200
         assert resp.json()["deleted"] is True
 
     def test_delete_conversation_not_found(self, web_client):
-        client, _, _, _ = web_client
+        client, _, _ = web_client
         resp = client.delete("/web/api/conversations/nonexistent")
         assert resp.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# GET /web/api/providers
-# ---------------------------------------------------------------------------
-
-class TestProvidersEndpoint:
-    def test_lists_providers(self, web_client):
-        client, _, _, _ = web_client
-        resp = client.get("/web/api/providers")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "anthropic" in data
-        assert data["anthropic"]["configured"] is True
-        assert data["openai"]["configured"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -336,18 +207,67 @@ class TestProvidersEndpoint:
 
 class TestWebAuthBypass:
     def test_static_files_skip_auth(self, web_client_auth):
-        client, _, _, _ = web_client_auth
+        client, _, _ = web_client_auth
         # index.html served at / should not require auth
         resp = client.get("/")
         # May be 200 or 404 depending on file existence in test env
         assert resp.status_code != 401
 
     def test_web_api_requires_auth(self, web_client_auth):
-        client, _, _, _ = web_client_auth
-        resp = client.get("/web/api/providers")
+        client, _, _ = web_client_auth
+        resp = client.get("/web/api/conversations")
         assert resp.status_code == 401
 
-    def test_web_api_with_auth(self, web_client_auth):
-        client, _, _, _ = web_client_auth
-        resp = client.get("/web/api/providers", headers={"Authorization": "Bearer secret-token"})
+    def test_web_api_with_bearer(self, web_client_auth):
+        client, _, _ = web_client_auth
+        resp = client.get("/web/api/conversations", headers={"Authorization": "Bearer secret-token"})
+        assert resp.status_code == 200
+
+    def test_web_api_with_session_cookie(self, web_client_auth):
+        from deathstar_server.session import SESSION_COOKIE_NAME, generate_session_token
+        client, _, _ = web_client_auth
+        cookie = generate_session_token("secret-token")
+        client.cookies.set(SESSION_COOKIE_NAME, cookie)
+        resp = client.get("/web/api/conversations")
+        assert resp.status_code == 200
+
+    def test_web_api_rejects_bad_cookie(self, web_client_auth):
+        from deathstar_server.session import SESSION_COOKIE_NAME
+        client, _, _ = web_client_auth
+        client.cookies.set(SESSION_COOKIE_NAME, "garbage")
+        resp = client.get("/web/api/conversations")
+        assert resp.status_code == 401
+
+    def test_index_sets_session_cookie(self, web_client_auth):
+        from deathstar_server.session import SESSION_COOKIE_NAME
+        client, _, _ = web_client_auth
+        resp = client.get("/")
+        # Cookie is set if index.html exists; just check no auth error
+        assert resp.status_code != 401
+
+    def test_auth_session_endpoint(self, web_client_auth):
+        """POST /web/api/auth/session with bearer token sets a session cookie."""
+        from deathstar_server.session import SESSION_COOKIE_NAME
+        client, _, _ = web_client_auth
+        resp = client.post(
+            "/web/api/auth/session",
+            headers={"Authorization": "Bearer secret-token"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        # The response should set a session cookie
+        assert SESSION_COOKIE_NAME in resp.cookies
+
+    def test_auth_session_rejects_bad_token(self, web_client_auth):
+        client, _, _ = web_client_auth
+        resp = client.post(
+            "/web/api/auth/session",
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        assert resp.status_code == 401
+
+    def test_auth_session_no_auth_when_unconfigured(self, web_client):
+        """When no api_token is configured, /auth/session always succeeds."""
+        client, _, _ = web_client
+        resp = client.post("/web/api/auth/session")
         assert resp.status_code == 200

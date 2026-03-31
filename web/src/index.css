@@ -36,6 +36,7 @@
   --color-persona-security: #f87171;
   --color-persona-devops: #34d399;
   --color-persona-data: #fbbf24;
+  --color-persona-uiux: #f472b6;
   --color-persona-architect: #fb923c;
 
   /* Fonts */
@@ -94,6 +95,54 @@ code {
   font-family: var(--font-mono);
   font-size: 0.875em;
 }
+
+/* ── highlight.js token colors (custom dark theme) ────────────── */
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-deletion { color: #ff7b72; }
+
+.hljs-function,
+.hljs-title.function_ { color: #d2a8ff; }
+
+.hljs-title,
+.hljs-title.class_ { color: #f0c674; }
+
+.hljs-string,
+.hljs-addition { color: #a5d6ff; }
+
+.hljs-number,
+.hljs-literal { color: #79c0ff; }
+
+.hljs-built_in { color: #ffa657; }
+
+.hljs-type,
+.hljs-params { color: #7ee787; }
+
+.hljs-comment,
+.hljs-doctag { color: #64748b; font-style: italic; }
+
+.hljs-attr,
+.hljs-attribute { color: #79c0ff; }
+
+.hljs-variable,
+.hljs-template-variable { color: #ffa657; }
+
+.hljs-regexp { color: #7ee787; }
+
+.hljs-meta { color: #79c0ff; }
+
+.hljs-tag { color: #7ee787; }
+
+.hljs-name { color: #7ee787; }
+
+.hljs-selector-class,
+.hljs-selector-id { color: #d2a8ff; }
+
+.hljs-symbol { color: #79c0ff; }
+
+.hljs-operator,
+.hljs-punctuation { color: #94a3b8; }
 
 /* ── Markdown prose ────────────────────────────────────────────── */
 
@@ -180,6 +229,29 @@ code {
 .prose pre .diff-add { color: var(--color-success); }
 .prose pre .diff-del { color: var(--color-error); }
 
+/* ── Starfield ────────────────────────────────────────────────── */
+
+.starfield {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.starfield .star {
+  position: absolute;
+  border-radius: 50%;
+  background: white;
+  animation: twinkle var(--dur, 4s) ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: var(--min-o, 0.15); }
+  50% { opacity: var(--max-o, 0.55); }
+}
+
 /* ── Animations ────────────────────────────────────────────────── */
 
 @keyframes fade-in {
@@ -212,4 +284,270 @@ code {
 
 .animate-slide-left {
   animation: slide-in-left 0.25s ease-out both;
+}
+
+/* ── Death Star 3D rotation ───────────────────────────────────────── */
+
+@keyframes ds-rotate {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(360deg); }
+}
+
+@keyframes ds-surface {
+  from { transform: translateX(-30px); }
+  to { transform: translateX(30px); }
+}
+
+@keyframes ds-glow {
+  0%, 100% { opacity: 0.4; transform: scale(1.3); }
+  50% { opacity: 0.8; transform: scale(1.5); }
+}
+
+@keyframes ds-laser {
+  0%, 100% { opacity: 0.5; r: 2; }
+  50% { opacity: 1; r: 4; }
+}
+
+/* ── TIE Fighter flight ──────────────────────────────────────────── */
+
+@keyframes tie-fly-1 {
+  0% { transform: translateX(-30px); opacity: 0; }
+  15% { opacity: 1; }
+  50% { transform: translateX(96px); }
+  85% { opacity: 1; }
+  100% { transform: translateX(200px); opacity: 0; }
+}
+
+@keyframes tie-fly-2 {
+  0% { transform: translateX(-50px); opacity: 0; }
+  20% { opacity: 0.6; }
+  50% { transform: translateX(76px); }
+  80% { opacity: 0.6; }
+  100% { transform: translateX(180px); opacity: 0; }
+}
+
+@keyframes tie-fly-3 {
+  0% { transform: translateX(-50px); opacity: 0; }
+  20% { opacity: 0.6; }
+  50% { transform: translateX(76px); }
+  80% { opacity: 0.6; }
+  100% { transform: translateX(180px); opacity: 0; }
+}
+
+@keyframes tie-trail-1 {
+  0% { transform: translateX(-70px); opacity: 0; }
+  15% { opacity: 0.6; }
+  50% { transform: translateX(56px); }
+  85% { opacity: 0.6; }
+  100% { transform: translateX(160px); opacity: 0; }
+}
+
+@keyframes tie-trail-2 {
+  0% { transform: translateX(-90px); opacity: 0; }
+  20% { opacity: 0.4; }
+  50% { transform: translateX(36px); }
+  80% { opacity: 0.4; }
+  100% { transform: translateX(140px); opacity: 0; }
+}
+
+@keyframes tie-trail-3 {
+  0% { transform: translateX(-90px); opacity: 0; }
+  20% { opacity: 0.4; }
+  50% { transform: translateX(36px); }
+  80% { opacity: 0.4; }
+  100% { transform: translateX(140px); opacity: 0; }
+}
+
+/* ── Lightsaber streaming indicator ─────────────────────────────── */
+
+.lightsaber-blade {
+  display: inline-block;
+  width: 40px;
+  height: 4px;
+  border-radius: 0 3px 3px 0;
+  background: var(--ls-blade, #4a9eff);
+  box-shadow:
+    0 0 4px var(--ls-glow, rgba(74,158,255,0.6)),
+    0 0 10px var(--ls-glow, rgba(74,158,255,0.6)),
+    0 0 20px var(--ls-glow, rgba(74,158,255,0.4)),
+    inset 0 0 3px rgba(255,255,255,0.5);
+  animation: ls-hum 1.5s ease-in-out infinite;
+  transition: background 0.6s ease, box-shadow 0.6s ease;
+  position: relative;
+}
+
+/* Core white-hot center */
+.lightsaber-blade::after {
+  content: "";
+  position: absolute;
+  inset: 1px 2px 1px 0;
+  border-radius: 0 2px 2px 0;
+  background: rgba(255,255,255,0.45);
+}
+
+@keyframes ls-hum {
+  0%, 100% {
+    opacity: 0.88;
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 1;
+    filter: brightness(1.12);
+  }
+}
+
+/* ── Ambient TIE fighter flybys ──────────────────────────────────── */
+
+.tie-flyby {
+  position: absolute;
+  pointer-events: none;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  display: flex;
+  align-items: center;
+}
+
+.tie-trail {
+  position: absolute;
+  height: 1px;
+  background: linear-gradient(to left, rgba(74, 158, 255, 0.4), transparent);
+}
+
+@keyframes tie-flyby-ltr {
+  0%   { left: -60px; }
+  100% { left: calc(100% + 60px); }
+}
+
+@keyframes tie-flyby-rtl {
+  0%   { right: -60px; left: auto; }
+  100% { right: calc(100% + 60px); left: auto; }
+}
+
+/* ── Superlaser animation ──────────────────────────────────────── */
+
+.superlaser-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* Charging orb — top-left area */
+.superlaser-orb {
+  position: absolute;
+  top: 30%;
+  left: 8%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #22ff44;
+}
+
+.superlaser-orb.charging {
+  animation: sl-charge 0.8s ease-out forwards;
+  box-shadow:
+    0 0 20px #22ff44,
+    0 0 60px #22ff44aa,
+    0 0 120px #22ff4466;
+}
+
+.superlaser-orb.charged {
+  width: 18px;
+  height: 18px;
+  margin-top: -3px;
+  margin-left: -3px;
+  background: #aaffaa;
+  box-shadow:
+    0 0 30px #44ff66,
+    0 0 80px #44ff66aa;
+}
+
+@keyframes sl-charge {
+  0%   { transform: scale(0); opacity: 0; }
+  30%  { transform: scale(2.5); opacity: 1; }
+  60%  { transform: scale(1.2); opacity: 0.9; }
+  100% { transform: scale(1.5); opacity: 1; }
+}
+
+/* Converging tributary beams during charge */
+.superlaser-converge {
+  position: absolute;
+  height: 1.5px;
+  width: 80px;
+  background: linear-gradient(to right, transparent, #44ff66cc);
+  transform-origin: right center;
+}
+
+.superlaser-converge-1 { top: 20%; left: calc(8% - 60px); animation: sl-converge 0.7s ease-in forwards; transform: rotate(12deg); }
+.superlaser-converge-2 { top: 40%; left: calc(8% - 60px); animation: sl-converge 0.7s 0.1s ease-in forwards; transform: rotate(-8deg); }
+.superlaser-converge-3 { top: 25%; left: calc(8% - 40px); animation: sl-converge 0.7s 0.05s ease-in forwards; transform: rotate(5deg); }
+.superlaser-converge-4 { top: 35%; left: calc(8% - 50px); animation: sl-converge 0.7s 0.15s ease-in forwards; transform: rotate(-3deg); }
+
+@keyframes sl-converge {
+  0%   { opacity: 0; transform: translateX(-40px) rotate(var(--r, 0deg)); }
+  50%  { opacity: 0.8; }
+  100% { opacity: 0; transform: translateX(40px) rotate(var(--r, 0deg)); }
+}
+
+/* Main beam */
+.superlaser-beam {
+  position: absolute;
+  top: calc(30% + 4px);
+  left: calc(8% + 12px);
+  height: 6px;
+  width: 0;
+  background: linear-gradient(to right, #aaffaa, #44ff66, #22ff44);
+  border-radius: 0 4px 4px 0;
+  box-shadow:
+    0 0 8px #44ff66,
+    0 0 30px #44ff66aa,
+    0 0 60px #22ff4444;
+  animation: sl-fire 0.6s ease-out forwards;
+}
+
+.superlaser-beam::after {
+  content: "";
+  position: absolute;
+  inset: 1px 0 1px 0;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+@keyframes sl-fire {
+  0%   { width: 0; opacity: 1; }
+  60%  { width: 92vw; opacity: 1; }
+  100% { width: 92vw; opacity: 0.6; }
+}
+
+/* Impact explosion at right edge */
+.superlaser-impact {
+  position: absolute;
+  top: calc(30% - 40px);
+  right: -20px;
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffffff, #aaffaacc, #44ff6666, transparent);
+  animation: sl-impact 1.2s ease-out forwards;
+}
+
+@keyframes sl-impact {
+  0%   { transform: scale(0); opacity: 1; }
+  30%  { transform: scale(3); opacity: 0.8; }
+  100% { transform: scale(6); opacity: 0; }
+}
+
+/* Full-screen flash */
+.superlaser-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 92% 30%, #aaffaa40, transparent 60%);
+  animation: sl-flash 1.2s ease-out forwards;
+}
+
+@keyframes sl-flash {
+  0%   { opacity: 0; }
+  15%  { opacity: 1; }
+  100% { opacity: 0; }
 }

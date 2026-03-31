@@ -12,7 +12,7 @@ DeathStar is a Terraform-built remote AI coding workstation on AWS. A local Pyth
 - `terraform/` — AWS infrastructure (VPC, EC2, IAM, S3, security groups).
 - `bootstrap/` — Cloud-init and host setup scripts (Terraform templates).
 - `docker/` — Dockerfile and docker-compose for the control API container.
-- `server/deathstar_server/web/` — Optional web UI API routes, conversation store, and memory bank.
+- `server/deathstar_server/web/` — Web UI API routes, conversation store, memory bank, and WebSocket terminal.
 - `web/` — React + Vite frontend (TypeScript, Tailwind v4, Zustand). Built to `web/dist/` and served by FastAPI.
 - `tests/` — Pytest test suite.
 
@@ -34,8 +34,11 @@ cd web && npm install && npm run dev
 # Frontend build
 cd web && npm run build
 
-# Deploy (uses tb deploy per user preference)
-tb deploy
+# Deploy (full Terraform apply — creates or updates EC2 instance)
+deathstar deploy
+
+# Redeploy (code-only push — no instance replacement)
+deathstar redeploy
 
 # Upgrade (pull + reinstall CLI + backup + redeploy)
 deathstar upgrade
@@ -64,13 +67,16 @@ deathstar upgrade
 ## Key Design Decisions
 
 - **Tailscale-first**: All remote operations default to Tailscale. SSM is break-glass only.
-- **Provider-agnostic**: One request/response contract across OpenAI, Anthropic, Google, Vertex AI.
+- **Claude Agent SDK**: Web UI chat is powered by the Claude Agent SDK (`claude-agent-sdk`). Each workflow mode maps to different tool permissions and `ClaudeAgentOptions`. The SDK manages tool-calling, file access, and session continuity. Config lives in `server/deathstar_server/services/agent.py`.
+- **Provider-agnostic (CLI)**: CLI workflows still use the multi-provider layer (OpenAI, Anthropic, Google, Vertex AI). One request/response contract across providers.
 - **API auth**: Optional bearer token via `DEATHSTAR_API_TOKEN`. Health endpoint is always public.
 - **No public SSH**: Security group has zero inbound rules by default.
 - **Single instance**: v1 is intentionally single EC2, single AZ. No HA.
-- **Web UI**: Optional React + Vite frontend gated behind `DEATHSTAR_ENABLE_WEB_UI=true`. Multi-stage Docker build (Node.js builds frontend, Python builds backend). Static files and `/` bypass auth; `/web/api/*` requires bearer token.
+- **Web UI**: Always-on React + Vite frontend. Multi-stage Docker build (Node.js builds frontend, Python builds backend). Static files and `/` bypass auth; `/web/api/*` requires bearer token. WebSocket terminal at `/web/api/terminal`.
 - **Personas**: Frontend-defined system prompts (Frontend, Full-stack, Security, DevOps, Data, Architect) sent with each chat request to shape LLM behavior.
+- **SQLite persistence**: All conversations, memories, feedback, and usage logs stored in a single SQLite database (`/workspace/deathstar/deathstar.db`) with WAL mode. Backed up with the rest of `/workspace`.
 - **Memory Bank**: Thumbs-up responses are saved as persistent context per repo. Injected into future prompts within a token budget (~4K chars).
+- **Feedback**: Thumbs-up and thumbs-down tracked per message for analytics. Thumbs-up also saves to memory bank.
 - **Repo Context**: CLAUDE.md, branch, recent commits, and file tree are automatically fetched and injected into LLM system prompts when a repo is selected.
 - **Version tracking**: `/v1/health` returns `VERSION+git-sha`. `deathstar upgrade` compares local vs remote versions.
 
@@ -99,13 +105,15 @@ Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "share
 - `deathstar github setup` — GitHub auth (gh CLI, PAT, or OAuth Device Flow) for automated PR access.
 - `deathstar tailscale setup` — Create a Tailscale auth key via the API and store in SSM.
 - `deathstar repos list / clone` — List or clone GitHub repos on the remote instance (proxies to `gh` CLI via SSH/SSM).
+- `deathstar redeploy` — Push code changes to S3 and rebuild Docker without replacing the EC2 instance.
 - `deathstar upgrade` — Pull latest code, reinstall CLI package, backup, and redeploy in one command.
 
 ## Files You Should Know
 
 - `shared/deathstar_shared/models.py` — All Pydantic models. Change here affects both CLI and server.
 - `server/deathstar_server/app.py` — FastAPI app with auth middleware and global exception handlers.
-- `server/deathstar_server/services/workflow.py` — Core workflow orchestration (prompt, patch, PR, review).
+- `server/deathstar_server/services/agent.py` — Claude Agent SDK integration. Mode configs, streaming wrapper, SSE translation.
+- `server/deathstar_server/services/workflow.py` — Legacy workflow orchestration for CLI (prompt, patch, PR, review).
 - `server/deathstar_server/providers/base.py` — Provider base class and error normalization.
 - `server/deathstar_server/providers/vertex.py` — Vertex AI provider (supports SA key and WIF auth).
 - `cli/deathstar_cli/main.py` — All CLI commands.
@@ -113,10 +121,19 @@ Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "share
 - `cli/deathstar_cli/github_auth.py` — GitHub auth methods (gh CLI, guided PAT, OAuth Device Flow).
 - `cli/deathstar_cli/tailscale_auth.py` — Tailscale OAuth client credentials and auth key creation.
 - `server/deathstar_server/web/routes.py` — Web UI API endpoints (`/web/api/*`).
-- `server/deathstar_server/web/conversations.py` — Server-side conversation store with JSON file persistence.
-- `server/deathstar_server/web/memory_bank.py` — Memory bank store (thumbs-up responses saved per repo).
+- `server/deathstar_server/web/database.py` — SQLite schema, connection management, JSON migration.
+- `server/deathstar_server/web/conversations.py` — SQLite-backed conversation store.
+- `server/deathstar_server/web/memory_bank.py` — SQLite-backed memory bank (thumbs-up responses per repo).
+- `server/deathstar_server/web/feedback.py` — SQLite-backed feedback store (thumbs up/down per message).
+- `server/deathstar_server/web/terminal.py` — WebSocket PTY terminal endpoint.
 - `shared/deathstar_shared/version.py` — VERSION constant and `full_version()` (VERSION+git-sha).
 - `web/src/store.ts` — Zustand store (all frontend state).
 - `web/src/personas.ts` — Persona definitions and system prompts.
+- `web/src/models.ts` — Curated model catalog with speed/price metadata per provider.
+- `web/src/fileTree.ts` — Tree builder (flat paths → nested structure) and language detection.
 - `web/src/api.ts` — Frontend API client.
+- `web/src/components/Terminal.tsx` — xterm.js WebSocket terminal component.
+- `web/src/components/FileViewer.tsx` — Syntax-highlighted file viewer (highlight.js).
+- `web/src/components/BranchSelector.tsx` — Branch switching and creation dropdown.
+- `web/src/components/ModelSelector.tsx` — Model picker with speed/price badges.
 - `docker/control-api.Dockerfile` — Multi-stage build (Node.js frontend + Python backend).

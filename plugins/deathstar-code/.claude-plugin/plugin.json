@@ -1,0 +1,8 @@
+{
+  "name": "deathstar-code",
+  "description": "Code implementation best practices and quality methodology for DeathStar",
+  "author": {
+    "name": "DeathStar",
+    "email": "deathstar@local"
+  }
+}

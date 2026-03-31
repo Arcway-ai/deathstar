@@ -1,0 +1,388 @@
+import { useState } from "react";
+import {
+  AlertTriangle,
+  Bug,
+  Check,
+  CheckCircle,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  FileCode,
+  GitCommit,
+  Lightbulb,
+  Loader2,
+  MessageSquare,
+  Shield,
+  X,
+  XCircle,
+} from "lucide-react";
+import { useStore } from "../store";
+import type {
+  FindingAction,
+  ReviewFinding,
+  ReviewSeverity,
+  ReviewVerdict,
+  StructuredReview,
+} from "../types";
+
+/* ── Severity config ──────────────────────────────────────────── */
+
+const severityConfig: Record<
+  ReviewSeverity,
+  { icon: typeof Bug; color: string; bg: string; border: string; label: string }
+> = {
+  error: {
+    icon: Bug,
+    color: "text-red-400",
+    bg: "bg-red-500/10",
+    border: "border-red-500/30",
+    label: "Error",
+  },
+  warning: {
+    icon: AlertTriangle,
+    color: "text-amber-400",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/30",
+    label: "Warning",
+  },
+  suggestion: {
+    icon: Lightbulb,
+    color: "text-blue-400",
+    bg: "bg-blue-500/10",
+    border: "border-blue-500/30",
+    label: "Suggestion",
+  },
+  nitpick: {
+    icon: MessageSquare,
+    color: "text-text-muted",
+    bg: "bg-bg-surface",
+    border: "border-border-subtle",
+    label: "Nitpick",
+  },
+};
+
+const verdictConfig: Record<
+  ReviewVerdict,
+  { icon: typeof CheckCircle; color: string; bg: string; label: string }
+> = {
+  approve: {
+    icon: CheckCircle,
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    label: "Approve",
+  },
+  request_changes: {
+    icon: XCircle,
+    color: "text-red-400",
+    bg: "bg-red-500/10",
+    label: "Changes Requested",
+  },
+  comment: {
+    icon: MessageSquare,
+    color: "text-blue-400",
+    bg: "bg-blue-500/10",
+    label: "Comment",
+  },
+};
+
+/* ── Main ReviewPanel ─────────────────────────────────────────── */
+
+export default function ReviewPanel({ review }: { review: StructuredReview }) {
+  const findingActions = useStore((s) => s.findingActions);
+  const setFindingAction = useStore((s) => s.setFindingAction);
+  const bulkSetFindingAction = useStore((s) => s.bulkSetFindingAction);
+  const postReviewToGitHub = useStore((s) => s.postReviewToGitHub);
+  const applySuggestions = useStore((s) => s.applySuggestions);
+  const reviewPosting = useStore((s) => s.reviewPosting);
+  const reviewApplying = useStore((s) => s.reviewApplying);
+  const selectedPR = useStore((s) => s.selectedPR);
+
+  const verdict = verdictConfig[review.verdict];
+  const VerdictIcon = verdict.icon;
+
+  const acceptedCount = Object.values(findingActions).filter(
+    (a) => a === "accepted",
+  ).length;
+  const rejectedCount = Object.values(findingActions).filter(
+    (a) => a === "rejected",
+  ).length;
+  const pendingCount = Object.values(findingActions).filter(
+    (a) => a === "pending",
+  ).length;
+  const hasCodeSuggestions = review.findings.some(
+    (f) =>
+      f.suggested_code != null &&
+      f.original_code != null &&
+      findingActions[f.id] === "accepted",
+  );
+
+  // Group findings by severity
+  const bySeverity = review.findings.reduce(
+    (acc, f) => {
+      acc[f.severity] = (acc[f.severity] || 0) + 1;
+      return acc;
+    },
+    {} as Record<ReviewSeverity, number>,
+  );
+
+  return (
+    <div className="space-y-3 animate-fade-in">
+      {/* Verdict + Summary header */}
+      <div className={`rounded-lg border ${verdict.bg} border-border-subtle p-4`}>
+        <div className="flex items-center gap-2 mb-2">
+          <VerdictIcon size={18} className={verdict.color} />
+          <span className={`text-sm font-semibold ${verdict.color}`}>
+            {verdict.label}
+          </span>
+          <div className="ml-auto flex items-center gap-2 text-[10px] text-text-muted">
+            {(["error", "warning", "suggestion", "nitpick"] as ReviewSeverity[]).map(
+              (sev) =>
+                bySeverity[sev] ? (
+                  <span
+                    key={sev}
+                    className={`flex items-center gap-0.5 ${severityConfig[sev].color}`}
+                  >
+                    {bySeverity[sev]} {severityConfig[sev].label.toLowerCase()}
+                    {bySeverity[sev] > 1 ? "s" : ""}
+                  </span>
+                ) : null,
+            )}
+          </div>
+        </div>
+        <p className="text-sm text-text-secondary leading-relaxed">
+          {review.summary}
+        </p>
+      </div>
+
+      {/* Bulk actions */}
+      {review.findings.length > 0 && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-text-muted">
+            {acceptedCount} accepted · {rejectedCount} rejected · {pendingCount}{" "}
+            pending
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              onClick={() => bulkSetFindingAction("accepted")}
+              className="flex items-center gap-1 rounded-md bg-emerald-500/10 px-2.5 py-1 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+            >
+              <Check size={12} />
+              Accept All
+            </button>
+            <button
+              onClick={() => bulkSetFindingAction("rejected")}
+              className="flex items-center gap-1 rounded-md bg-red-500/10 px-2.5 py-1 text-red-400 hover:bg-red-500/20 transition-colors"
+            >
+              <X size={12} />
+              Reject All
+            </button>
+            <button
+              onClick={() => bulkSetFindingAction("pending")}
+              className="flex items-center gap-1 rounded-md bg-bg-surface px-2.5 py-1 text-text-muted hover:bg-bg-hover transition-colors"
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Findings list */}
+      <div className="space-y-2">
+        {review.findings.map((finding) => (
+          <FindingCard
+            key={finding.id}
+            finding={finding}
+            action={findingActions[finding.id] || "pending"}
+            onAction={(a) => setFindingAction(finding.id, a)}
+          />
+        ))}
+      </div>
+
+      {review.findings.length === 0 && (
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-6 text-center">
+          <CheckCircle size={24} className="mx-auto mb-2 text-emerald-400" />
+          <p className="text-sm text-emerald-400 font-medium">
+            No issues found
+          </p>
+          <p className="text-xs text-text-muted mt-1">
+            This PR looks good to go.
+          </p>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      {review.findings.length > 0 && selectedPR && (
+        <div className="flex items-center gap-2 border-t border-border-subtle pt-3">
+          <button
+            onClick={postReviewToGitHub}
+            disabled={reviewPosting || acceptedCount === 0}
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-bg-deep hover:bg-accent-hover transition-colors disabled:opacity-40 disabled:pointer-events-none"
+          >
+            {reviewPosting ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Shield size={12} />
+            )}
+            Post Review to GitHub
+            {acceptedCount > 0 && (
+              <span className="rounded bg-bg-deep/20 px-1.5 py-0.5 text-[10px]">
+                {acceptedCount}
+              </span>
+            )}
+          </button>
+
+          {hasCodeSuggestions && (
+            <button
+              onClick={applySuggestions}
+              disabled={reviewApplying}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-500/15 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-500/25 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            >
+              {reviewApplying ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <GitCommit size={12} />
+              )}
+              Apply Suggestions
+            </button>
+          )}
+
+          <a
+            href={selectedPR.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition-colors"
+          >
+            <ExternalLink size={10} />
+            View PR
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── FindingCard ───────────────────────────────────────────────── */
+
+function FindingCard({
+  finding,
+  action,
+  onAction,
+}: {
+  finding: ReviewFinding;
+  action: FindingAction;
+  onAction: (a: FindingAction) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const sev = severityConfig[finding.severity];
+  const SevIcon = sev.icon;
+
+  const actionStyles: Record<FindingAction, string> = {
+    pending: "border-border-subtle",
+    accepted: "border-emerald-500/30 bg-emerald-500/5",
+    rejected: "border-red-500/20 bg-red-500/5 opacity-60",
+  };
+
+  return (
+    <div
+      className={`rounded-lg border transition-all duration-200 ${actionStyles[action]}`}
+    >
+      {/* Header row */}
+      <div className="flex items-start gap-2 px-3 py-2.5">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="mt-0.5 shrink-0 text-text-muted hover:text-text-primary transition-colors"
+        >
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+
+        <SevIcon size={14} className={`mt-0.5 shrink-0 ${sev.color}`} />
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-medium ${sev.color} ${sev.bg} rounded px-1.5 py-0.5`}>
+              {sev.label}
+            </span>
+            <span className="text-xs font-medium text-text-primary truncate">
+              {finding.title}
+            </span>
+          </div>
+          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-text-muted">
+            <span className="flex items-center gap-0.5">
+              <FileCode size={9} />
+              {finding.file}
+            </span>
+            {finding.line_start != null && (
+              <span>
+                L{finding.line_start}
+                {finding.line_end && finding.line_end !== finding.line_start
+                  ? `–${finding.line_end}`
+                  : ""}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Accept / Reject buttons */}
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() =>
+              onAction(action === "accepted" ? "pending" : "accepted")
+            }
+            className={`rounded-md p-1.5 transition-colors ${
+              action === "accepted"
+                ? "bg-emerald-500/20 text-emerald-400"
+                : "text-text-muted hover:bg-emerald-500/10 hover:text-emerald-400"
+            }`}
+            title="Accept"
+          >
+            <Check size={13} />
+          </button>
+          <button
+            onClick={() =>
+              onAction(action === "rejected" ? "pending" : "rejected")
+            }
+            className={`rounded-md p-1.5 transition-colors ${
+              action === "rejected"
+                ? "bg-red-500/20 text-red-400"
+                : "text-text-muted hover:bg-red-500/10 hover:text-red-400"
+            }`}
+            title="Reject"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      </div>
+
+      {/* Expanded details */}
+      {expanded && (
+        <div className="border-t border-border-subtle px-3 py-2.5 space-y-2 animate-fade-in">
+          <p className="text-xs text-text-secondary leading-relaxed">
+            {finding.body}
+          </p>
+
+          {finding.original_code && (
+            <div className="space-y-1">
+              <span className="text-[10px] font-medium text-red-400/80">
+                Current code:
+              </span>
+              <pre className="rounded-md bg-bg-deep border border-red-500/10 px-3 py-2 text-[11px] font-mono text-text-secondary overflow-x-auto">
+                {finding.original_code}
+              </pre>
+            </div>
+          )}
+
+          {finding.suggested_code && (
+            <div className="space-y-1">
+              <span className="text-[10px] font-medium text-emerald-400/80">
+                Suggested fix:
+              </span>
+              <pre className="rounded-md bg-bg-deep border border-emerald-500/10 px-3 py-2 text-[11px] font-mono text-text-secondary overflow-x-auto">
+                {finding.suggested_code}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

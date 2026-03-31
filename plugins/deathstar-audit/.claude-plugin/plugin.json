@@ -1,0 +1,8 @@
+{
+  "name": "deathstar-audit",
+  "description": "Security audit methodology and structured vulnerability assessment for DeathStar",
+  "author": {
+    "name": "DeathStar",
+    "email": "deathstar@local"
+  }
+}

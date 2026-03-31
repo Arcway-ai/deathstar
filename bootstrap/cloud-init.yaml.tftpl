@@ -48,11 +48,18 @@ write_files:
       ${indent(6, service_unit)}
 
 runcmd:
-  - [bash, -lc, "dnf install -y docker jq unzip awscli curl openssh-clients || yum install -y docker jq unzip awscli curl openssh-clients"]
-  - [bash, -lc, "mkdir -p /usr/local/lib/docker/cli-plugins && curl -SL https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose"]
-  - [bash, -lc, "curl -SL https://github.com/docker/buildx/releases/download/v0.21.2/buildx-v0.21.2.linux-amd64 -o /usr/local/lib/docker/cli-plugins/docker-buildx && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx"]
-  - [bash, -lc, "dnf install -y 'dnf-command(config-manager)' && dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo && dnf install -y gh || true"]
+  # Ubuntu 24.04 LTS — install Docker and tools via apt.
+  - [bash, -lc, "apt-get update -y"]
+  - [bash, -lc, "apt-get install -y docker.io docker-compose-v2 docker-buildx jq unzip git openssh-client curl zsh ripgrep fd-find"]
+  # AWS CLI v2 — not available as an apt package on Ubuntu 24.04
+  - [bash, -lc, "curl -fsSL 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o /tmp/awscliv2.zip && unzip -qo /tmp/awscliv2.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/awscliv2.zip /tmp/aws"]
+  - [bash, -lc, "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list && apt-get update -y && apt-get install -y gh || true"]
   - [bash, -lc, "systemctl enable --now docker"]
+  - [bash, -lc, "usermod -aG docker ubuntu"]
+  # Shell + editor setup for the ubuntu user
+  - [bash, -lc, "apt-get install -y vim ncurses-term"]
+  - [bash, -lc, "chsh -s /usr/bin/zsh ubuntu"]
+  - [bash, -lc, "su - ubuntu -c 'git config --global core.editor vim'"]
   - [bash, -lc, "/opt/deathstar/prepare-workspace-volume.sh"]
   - [bash, -lc, "/opt/deathstar/install-tailscale.sh"]
   - [bash, -lc, "/opt/deathstar/configure-tailscale.sh"]

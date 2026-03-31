@@ -1,0 +1,8 @@
+{
+  "name": "deathstar-review",
+  "description": "Structured code review methodology with severity-based findings for DeathStar",
+  "author": {
+    "name": "DeathStar",
+    "email": "deathstar@local"
+  }
+}

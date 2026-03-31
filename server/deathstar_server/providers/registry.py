@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from deathstar_server.config import Settings
 from deathstar_server.errors import AppError
 from deathstar_server.providers.anthropic import AnthropicProvider
-from deathstar_server.providers.base import ProviderResult
-from deathstar_server.providers.google import GoogleProvider
-from deathstar_server.providers.openai import OpenAIProvider
-from deathstar_server.providers.vertex import VertexProvider
+from deathstar_server.providers.base import (
+    Message,
+    ProviderResult,
+    StreamDelta,
+    StreamDone,
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+)
 from deathstar_shared.models import ProviderName, ProviderStatus
 
 logger = logging.getLogger(__name__)
@@ -18,27 +24,11 @@ logger = logging.getLogger(__name__)
 class ProviderRegistry:
     def __init__(self, settings: Settings) -> None:
         self.providers = {
-            ProviderName.OPENAI: OpenAIProvider(
-                api_key=settings.openai_api_key,
-                default_model=settings.default_openai_model,
-                base_url=settings.openai_api_base_url,
-            ),
             ProviderName.ANTHROPIC: AnthropicProvider(
                 api_key=settings.anthropic_api_key,
                 default_model=settings.default_anthropic_model,
                 base_url=settings.anthropic_api_base_url,
                 api_version=settings.anthropic_api_version,
-            ),
-            ProviderName.GOOGLE: GoogleProvider(
-                api_key=settings.google_api_key,
-                default_model=settings.default_google_model,
-                base_url=settings.google_api_base_url,
-            ),
-            ProviderName.VERTEX: VertexProvider(
-                project_id=settings.vertex_project_id,
-                location=settings.vertex_location,
-                credential_json=settings.vertex_service_account_key,
-                default_model=settings.default_vertex_model,
             ),
         }
 
@@ -88,3 +78,79 @@ class ProviderRegistry:
                 await asyncio.sleep(delay)
 
         raise last_error  # type: ignore[misc]
+
+    async def generate_with_tools(
+        self,
+        *,
+        provider: ProviderName,
+        messages: list[Message],
+        tools: list[ToolDefinition],
+        tool_executor: Callable[[ToolCall], Awaitable[ToolResult]],
+        model: str | None,
+        system: str | None,
+        timeout_seconds: int,
+        max_turns: int = 10,
+    ) -> ProviderResult:
+        """Run a tool-calling loop: call LLM -> execute tools -> repeat until done."""
+        adapter = self.providers[provider]
+        current_messages = list(messages)
+
+        for turn in range(max_turns):
+            result = await adapter.generate_with_tools(
+                messages=current_messages,
+                tools=tools,
+                model=model,
+                system=system,
+                timeout_seconds=timeout_seconds,
+            )
+
+            if not result.tool_calls:
+                return result
+
+            logger.info(
+                "tool-calling turn %d: %d tool calls",
+                turn + 1,
+                len(result.tool_calls),
+            )
+
+            current_messages.append(Message(
+                role="assistant",
+                content=result.text if result.text else None,
+                tool_calls=result.tool_calls,
+            ))
+
+            for tc in result.tool_calls:
+                try:
+                    tool_result = await tool_executor(tc)
+                except Exception as exc:
+                    logger.warning("tool %s failed: %s", tc.name, exc)
+                    tool_result = ToolResult(
+                        tool_call_id=tc.id,
+                        content=f"Error: {exc}",
+                        is_error=True,
+                    )
+                current_messages.append(Message(
+                    role="tool",
+                    tool_result=tool_result,
+                ))
+
+        return result
+
+    async def generate_text_stream(
+        self,
+        *,
+        provider: ProviderName,
+        prompt: str,
+        model: str | None,
+        system: str | None,
+        timeout_seconds: int,
+    ) -> AsyncIterator[StreamDelta | StreamDone]:
+        """Stream text from a provider. No retries -- yields deltas then done."""
+        adapter = self.providers[provider]
+        async for event in adapter.generate_text_stream(
+            prompt=prompt,
+            model=model,
+            system=system,
+            timeout_seconds=timeout_seconds,
+        ):
+            yield event

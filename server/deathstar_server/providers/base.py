@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,8 +13,56 @@ from deathstar_shared.models import ErrorCode, ProviderName, UsageMetrics
 
 
 @dataclass(frozen=True)
+class ToolDefinition:
+    """A tool that can be called by the LLM."""
+    name: str
+    description: str
+    parameters: dict[str, Any]  # JSON Schema
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """A tool invocation requested by the LLM."""
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """Result of executing a tool call, sent back to the LLM."""
+    tool_call_id: str
+    content: str
+    is_error: bool = False
+
+
+@dataclass(frozen=True)
+class Message:
+    """A conversation message for multi-turn tool-calling loops."""
+    role: str  # "user", "assistant", "tool"
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+    tool_result: ToolResult | None = None
+
+
+@dataclass(frozen=True)
 class ProviderResult:
     text: str
+    model: str
+    usage: UsageMetrics | None = None
+    remote_response_id: str | None = None
+    tool_calls: list[ToolCall] | None = None
+
+
+@dataclass(frozen=True)
+class StreamDelta:
+    """Incremental text chunk from a streaming provider response."""
+    text: str
+
+
+@dataclass(frozen=True)
+class StreamDone:
+    """Final event from a streaming provider response with metadata."""
     model: str
     usage: UsageMetrics | None = None
     remote_response_id: str | None = None
@@ -53,6 +102,50 @@ class BaseProvider(ABC):
         timeout_seconds: int,
     ) -> ProviderResult:
         raise NotImplementedError
+
+    async def generate_with_tools(
+        self,
+        *,
+        messages: list[Message],
+        tools: list[ToolDefinition],
+        model: str | None,
+        system: str | None,
+        timeout_seconds: int,
+    ) -> ProviderResult:
+        """Generate text with tool-calling support.
+
+        Default implementation ignores tools and falls back to generate_text
+        using the last user message. Providers should override with native
+        tool-calling support.
+        """
+        last_user = ""
+        for msg in reversed(messages):
+            if msg.role == "user" and msg.content:
+                last_user = msg.content
+                break
+        return await self.generate_text(
+            prompt=last_user, model=model, system=system,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        model: str | None,
+        system: str | None,
+        timeout_seconds: int,
+    ) -> AsyncIterator[StreamDelta | StreamDone]:
+        """Stream text from the provider. Yields StreamDelta then StreamDone.
+
+        Default implementation falls back to non-streaming generate_text.
+        Providers should override this with native streaming support.
+        """
+        result = await self.generate_text(
+            prompt=prompt, model=model, system=system, timeout_seconds=timeout_seconds,
+        )
+        yield StreamDelta(text=result.text)
+        yield StreamDone(model=result.model, usage=result.usage, remote_response_id=result.remote_response_id)
 
 
 def normalize_http_error(provider: ProviderName, response: httpx.Response) -> AppError:

@@ -7,11 +7,14 @@ services:
     restart: unless-stopped
     env_file:
       - /opt/deathstar/runtime.env
+    environment:
+      - CLAUDE_PLUGIN_DIR=/opt/claude-plugins
     ports:
-      - "127.0.0.1:8080:8080"
+      - "8080:8080"
     volumes:
       - /workspace:/workspace
       - /workspace/deathstar/logs:/var/log/deathstar
+      - /workspace/deathstar/.claude:/root/.claude
     healthcheck:
       test:
         [

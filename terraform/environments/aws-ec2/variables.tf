@@ -40,7 +40,7 @@ variable "associate_public_ip_address" {
 
 variable "enable_web_ui" {
   type    = bool
-  default = false
+  default = true
 }
 
 variable "web_ui_port" {
@@ -145,7 +145,7 @@ variable "default_openai_model" {
 
 variable "default_anthropic_model" {
   type    = string
-  default = "claude-sonnet-4-5-20250514"
+  default = "claude-opus-4-6"
 }
 
 variable "default_google_model" {

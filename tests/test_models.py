@@ -21,7 +21,7 @@ from deathstar_shared.models import (
 
 class TestWorkflowRequestValidation:
     def test_valid_minimal_request(self):
-        req = WorkflowRequest(provider=ProviderName.OPENAI, prompt="Hello")
+        req = WorkflowRequest(provider=ProviderName.ANTHROPIC, prompt="Hello")
         assert req.workflow == WorkflowKind.PROMPT
         assert req.workspace_subpath == "."
         assert req.timeout_seconds == 180
@@ -41,20 +41,20 @@ class TestWorkflowRequestValidation:
 
     def test_prompt_min_length(self):
         with pytest.raises(ValidationError) as exc_info:
-            WorkflowRequest(provider=ProviderName.OPENAI, prompt="")
+            WorkflowRequest(provider=ProviderName.ANTHROPIC, prompt="")
         errors = exc_info.value.errors()
         assert any(e["type"] == "string_too_short" for e in errors)
 
     def test_prompt_max_length(self):
         with pytest.raises(ValidationError) as exc_info:
-            WorkflowRequest(provider=ProviderName.OPENAI, prompt="x" * 200_001)
+            WorkflowRequest(provider=ProviderName.ANTHROPIC, prompt="x" * 200_001)
         errors = exc_info.value.errors()
         assert any(e["type"] == "string_too_long" for e in errors)
 
     def test_workspace_subpath_rejects_parent_traversal(self):
         with pytest.raises(ValidationError) as exc_info:
             WorkflowRequest(
-                provider=ProviderName.OPENAI,
+                provider=ProviderName.ANTHROPIC,
                 prompt="test",
                 workspace_subpath="../secret",
             )
@@ -64,7 +64,7 @@ class TestWorkflowRequestValidation:
     def test_workspace_subpath_rejects_double_dot(self):
         with pytest.raises(ValidationError):
             WorkflowRequest(
-                provider=ProviderName.OPENAI,
+                provider=ProviderName.ANTHROPIC,
                 prompt="test",
                 workspace_subpath="..",
             )
@@ -72,7 +72,7 @@ class TestWorkflowRequestValidation:
     def test_workspace_subpath_rejects_embedded_traversal(self):
         with pytest.raises(ValidationError):
             WorkflowRequest(
-                provider=ProviderName.OPENAI,
+                provider=ProviderName.ANTHROPIC,
                 prompt="test",
                 workspace_subpath="foo/../bar",
             )
@@ -80,14 +80,14 @@ class TestWorkflowRequestValidation:
     def test_workspace_subpath_rejects_absolute_path(self):
         with pytest.raises(ValidationError):
             WorkflowRequest(
-                provider=ProviderName.OPENAI,
+                provider=ProviderName.ANTHROPIC,
                 prompt="test",
                 workspace_subpath="/etc/passwd",
             )
 
     def test_workspace_subpath_accepts_dot(self):
         req = WorkflowRequest(
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="test",
             workspace_subpath=".",
         )
@@ -95,7 +95,7 @@ class TestWorkflowRequestValidation:
 
     def test_workspace_subpath_accepts_nested_path(self):
         req = WorkflowRequest(
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="test",
             workspace_subpath="project/src/main",
         )
@@ -103,7 +103,7 @@ class TestWorkflowRequestValidation:
 
     def test_workspace_subpath_accepts_hyphens_underscores(self):
         req = WorkflowRequest(
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="test",
             workspace_subpath="my-project_v2",
         )
@@ -112,7 +112,7 @@ class TestWorkflowRequestValidation:
     def test_timeout_seconds_min(self):
         with pytest.raises(ValidationError):
             WorkflowRequest(
-                provider=ProviderName.OPENAI,
+                provider=ProviderName.ANTHROPIC,
                 prompt="test",
                 timeout_seconds=4,
             )
@@ -120,16 +120,16 @@ class TestWorkflowRequestValidation:
     def test_timeout_seconds_max(self):
         with pytest.raises(ValidationError):
             WorkflowRequest(
-                provider=ProviderName.OPENAI,
+                provider=ProviderName.ANTHROPIC,
                 prompt="test",
                 timeout_seconds=901,
             )
 
     def test_timeout_seconds_valid_bounds(self):
-        req_min = WorkflowRequest(provider=ProviderName.OPENAI, prompt="x", timeout_seconds=5)
+        req_min = WorkflowRequest(provider=ProviderName.ANTHROPIC, prompt="x", timeout_seconds=5)
         assert req_min.timeout_seconds == 5
 
-        req_max = WorkflowRequest(provider=ProviderName.OPENAI, prompt="x", timeout_seconds=900)
+        req_max = WorkflowRequest(provider=ProviderName.ANTHROPIC, prompt="x", timeout_seconds=900)
         assert req_max.timeout_seconds == 900
 
 
@@ -143,8 +143,8 @@ class TestWorkflowResponseSerialization:
             request_id="abc-123",
             workflow=WorkflowKind.PROMPT,
             status="succeeded",
-            provider=ProviderName.OPENAI,
-            model="gpt-4o-mini",
+            provider=ProviderName.ANTHROPIC,
+            model="claude-sonnet-4-5-20250514",
             content="Hello!",
             workspace_subpath=".",
             duration_ms=150,
@@ -181,7 +181,7 @@ class TestWorkflowResponseSerialization:
             request_id="x",
             workflow=WorkflowKind.PROMPT,
             status="succeeded",
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             model="m",
             workspace_subpath=".",
             duration_ms=0,
@@ -205,14 +205,13 @@ class TestStatusResponseSerialization:
             backup_bucket="my-bucket",
             github_prs_enabled=True,
             providers={
-                "openai": {"configured": True, "default_model": "gpt-4o-mini"},
-                "anthropic": {"configured": False, "default_model": "claude-sonnet-4-5-20250514"},
+                "anthropic": {"configured": True, "default_model": "claude-sonnet-4-5-20250514"},
             },
             workflows=[WorkflowKind.PROMPT, WorkflowKind.PATCH],
         )
         data = resp.model_dump(mode="json")
         assert data["service"] == "healthy"
-        assert data["providers"]["openai"]["configured"] is True
+        assert data["providers"]["anthropic"]["configured"] is True
         assert data["backup_bucket"] == "my-bucket"
 
     def test_defaults(self):
@@ -230,7 +229,7 @@ class TestStatusResponseSerialization:
         assert resp.github_prs_enabled is False
         assert resp.preferred_transport == "ssm"
         assert resp.tailscale_enabled is False
-        assert resp.ssh_user == "ec2-user"
+        assert resp.ssh_user == "ubuntu"
 
 
 # ---------------------------------------------------------------------------

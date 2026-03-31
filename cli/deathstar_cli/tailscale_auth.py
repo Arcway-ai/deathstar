@@ -7,6 +7,8 @@ import typer
 
 OAUTH_TOKEN_URL = "https://api.tailscale.com/api/v2/oauth/token"
 CREATE_KEY_URL = "https://api.tailscale.com/api/v2/tailnet/-/keys"
+DEVICES_URL = "https://api.tailscale.com/api/v2/tailnet/-/devices"
+DEVICE_URL = "https://api.tailscale.com/api/v2/device"
 
 
 def prompt_for_credentials() -> tuple[str, str]:
@@ -109,3 +111,65 @@ def create_auth_key(
     if not key:
         raise typer.BadParameter("Tailscale API response did not include an auth key")
     return key
+
+
+def list_devices(access_token: str) -> list[dict]:
+    """List all devices in the tailnet."""
+    response = httpx.get(
+        DEVICES_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=30.0,
+    )
+    if not response.is_success:
+        detail = response.text
+        try:
+            detail = response.json().get("message", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(
+            f"Tailscale API returned {response.status_code}: {detail}\n"
+            "Your OAuth client may need the 'Devices: Read' scope."
+        )
+    return response.json().get("devices", [])
+
+
+def delete_device(access_token: str, device_id: str) -> None:
+    """Delete a device from the tailnet."""
+    response = httpx.delete(
+        f"{DEVICE_URL}/{device_id}",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=30.0,
+    )
+    if not response.is_success:
+        detail = response.text
+        try:
+            detail = response.json().get("message", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(
+            f"Tailscale API returned {response.status_code}: {detail}\n"
+            "Your OAuth client may need the 'Devices: Write' scope."
+        )
+
+
+def rename_device(access_token: str, device_id: str, new_name: str) -> None:
+    """Rename a device in the tailnet via the Tailscale API."""
+    response = httpx.post(
+        f"{DEVICE_URL}/{device_id}/name",
+        json={"name": new_name},
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        timeout=30.0,
+    )
+    if not response.is_success:
+        detail = response.text
+        try:
+            detail = response.json().get("message", detail)
+        except Exception:
+            pass
+        raise typer.BadParameter(
+            f"Tailscale rename failed ({response.status_code}): {detail}\n"
+            "Your OAuth client may need the 'Devices: Write' scope."
+        )

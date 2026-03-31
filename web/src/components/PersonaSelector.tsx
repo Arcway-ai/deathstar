@@ -5,7 +5,9 @@ import {
   Shield,
   Container,
   Database,
+  PenTool,
   Building2,
+  ScanSearch,
   ChevronDown,
 } from "lucide-react";
 import { personas } from "../personas";
@@ -18,7 +20,9 @@ const iconMap: Record<string, typeof Paintbrush> = {
   Shield,
   Container,
   Database,
+  PenTool,
   Building2,
+  ScanSearch,
 };
 
 export default function PersonaSelector() {

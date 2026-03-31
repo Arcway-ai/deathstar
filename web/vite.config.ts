@@ -7,6 +7,16 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom", "zustand"],
+          markdown: ["react-markdown", "rehype-highlight", "remark-gfm"],
+          hljs: ["highlight.js/lib/core"],
+          xterm: ["@xterm/xterm", "@xterm/addon-fit", "@xterm/addon-web-links"],
+        },
+      },
+    },
   },
   server: {
     port: 5173,
@@ -14,6 +24,7 @@ export default defineConfig({
       "/web/api": {
         target: "http://localhost:8080",
         changeOrigin: true,
+        ws: true,
       },
       "/v1": {
         target: "http://localhost:8080",

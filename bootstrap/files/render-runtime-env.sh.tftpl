@@ -88,9 +88,9 @@ append_parameter "GOOGLE_API_KEY" "${google_api_key_parameter_name}"
 write_gcp_credential "${vertex_sa_key_parameter_name}"
 append_parameter "GITHUB_TOKEN" "${github_token_parameter_name}"
 
-# Configure gh CLI and git HTTPS credentials for ec2-user
+# Configure gh CLI and git HTTPS credentials for ubuntu
 GH_TOKEN=$(grep '^GITHUB_TOKEN=' "$ENV_FILE" | cut -d= -f2-)
 if [[ -n "$GH_TOKEN" ]] && command -v gh >/dev/null 2>&1; then
-  printf '%s' "$GH_TOKEN" | sudo -u ec2-user gh auth login --with-token 2>/dev/null || true
-  sudo -u ec2-user gh auth setup-git 2>/dev/null || true
+  printf '%s' "$GH_TOKEN" | sudo -u ubuntu gh auth login --with-token 2>/dev/null || true
+  sudo -u ubuntu gh auth setup-git 2>/dev/null || true
 fi

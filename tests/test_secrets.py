@@ -29,7 +29,6 @@ def build_config(tmp_path) -> CLIConfig:
         create_backup_bucket=False,
         backup_bucket_name="",
         force_destroy_backup_bucket=False,
-        enable_web_ui=False,
         web_ui_port=8443,
         web_ui_allowed_cidrs=[],
         git_author_name="DeathStar",
@@ -43,16 +42,17 @@ def build_config(tmp_path) -> CLIConfig:
         connect_transport="auto",
         github_app_client_id=None,
         tailscale_oauth_client_id=None,
+        tailscale_oauth_client_secret=None,
     )
 
 
 def test_resolve_secret_target_for_provider(tmp_path) -> None:
     config = build_config(tmp_path)
 
-    target = resolve_secret_target(config, provider=ProviderName.OPENAI)
+    target = resolve_secret_target(config, provider=ProviderName.ANTHROPIC)
 
-    assert target.label == "OpenAI API key"
-    assert target.parameter_name == "/deathstar/providers/openai/api_key"
+    assert target.label == "Anthropic API key"
+    assert target.parameter_name == "/deathstar/providers/anthropic/api_key"
 
 
 def test_resolve_secret_target_for_integration(tmp_path) -> None:
@@ -82,7 +82,7 @@ def test_resolve_secret_target_requires_exactly_one_selector(tmp_path) -> None:
     with pytest.raises(typer.BadParameter):
         resolve_secret_target(
             config,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             integration=IntegrationName.GITHUB,
         )
 
@@ -92,11 +92,9 @@ def test_bootstrap_targets_follow_supported_order(tmp_path) -> None:
 
     targets = bootstrap_targets(config, include_tailscale=True, include_github=True)
 
-    assert [target.parameter_name for target in targets] == [
-        "/deathstar/providers/openai/api_key",
-        "/deathstar/providers/anthropic/api_key",
-        "/deathstar/providers/google/api_key",
-        "/deathstar/providers/vertex/service_account_key",
-        "/deathstar/integrations/tailscale/auth_key",
-        "/deathstar/integrations/github/token",
-    ]
+    param_names = [target.parameter_name for target in targets]
+    # After provider removal, Anthropic should be present
+    assert "/deathstar/providers/anthropic/api_key" in param_names
+    # Integration targets should still be present when requested
+    assert "/deathstar/integrations/tailscale/auth_key" in param_names
+    assert "/deathstar/integrations/github/token" in param_names

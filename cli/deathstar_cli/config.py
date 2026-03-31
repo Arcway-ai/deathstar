@@ -67,7 +67,6 @@ class CLIConfig:
     create_backup_bucket: bool
     backup_bucket_name: str
     force_destroy_backup_bucket: bool
-    enable_web_ui: bool
     web_ui_port: int
     web_ui_allowed_cidrs: list[str]
     git_author_name: str
@@ -81,6 +80,7 @@ class CLIConfig:
     connect_transport: str
     github_app_client_id: str | None
     tailscale_oauth_client_id: str | None
+    tailscale_oauth_client_secret: str | None
 
     @classmethod
     def load(cls, start: Path | None = None) -> "CLIConfig":
@@ -127,7 +127,6 @@ class CLIConfig:
             force_destroy_backup_bucket=_parse_bool(
                 os.getenv("DEATHSTAR_FORCE_DESTROY_BACKUP_BUCKET")
             ),
-            enable_web_ui=_parse_bool(os.getenv("DEATHSTAR_ENABLE_WEB_UI")),
             web_ui_port=int(os.getenv("DEATHSTAR_WEB_UI_PORT", "8443")),
             web_ui_allowed_cidrs=_parse_csv(os.getenv("DEATHSTAR_WEB_UI_ALLOWED_CIDRS")),
             git_author_name=os.getenv("DEATHSTAR_GIT_AUTHOR_NAME", "DeathStar"),
@@ -140,10 +139,8 @@ class CLIConfig:
                 "DEATHSTAR_TAILSCALE_AUTH_PARAMETER_NAME",
                 "/deathstar/integrations/tailscale/auth_key",
             ),
-            tailscale_hostname=os.getenv(
-                "DEATHSTAR_TAILSCALE_HOSTNAME",
-                os.getenv("DEATHSTAR_PROJECT_NAME", "deathstar"),
-            ),
+            tailscale_hostname=os.getenv("DEATHSTAR_TAILSCALE_HOSTNAME", "").strip()
+            or os.getenv("DEATHSTAR_PROJECT_NAME", "deathstar"),
             tailscale_advertise_tags=_parse_csv(
                 os.getenv("DEATHSTAR_TAILSCALE_ADVERTISE_TAGS")
             ),
@@ -151,6 +148,7 @@ class CLIConfig:
             connect_transport=os.getenv("DEATHSTAR_CONNECT_TRANSPORT", "auto").strip().lower(),
             github_app_client_id=os.getenv("DEATHSTAR_GITHUB_APP_CLIENT_ID") or None,
             tailscale_oauth_client_id=os.getenv("DEATHSTAR_TAILSCALE_OAUTH_CLIENT_ID") or None,
+            tailscale_oauth_client_secret=os.getenv("DEATHSTAR_TAILSCALE_OAUTH_CLIENT_SECRET") or None,
         )
 
     def __post_init__(self) -> None:

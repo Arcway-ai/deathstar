@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import json
-import logging
-import re
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-from threading import Lock
 
+from deathstar_server.web.database import Database
 from deathstar_shared.models import (
     ConversationDetail,
     ConversationMessage,
@@ -16,98 +13,134 @@ from deathstar_shared.models import (
     WorkflowKind,
 )
 
-logger = logging.getLogger(__name__)
-
-MAX_CONVERSATIONS = 50
-MAX_MESSAGES_PER_CONVERSATION = 100
 HISTORY_CHAR_LIMIT = 16_000
-_UUID_RE = re.compile(r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$")
-
-
-class _Conversation:
-    __slots__ = ("id", "repo", "title", "messages", "created_at", "updated_at")
-
-    def __init__(self, *, id: str, repo: str, title: str, created_at: datetime, updated_at: datetime) -> None:
-        self.id = id
-        self.repo = repo
-        self.title = title
-        self.messages: list[ConversationMessage] = []
-        self.created_at = created_at
-        self.updated_at = updated_at
 
 
 class ConversationStore:
-    def __init__(self, persist_dir: Path) -> None:
-        self._dir = persist_dir
-        self._lock = Lock()
-        self._convos: dict[str, _Conversation] = {}
-        self._load_from_disk()
+    """SQLite-backed conversation store."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def list_conversations(self, repo: str | None = None) -> list[ConversationSummary]:
-        with self._lock:
-            convos = self._convos.values()
-            if repo:
-                convos = [c for c in convos if c.repo == repo]
-            return [
-                ConversationSummary(
-                    id=c.id,
-                    repo=c.repo,
-                    title=c.title,
-                    message_count=len(c.messages),
-                    created_at=c.created_at,
-                    updated_at=c.updated_at,
-                )
-                for c in sorted(convos, key=lambda c: c.updated_at, reverse=True)
-            ]
+        conn = self._db.get_conn()
+        if repo:
+            rows = conn.execute(
+                "SELECT c.id, c.repo, c.title, c.created_at, c.updated_at, "
+                "(SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) AS message_count "
+                "FROM conversations c WHERE c.repo = ? ORDER BY c.updated_at DESC",
+                (repo,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT c.id, c.repo, c.title, c.created_at, c.updated_at, "
+                "(SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) AS message_count "
+                "FROM conversations c ORDER BY c.updated_at DESC",
+            ).fetchall()
+        return [
+            ConversationSummary(
+                id=r["id"],
+                repo=r["repo"],
+                title=r["title"],
+                message_count=r["message_count"],
+                created_at=r["created_at"],
+                updated_at=r["updated_at"],
+            )
+            for r in rows
+        ]
 
     def get_conversation(self, conversation_id: str) -> ConversationDetail | None:
-        with self._lock:
-            c = self._convos.get(conversation_id)
-            if c is None:
-                return None
-            return ConversationDetail(
-                id=c.id,
-                repo=c.repo,
-                title=c.title,
-                messages=list(c.messages),
-                created_at=c.created_at,
-                updated_at=c.updated_at,
-            )
+        conn = self._db.get_conn()
+        c = conn.execute(
+            "SELECT id, repo, title, created_at, updated_at "
+            "FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if c is None:
+            return None
+        msg_rows = conn.execute(
+            "SELECT id, role, content, timestamp, workflow, provider, model, duration_ms, agent_blocks "
+            "FROM messages WHERE conversation_id = ? ORDER BY timestamp",
+            (conversation_id,),
+        ).fetchall()
+        return ConversationDetail(
+            id=c["id"],
+            repo=c["repo"],
+            title=c["title"],
+            messages=[
+                ConversationMessage(
+                    id=m["id"],
+                    role=m["role"],
+                    content=m["content"],
+                    timestamp=m["timestamp"],
+                    workflow=m["workflow"],
+                    provider=m["provider"],
+                    model=m["model"],
+                    duration_ms=m["duration_ms"],
+                    agent_blocks=json.loads(m["agent_blocks"]) if m["agent_blocks"] else None,
+                )
+                for m in msg_rows
+            ],
+            created_at=c["created_at"],
+            updated_at=c["updated_at"],
+        )
 
     def delete_conversation(self, conversation_id: str) -> bool:
-        with self._lock:
-            c = self._convos.pop(conversation_id, None)
-            if c is None:
-                return False
-            self._delete_from_disk(conversation_id)
-            return True
+        conn = self._db.get_conn()
+        cur = conn.execute(
+            "DELETE FROM conversations WHERE id = ?", (conversation_id,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
 
     def get_or_create(self, conversation_id: str | None, repo: str) -> str:
-        with self._lock:
-            if conversation_id and conversation_id in self._convos:
+        conn = self._db.get_conn()
+        if conversation_id:
+            row = conn.execute(
+                "SELECT id FROM conversations WHERE id = ?", (conversation_id,)
+            ).fetchone()
+            if row:
                 return conversation_id
-            return self._create_locked(repo)
+
+        cid = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO conversations (id, repo, title, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (cid, repo, "New conversation", now, now),
+        )
+        conn.commit()
+        return cid
 
     def add_user_message(self, conversation_id: str, content: str) -> str:
+        conn = self._db.get_conn()
         msg_id = str(uuid.uuid4())
-        msg = ConversationMessage(
-            id=msg_id,
-            role="user",
-            content=content,
-            timestamp=datetime.now(timezone.utc),
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, role, content, timestamp) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (msg_id, conversation_id, "user", content, now),
         )
-        with self._lock:
-            c = self._convos[conversation_id]
-            c.messages.append(msg)
-            c.updated_at = msg.timestamp
-            if len(c.messages) == 1:
-                c.title = content[:80]
-            self._enforce_message_limit(c)
-            self._persist(c)
+        # Update title to first user message if this is the first message
+        count = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()[0]
+        if count == 1:
+            conn.execute(
+                "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+                (content[:80], now, conversation_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, conversation_id),
+            )
+        conn.commit()
         return msg_id
 
     def add_assistant_message(
@@ -119,113 +152,64 @@ class ConversationStore:
         provider: ProviderName,
         model: str,
         duration_ms: int,
+        agent_blocks: list[dict] | None = None,
     ) -> str:
+        conn = self._db.get_conn()
         msg_id = str(uuid.uuid4())
-        msg = ConversationMessage(
-            id=msg_id,
-            role="assistant",
-            content=content,
-            timestamp=datetime.now(timezone.utc),
-            workflow=workflow,
-            provider=provider,
-            model=model,
-            duration_ms=duration_ms,
+        now = datetime.now(timezone.utc).isoformat()
+        blocks_json = json.dumps(agent_blocks) if agent_blocks else None
+        conn.execute(
+            "INSERT INTO messages "
+            "(id, conversation_id, role, content, timestamp, workflow, provider, model, duration_ms, agent_blocks) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (msg_id, conversation_id, "assistant", content, now, workflow, provider, model, duration_ms, blocks_json),
         )
-        with self._lock:
-            c = self._convos[conversation_id]
-            c.messages.append(msg)
-            c.updated_at = msg.timestamp
-            self._enforce_message_limit(c)
-            self._persist(c)
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (now, conversation_id),
+        )
+        conn.commit()
         return msg_id
 
+    def update_session_id(self, conversation_id: str, session_id: str | None) -> None:
+        conn = self._db.get_conn()
+        conn.execute(
+            "UPDATE conversations SET sdk_session_id = ? WHERE id = ?",
+            (session_id, conversation_id),
+        )
+        conn.commit()
+
+    def get_session_id(self, conversation_id: str) -> str | None:
+        conn = self._db.get_conn()
+        row = conn.execute(
+            "SELECT sdk_session_id FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return row["sdk_session_id"]
+
     def build_history_prompt(self, conversation_id: str) -> str:
-        with self._lock:
-            c = self._convos.get(conversation_id)
-            if c is None or not c.messages:
-                return ""
+        conn = self._db.get_conn()
+        rows = conn.execute(
+            "SELECT role, content FROM messages "
+            "WHERE conversation_id = ? ORDER BY timestamp",
+            (conversation_id,),
+        ).fetchall()
+        if not rows:
+            return ""
 
-            lines: list[str] = []
-            total = 0
-            for msg in reversed(c.messages):
-                entry = f"{'User' if msg.role == 'user' else 'Assistant'}: {msg.content}"
-                if total + len(entry) > HISTORY_CHAR_LIMIT:
-                    break
-                lines.append(entry)
-                total += len(entry)
+        lines: list[str] = []
+        total = 0
+        for row in reversed(rows):
+            label = "User" if row["role"] == "user" else "Assistant"
+            entry = f"{label}: {row['content']}"
+            if total + len(entry) > HISTORY_CHAR_LIMIT:
+                break
+            lines.append(entry)
+            total += len(entry)
 
-            if not lines:
-                return ""
-            lines.reverse()
-            return "Conversation history:\n" + "\n\n".join(lines)
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    def _create_locked(self, repo: str) -> str:
-        if len(self._convos) >= MAX_CONVERSATIONS:
-            oldest = min(self._convos.values(), key=lambda c: c.updated_at)
-            self._convos.pop(oldest.id)
-            self._delete_from_disk(oldest.id)
-
-        cid = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
-        c = _Conversation(id=cid, repo=repo, title="New conversation", created_at=now, updated_at=now)
-        self._convos[cid] = c
-        self._persist(c)
-        return cid
-
-    def _enforce_message_limit(self, c: _Conversation) -> None:
-        if len(c.messages) > MAX_MESSAGES_PER_CONVERSATION:
-            c.messages = c.messages[-MAX_MESSAGES_PER_CONVERSATION:]
-
-    # ------------------------------------------------------------------
-    # Disk persistence
-    # ------------------------------------------------------------------
-
-    def _persist(self, c: _Conversation) -> None:
-        if not _UUID_RE.match(c.id):
-            return
-        try:
-            self._dir.mkdir(parents=True, exist_ok=True)
-            data = {
-                "id": c.id,
-                "repo": c.repo,
-                "title": c.title,
-                "created_at": c.created_at.isoformat(),
-                "updated_at": c.updated_at.isoformat(),
-                "messages": [m.model_dump(mode="json") for m in c.messages],
-            }
-            path = self._dir / f"{c.id}.json"
-            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except OSError:
-            logger.warning("failed to persist conversation %s", c.id, exc_info=True)
-
-    def _delete_from_disk(self, conversation_id: str) -> None:
-        if not _UUID_RE.match(conversation_id):
-            return
-        try:
-            path = self._dir / f"{conversation_id}.json"
-            path.unlink(missing_ok=True)
-        except OSError:
-            logger.warning("failed to delete conversation file %s", conversation_id, exc_info=True)
-
-    def _load_from_disk(self) -> None:
-        if not self._dir.exists():
-            return
-        for path in self._dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                c = _Conversation(
-                    id=data["id"],
-                    repo=data["repo"],
-                    title=data.get("title", "Untitled"),
-                    created_at=datetime.fromisoformat(data["created_at"]),
-                    updated_at=datetime.fromisoformat(data["updated_at"]),
-                )
-                for m in data.get("messages", []):
-                    c.messages.append(ConversationMessage(**m))
-                self._convos[c.id] = c
-            except (json.JSONDecodeError, KeyError, TypeError):
-                logger.warning("skipping corrupt conversation file: %s", path, exc_info=True)
+        if not lines:
+            return ""
+        lines.reverse()
+        return "Conversation history:\n" + "\n\n".join(lines)

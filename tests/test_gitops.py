@@ -25,28 +25,11 @@ def _make_settings(tmp_path: Path) -> Settings:
         backup_s3_prefix="workspace-backups",
         aws_region="us-west-1",
         log_level="INFO",
-        openai_api_key=None,
-        anthropic_api_key=None,
-        google_api_key=None,
         github_token=None,
-        openai_api_base_url="https://api.openai.com/v1",
-        anthropic_api_base_url="https://api.anthropic.com/v1",
-        anthropic_api_version="2023-06-01",
-        google_api_base_url="https://generativelanguage.googleapis.com/v1beta",
-        default_openai_model="gpt-4o-mini",
-        default_anthropic_model="claude-sonnet-4-5-20250514",
-        default_google_model="gemini-2.0-flash",
-        default_vertex_model="gemini-2.0-flash",
-        vertex_project_id=None,
-        vertex_location="us-central1",
-        vertex_service_account_key=None,
-        git_author_name="DeathStar",
-        git_author_email="deathstar@local",
         tailscale_enabled=False,
         tailscale_hostname=None,
-        ssh_user="ec2-user",
+        ssh_user="ubuntu",
         api_token=None,
-        enable_web_ui=False,
     )
 
 
@@ -371,6 +354,85 @@ class TestRepoHelpers:
 
         assert branch == "main"
 
+
+# ---------------------------------------------------------------------------
+# _normalize_patch
+# ---------------------------------------------------------------------------
+
+class TestNormalizePatch:
+    def test_adds_space_prefix_to_context_lines(self):
+        """LLMs often omit the leading space on context lines."""
+        patch = (
+            "diff --git a/hello.py b/hello.py\n"
+            "--- a/hello.py\n"
+            "+++ b/hello.py\n"
+            "@@ -1,3 +1,3 @@\n"
+            "import os\n"  # missing space prefix
+            "-old = 1\n"
+            "+new = 2\n"
+            "import sys\n"  # missing space prefix
+        )
+        result = GitService._normalize_patch(patch)
+        lines = result.split("\n")
+        # The context lines should now start with a space
+        assert lines[4] == " import os"
+        assert lines[7] == " import sys"
+
+    def test_fixes_empty_lines_in_hunks(self):
+        """Empty lines inside hunks should become ' ' (space-only context lines)."""
+        patch = (
+            "diff --git a/f.py b/f.py\n"
+            "--- a/f.py\n"
+            "+++ b/f.py\n"
+            "@@ -1,4 +1,4 @@\n"
+            " first\n"
+            "\n"  # empty line in hunk
+            "-old\n"
+            "+new\n"
+        )
+        result = GitService._normalize_patch(patch)
+        lines = result.split("\n")
+        assert lines[5] == " "  # empty line converted to space
+
+    def test_preserves_valid_patch(self):
+        """A well-formed patch should pass through unchanged (except trailing newline)."""
+        patch = (
+            "diff --git a/f.py b/f.py\n"
+            "--- a/f.py\n"
+            "+++ b/f.py\n"
+            "@@ -1,3 +1,3 @@\n"
+            " context\n"
+            "-old\n"
+            "+new\n"
+        )
+        result = GitService._normalize_patch(patch)
+        assert result == patch
+
+    def test_normalizes_crlf(self):
+        """Windows-style line endings should be converted to LF."""
+        patch = "diff --git a/f.py b/f.py\r\n--- a/f.py\r\n+++ b/f.py\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n"
+        result = GitService._normalize_patch(patch)
+        assert "\r" not in result
+        assert result.startswith("diff --git a/f.py b/f.py\n")
+
+    def test_ensures_trailing_newline(self):
+        patch = (
+            "diff --git a/f.py b/f.py\n"
+            "--- a/f.py\n"
+            "+++ b/f.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new"  # no trailing newline
+        )
+        result = GitService._normalize_patch(patch)
+        assert result.endswith("\n")
+
+
+# ---------------------------------------------------------------------------
+# repo_root_for_subpath and current_branch (continued)
+# ---------------------------------------------------------------------------
+
+class TestRepoHelpersContinued:
     def test_commit_all(self, tmp_path):
         settings = _make_settings(tmp_path)
         repo_path = settings.projects_root / "myrepo"

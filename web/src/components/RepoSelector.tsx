@@ -1,25 +1,29 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   GitBranch,
   Folder,
   Globe,
-  Loader2,
   Search,
   Lock,
   Download,
   Check,
 } from "lucide-react";
 import { useStore } from "../store";
+import { TIEFighterLoader, DeathStarSpinner } from "./DeathStarLoader";
+import Starfield from "./Starfield";
 
 export default function RepoSelector() {
   const [tab, setTab] = useState<"local" | "github">("local");
   const [search, setSearch] = useState("");
 
   return (
-    <div className="flex flex-1 items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-xl animate-fade-in">
+    <div className="relative flex flex-1 items-center justify-center p-4 overflow-y-auto">
+      <Starfield />
+      <div className="relative z-10 w-full max-w-xl animate-fade-in">
         {/* Header */}
         <div className="mb-6 text-center">
+          <DeathStarSpinner size={56} className="mx-auto mb-3" />
           <h1 className="font-display text-3xl font-bold text-text-primary mb-1">
             DEATHSTAR
           </h1>
@@ -81,9 +85,9 @@ export default function RepoSelector() {
 }
 
 function LocalRepoList({ search }: { search: string }) {
+  const navigate = useNavigate();
   const repos = useStore((s) => s.repos);
   const repoLoading = useStore((s) => s.repoLoading);
-  const selectRepo = useStore((s) => s.selectRepo);
   const loadRepos = useStore((s) => s.loadRepos);
 
   const filtered = repos.filter((r) =>
@@ -91,11 +95,7 @@ function LocalRepoList({ search }: { search: string }) {
   );
 
   if (repoLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 size={20} className="animate-spin text-text-muted" />
-      </div>
-    );
+    return <TIEFighterLoader text="Scanning" />;
   }
 
   if (repos.length === 0) {
@@ -120,7 +120,7 @@ function LocalRepoList({ search }: { search: string }) {
       {filtered.map((repo) => (
         <button
           key={repo.name}
-          onClick={() => selectRepo(repo.name)}
+          onClick={() => navigate(`/${encodeURIComponent(repo.name)}`)}
           className="flex w-full items-center gap-3 rounded-lg border border-border-subtle bg-bg-surface px-4 py-3 text-left transition-all hover:border-accent/30 hover:bg-bg-elevated group"
         >
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent/20 transition-colors">
@@ -153,6 +153,7 @@ function GitHubRepoList({ search }: { search: string }) {
   const cloneRepo = useStore((s) => s.cloneRepo);
   const repos = useStore((s) => s.repos);
   const [cloning, setCloning] = useState<string | null>(null);
+  const [cloneError, setCloneError] = useState<string | null>(null);
 
   useEffect(() => {
     if (githubRepos.length === 0) {
@@ -170,22 +171,20 @@ function GitHubRepoList({ search }: { search: string }) {
 
   const handleClone = async (fullName: string) => {
     setCloning(fullName);
+    setCloneError(null);
     try {
       await cloneRepo(fullName);
+    } catch (e) {
+      setCloneError(
+        `Failed to clone ${fullName}: ${e instanceof Error ? e.message : "unknown error"}`,
+      );
     } finally {
       setCloning(null);
     }
   };
 
   if (githubLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 size={20} className="animate-spin text-text-muted" />
-        <span className="ml-2 text-sm text-text-muted">
-          Fetching your repos…
-        </span>
-      </div>
-    );
+    return <TIEFighterLoader text="Fetching" />;
   }
 
   if (githubRepos.length === 0) {
@@ -209,6 +208,11 @@ function GitHubRepoList({ search }: { search: string }) {
 
   return (
     <div className="space-y-1 max-h-[50vh] overflow-y-auto">
+      {cloneError && (
+        <div className="rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-xs text-error mb-2">
+          {cloneError}
+        </div>
+      )}
       {filtered.map((repo) => {
         const alreadyCloned = localRepoNames.has(repo.name);
         const isCloning = cloning === repo.full_name;
@@ -251,7 +255,7 @@ function GitHubRepoList({ search }: { search: string }) {
                 className="flex items-center gap-1 rounded-md border border-border-subtle px-2.5 py-1.5 text-xs text-text-secondary hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
               >
                 {isCloning ? (
-                  <Loader2 size={12} className="animate-spin" />
+                  <DeathStarSpinner size={14} />
                 ) : (
                   <Download size={12} />
                 )}

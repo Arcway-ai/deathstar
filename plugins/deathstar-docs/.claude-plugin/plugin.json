@@ -1,0 +1,8 @@
+{
+  "name": "deathstar-docs",
+  "description": "Documentation standards and generation methodology for DeathStar",
+  "author": {
+    "name": "DeathStar",
+    "email": "deathstar@local"
+  }
+}

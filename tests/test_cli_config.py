@@ -180,7 +180,6 @@ class TestPostInitValidation:
                 create_backup_bucket=False,
                 backup_bucket_name="",
                 force_destroy_backup_bucket=False,
-                enable_web_ui=False,
                 web_ui_port=8443,
                 web_ui_allowed_cidrs=[],
                 git_author_name="DS",
@@ -194,6 +193,7 @@ class TestPostInitValidation:
                 connect_transport="auto",
                 github_app_client_id=None,
                 tailscale_oauth_client_id=None,
+                tailscale_oauth_client_secret=None,
             )
 
     def test_rejects_invalid_region(self, tmp_path):
@@ -218,7 +218,6 @@ class TestPostInitValidation:
                 create_backup_bucket=False,
                 backup_bucket_name="",
                 force_destroy_backup_bucket=False,
-                enable_web_ui=False,
                 web_ui_port=8443,
                 web_ui_allowed_cidrs=[],
                 git_author_name="DS",
@@ -232,6 +231,7 @@ class TestPostInitValidation:
                 connect_transport="auto",
                 github_app_client_id=None,
                 tailscale_oauth_client_id=None,
+                tailscale_oauth_client_secret=None,
             )
 
     def test_valid_project_name_with_hyphens_underscores(self, tmp_path):
@@ -255,7 +255,6 @@ class TestPostInitValidation:
             create_backup_bucket=False,
             backup_bucket_name="",
             force_destroy_backup_bucket=False,
-            enable_web_ui=False,
             web_ui_port=8443,
             web_ui_allowed_cidrs=[],
             git_author_name="DS",
@@ -269,6 +268,7 @@ class TestPostInitValidation:
             connect_transport="auto",
             github_app_client_id=None,
             tailscale_oauth_client_id=None,
+            tailscale_oauth_client_secret=None,
         )
         assert config.project_name == "my-project_v2"
 
@@ -293,7 +293,6 @@ class TestPostInitValidation:
             create_backup_bucket=False,
             backup_bucket_name="",
             force_destroy_backup_bucket=False,
-            enable_web_ui=False,
             web_ui_port=8443,
             web_ui_allowed_cidrs=[],
             git_author_name="DS",
@@ -307,5 +306,6 @@ class TestPostInitValidation:
             connect_transport="auto",
             github_app_client_id=None,
             tailscale_oauth_client_id=None,
+            tailscale_oauth_client_secret=None,
         )
         assert config.region == "eu-central-1"

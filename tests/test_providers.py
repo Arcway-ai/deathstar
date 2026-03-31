@@ -15,9 +15,6 @@ from deathstar_server.providers.base import (
     normalize_client_error,
     normalize_http_error,
 )
-from deathstar_server.providers.google import GoogleProvider
-from deathstar_server.providers.openai import OpenAIProvider
-from deathstar_server.providers.vertex import VertexProvider
 from deathstar_shared.models import ErrorCode, ProviderName, UsageMetrics
 
 
@@ -49,7 +46,7 @@ def _mock_response(status_code: int, json_body: dict | None = None, text: str = 
 class TestNormalizeHttpError:
     def test_auth_error_401(self):
         resp = _mock_response(401, {"error": {"message": "bad key"}})
-        err = normalize_http_error(ProviderName.OPENAI, resp)
+        err = normalize_http_error(ProviderName.ANTHROPIC, resp)
         assert isinstance(err, AppError)
         assert err.code == ErrorCode.AUTH_ERROR
         assert err.status_code == 401
@@ -63,31 +60,31 @@ class TestNormalizeHttpError:
 
     def test_rate_limited_429(self):
         resp = _mock_response(429, {"error": {"message": "slow down"}})
-        err = normalize_http_error(ProviderName.GOOGLE, resp)
+        err = normalize_http_error(ProviderName.ANTHROPIC, resp)
         assert err.code == ErrorCode.RATE_LIMITED
         assert err.retryable is True
 
     def test_upstream_timeout_504(self):
         resp = _mock_response(504, {"message": "gateway timeout"})
-        err = normalize_http_error(ProviderName.OPENAI, resp)
+        err = normalize_http_error(ProviderName.ANTHROPIC, resp)
         assert err.code == ErrorCode.UPSTREAM_TIMEOUT
         assert err.retryable is True
 
     def test_server_error_500(self):
         resp = _mock_response(500, {"error": {"message": "internal"}})
-        err = normalize_http_error(ProviderName.OPENAI, resp)
+        err = normalize_http_error(ProviderName.ANTHROPIC, resp)
         assert err.code == ErrorCode.UPSTREAM_UNAVAILABLE
         assert err.retryable is True
 
     def test_client_error_422(self):
         resp = _mock_response(422, {"error": {"message": "bad payload"}})
-        err = normalize_http_error(ProviderName.OPENAI, resp)
+        err = normalize_http_error(ProviderName.ANTHROPIC, resp)
         assert err.code == ErrorCode.INVALID_REQUEST
         assert err.retryable is False
 
     def test_plain_text_error_body(self):
         resp = _mock_response(500, text="oops")
-        err = normalize_http_error(ProviderName.OPENAI, resp)
+        err = normalize_http_error(ProviderName.ANTHROPIC, resp)
         assert "oops" in err.message
 
 
@@ -103,16 +100,16 @@ class TestNormalizeClientError:
 
 class TestEnsureText:
     def test_returns_stripped_text(self):
-        assert ensure_text("  hello  ", ProviderName.OPENAI) == "hello"
+        assert ensure_text("  hello  ", ProviderName.ANTHROPIC) == "hello"
 
     def test_raises_on_empty(self):
         with pytest.raises(AppError) as exc_info:
-            ensure_text("", ProviderName.OPENAI)
+            ensure_text("", ProviderName.ANTHROPIC)
         assert exc_info.value.code == ErrorCode.INVALID_PROVIDER_OUTPUT
 
     def test_raises_on_whitespace_only(self):
         with pytest.raises(AppError):
-            ensure_text("   ", ProviderName.GOOGLE)
+            ensure_text("   ", ProviderName.ANTHROPIC)
 
     def test_raises_on_none(self):
         with pytest.raises(AppError):
@@ -139,188 +136,6 @@ class TestAsUsage:
         assert usage.input_tokens is None
         assert usage.output_tokens is None
         assert usage.total_tokens is None
-
-
-# ---------------------------------------------------------------------------
-# OpenAI Provider
-# ---------------------------------------------------------------------------
-
-class TestOpenAIProvider:
-    def _make_provider(self, api_key: str | None = "sk-test") -> OpenAIProvider:
-        return OpenAIProvider(
-            api_key=api_key,
-            default_model="gpt-4o-mini",
-            base_url="https://api.openai.com/v1",
-        )
-
-    @pytest.mark.asyncio
-    async def test_successful_generation(self, monkeypatch):
-        provider = self._make_provider()
-        response_json = {
-            "id": "resp-123",
-            "output_text": "Hello world!",
-            "model": "gpt-4o-mini",
-            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
-        }
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(200, response_json)
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        result = await provider.generate_text(
-            prompt="hi",
-            model=None,
-            system=None,
-            timeout_seconds=30,
-        )
-        assert isinstance(result, ProviderResult)
-        assert result.text == "Hello world!"
-        assert result.model == "gpt-4o-mini"
-        assert result.usage.input_tokens == 10
-        assert result.usage.output_tokens == 5
-        assert result.remote_response_id == "resp-123"
-
-    @pytest.mark.asyncio
-    async def test_successful_generation_with_system(self, monkeypatch):
-        provider = self._make_provider()
-        captured = {}
-
-        async def mock_post(self_client, url, **kwargs):
-            captured["payload"] = kwargs.get("json", {})
-            return _mock_response(200, {
-                "output_text": "ok",
-                "model": "gpt-4o-mini",
-                "usage": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        await provider.generate_text(
-            prompt="test",
-            model=None,
-            system="be helpful",
-            timeout_seconds=30,
-        )
-        assert captured["payload"]["instructions"] == "be helpful"
-
-    @pytest.mark.asyncio
-    async def test_http_error_401(self, monkeypatch):
-        provider = self._make_provider()
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(401, {"error": {"message": "invalid key"}})
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.AUTH_ERROR
-
-    @pytest.mark.asyncio
-    async def test_http_error_429(self, monkeypatch):
-        provider = self._make_provider()
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(429, {"error": {"message": "rate limited"}})
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.RATE_LIMITED
-
-    @pytest.mark.asyncio
-    async def test_http_error_500(self, monkeypatch):
-        provider = self._make_provider()
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(500, {"error": {"message": "server error"}})
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.UPSTREAM_UNAVAILABLE
-
-    @pytest.mark.asyncio
-    async def test_connection_error(self, monkeypatch):
-        provider = self._make_provider()
-
-        async def mock_post(self_client, url, **kwargs):
-            raise httpx.ConnectError("connection refused")
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.UPSTREAM_UNAVAILABLE
-
-    @pytest.mark.asyncio
-    async def test_missing_api_key(self):
-        provider = self._make_provider(api_key=None)
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.PROVIDER_NOT_CONFIGURED
-
-    @pytest.mark.asyncio
-    async def test_empty_response_text(self, monkeypatch):
-        provider = self._make_provider()
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(200, {
-                "output_text": "",
-                "output": [],
-                "model": "gpt-4o-mini",
-                "usage": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.INVALID_PROVIDER_OUTPUT
-
-    @pytest.mark.asyncio
-    async def test_fallback_output_text_extraction(self, monkeypatch):
-        """When output_text is missing, falls back to parsing output array."""
-        provider = self._make_provider()
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(200, {
-                "output": [
-                    {
-                        "type": "message",
-                        "content": [{"type": "output_text", "text": "fallback text"}],
-                    }
-                ],
-                "model": "gpt-4o-mini",
-                "usage": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        result = await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert result.text == "fallback text"
-
-    @pytest.mark.asyncio
-    async def test_custom_model(self, monkeypatch):
-        provider = self._make_provider()
-        captured = {}
-
-        async def mock_post(self_client, url, **kwargs):
-            captured["payload"] = kwargs.get("json", {})
-            return _mock_response(200, {
-                "output_text": "ok",
-                "model": "gpt-4o",
-                "usage": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        result = await provider.generate_text(prompt="hi", model="gpt-4o", system=None, timeout_seconds=30)
-        assert captured["payload"]["model"] == "gpt-4o"
-        assert result.model == "gpt-4o"
 
 
 # ---------------------------------------------------------------------------
@@ -447,387 +262,26 @@ class TestAnthropicProvider:
 
 
 # ---------------------------------------------------------------------------
-# Google Provider
-# ---------------------------------------------------------------------------
-
-class TestGoogleProvider:
-    def _make_provider(self, api_key: str | None = "goog-test") -> GoogleProvider:
-        return GoogleProvider(
-            api_key=api_key,
-            default_model="gemini-2.0-flash",
-            base_url="https://generativelanguage.googleapis.com/v1beta",
-        )
-
-    @pytest.mark.asyncio
-    async def test_successful_generation(self, monkeypatch):
-        provider = self._make_provider()
-        response_json = {
-            "responseId": "resp-456",
-            "candidates": [
-                {"content": {"parts": [{"text": "Hi there!"}]}}
-            ],
-            "usageMetadata": {
-                "promptTokenCount": 5,
-                "candidatesTokenCount": 3,
-                "totalTokenCount": 8,
-            },
-        }
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(200, response_json)
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        result = await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert result.text == "Hi there!"
-        assert result.model == "gemini-2.0-flash"
-        assert result.usage.input_tokens == 5
-        assert result.usage.output_tokens == 3
-        assert result.usage.total_tokens == 8
-        assert result.remote_response_id == "resp-456"
-
-    @pytest.mark.asyncio
-    async def test_system_instruction_included(self, monkeypatch):
-        provider = self._make_provider()
-        captured = {}
-
-        async def mock_post(self_client, url, **kwargs):
-            captured["payload"] = kwargs.get("json", {})
-            return _mock_response(200, {
-                "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
-                "usageMetadata": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        await provider.generate_text(prompt="test", model=None, system="be safe", timeout_seconds=30)
-        assert captured["payload"]["systemInstruction"]["parts"][0]["text"] == "be safe"
-
-    @pytest.mark.asyncio
-    async def test_api_key_header(self, monkeypatch):
-        provider = self._make_provider()
-        captured = {}
-
-        async def mock_post(self_client, url, **kwargs):
-            captured["headers"] = kwargs.get("headers", {})
-            return _mock_response(200, {
-                "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
-                "usageMetadata": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        await provider.generate_text(prompt="test", model=None, system=None, timeout_seconds=30)
-        assert captured["headers"]["x-goog-api-key"] == "goog-test"
-
-    @pytest.mark.asyncio
-    async def test_url_includes_model(self, monkeypatch):
-        provider = self._make_provider()
-        captured = {}
-
-        async def mock_post(self_client, url, **kwargs):
-            captured["url"] = str(url)
-            return _mock_response(200, {
-                "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
-                "usageMetadata": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        await provider.generate_text(prompt="test", model="gemini-pro", system=None, timeout_seconds=30)
-        assert "gemini-pro:generateContent" in captured["url"]
-
-    @pytest.mark.asyncio
-    async def test_http_error_500(self, monkeypatch):
-        provider = self._make_provider()
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(500, {"error": {"message": "internal error"}})
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.UPSTREAM_UNAVAILABLE
-
-    @pytest.mark.asyncio
-    async def test_connection_error(self, monkeypatch):
-        provider = self._make_provider()
-
-        async def mock_post(self_client, url, **kwargs):
-            raise httpx.ReadTimeout("timed out")
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.UPSTREAM_UNAVAILABLE
-
-    @pytest.mark.asyncio
-    async def test_missing_api_key(self):
-        provider = self._make_provider(api_key=None)
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.PROVIDER_NOT_CONFIGURED
-
-    @pytest.mark.asyncio
-    async def test_empty_response_text(self, monkeypatch):
-        provider = self._make_provider()
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(200, {
-                "candidates": [],
-                "usageMetadata": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.INVALID_PROVIDER_OUTPUT
-
-
-# ---------------------------------------------------------------------------
-# Vertex AI Provider
-# ---------------------------------------------------------------------------
-
-FAKE_SA_KEY = json.dumps({
-    "type": "service_account",
-    "project_id": "test-project",
-    "private_key_id": "key-id",
-    "private_key": "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n",
-    "client_email": "test@test-project.iam.gserviceaccount.com",
-    "client_id": "123",
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-})
-
-
-class TestVertexProvider:
-    def _make_provider(
-        self,
-        project_id: str | None = "test-project",
-        credential_json: str | None = FAKE_SA_KEY,
-    ) -> VertexProvider:
-        return VertexProvider(
-            project_id=project_id,
-            location="us-central1",
-            credential_json=credential_json,
-            default_model="gemini-2.0-flash",
-        )
-
-    @pytest.mark.asyncio
-    async def test_successful_generation(self, monkeypatch):
-        provider = self._make_provider()
-        # Mock token refresh
-        monkeypatch.setattr(provider, "_get_access_token", AsyncMock(return_value="fake-token"))
-
-        response_json = {
-            "responseId": "resp-789",
-            "candidates": [
-                {"content": {"parts": [{"text": "Vertex response!"}]}}
-            ],
-            "usageMetadata": {
-                "promptTokenCount": 5,
-                "candidatesTokenCount": 3,
-                "totalTokenCount": 8,
-            },
-        }
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(200, response_json)
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        result = await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert result.text == "Vertex response!"
-        assert result.model == "gemini-2.0-flash"
-        assert result.usage.input_tokens == 5
-        assert result.usage.output_tokens == 3
-        assert result.usage.total_tokens == 8
-        assert result.remote_response_id == "resp-789"
-
-    @pytest.mark.asyncio
-    async def test_system_instruction_included(self, monkeypatch):
-        provider = self._make_provider()
-        monkeypatch.setattr(provider, "_get_access_token", AsyncMock(return_value="fake-token"))
-        captured = {}
-
-        async def mock_post(self_client, url, **kwargs):
-            captured["payload"] = kwargs.get("json", {})
-            return _mock_response(200, {
-                "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
-                "usageMetadata": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        await provider.generate_text(prompt="test", model=None, system="be safe", timeout_seconds=30)
-        assert captured["payload"]["systemInstruction"]["parts"][0]["text"] == "be safe"
-
-    @pytest.mark.asyncio
-    async def test_bearer_auth_header(self, monkeypatch):
-        provider = self._make_provider()
-        monkeypatch.setattr(provider, "_get_access_token", AsyncMock(return_value="my-token"))
-        captured = {}
-
-        async def mock_post(self_client, url, **kwargs):
-            captured["headers"] = kwargs.get("headers", {})
-            return _mock_response(200, {
-                "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
-                "usageMetadata": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        await provider.generate_text(prompt="test", model=None, system=None, timeout_seconds=30)
-        assert captured["headers"]["Authorization"] == "Bearer my-token"
-
-    @pytest.mark.asyncio
-    async def test_url_includes_model(self, monkeypatch):
-        provider = self._make_provider()
-        monkeypatch.setattr(provider, "_get_access_token", AsyncMock(return_value="fake-token"))
-        captured = {}
-
-        async def mock_post(self_client, url, **kwargs):
-            captured["url"] = str(url)
-            return _mock_response(200, {
-                "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
-                "usageMetadata": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        await provider.generate_text(prompt="test", model="gemini-pro", system=None, timeout_seconds=30)
-        assert "gemini-pro:generateContent" in captured["url"]
-        assert "test-project" in captured["url"]
-        assert "us-central1" in captured["url"]
-
-    @pytest.mark.asyncio
-    async def test_http_error_500(self, monkeypatch):
-        provider = self._make_provider()
-        monkeypatch.setattr(provider, "_get_access_token", AsyncMock(return_value="fake-token"))
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(500, {"error": {"message": "internal error"}})
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.UPSTREAM_UNAVAILABLE
-
-    @pytest.mark.asyncio
-    async def test_connection_error(self, monkeypatch):
-        provider = self._make_provider()
-        monkeypatch.setattr(provider, "_get_access_token", AsyncMock(return_value="fake-token"))
-
-        async def mock_post(self_client, url, **kwargs):
-            raise httpx.ReadTimeout("timed out")
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.UPSTREAM_UNAVAILABLE
-
-    @pytest.mark.asyncio
-    async def test_missing_project_id(self):
-        provider = self._make_provider(project_id=None)
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.PROVIDER_NOT_CONFIGURED
-
-    @pytest.mark.asyncio
-    async def test_no_credentials_fails_without_adc(self, monkeypatch):
-        """Without inline JSON and no ADC, provider raises PROVIDER_NOT_CONFIGURED."""
-        provider = self._make_provider(credential_json=None)
-
-        # Mock _get_access_token to raise (google-auth may not be installed in test env)
-        async def mock_get_token():
-            raise AppError(
-                ErrorCode.PROVIDER_NOT_CONFIGURED,
-                "vertex is not configured: no GCP credentials found.",
-                status_code=400,
-            )
-
-        monkeypatch.setattr(provider, "_get_access_token", mock_get_token)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.PROVIDER_NOT_CONFIGURED
-
-    @pytest.mark.asyncio
-    async def test_empty_response_text(self, monkeypatch):
-        provider = self._make_provider()
-        monkeypatch.setattr(provider, "_get_access_token", AsyncMock(return_value="fake-token"))
-
-        async def mock_post(self_client, url, **kwargs):
-            return _mock_response(200, {
-                "candidates": [],
-                "usageMetadata": {},
-            })
-
-        monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
-
-        with pytest.raises(AppError) as exc_info:
-            await provider.generate_text(prompt="hi", model=None, system=None, timeout_seconds=30)
-        assert exc_info.value.code == ErrorCode.INVALID_PROVIDER_OUTPUT
-
-
-# ---------------------------------------------------------------------------
 # Provider property tests
 # ---------------------------------------------------------------------------
 
 class TestProviderProperties:
-    def test_openai_name(self):
-        p = OpenAIProvider(api_key="k", default_model="m", base_url="http://x")
-        assert p.name == ProviderName.OPENAI
-
     def test_anthropic_name(self):
         p = AnthropicProvider(api_key="k", default_model="m", base_url="http://x", api_version="v")
         assert p.name == ProviderName.ANTHROPIC
 
-    def test_google_name(self):
-        p = GoogleProvider(api_key="k", default_model="m", base_url="http://x")
-        assert p.name == ProviderName.GOOGLE
-
-    def test_vertex_name(self):
-        p = VertexProvider(
-            project_id="proj", location="us-central1",
-            credential_json='{"type":"service_account"}',
-            default_model="m",
-        )
-        assert p.name == ProviderName.VERTEX
-
-    def test_vertex_configured_with_project(self):
-        p = VertexProvider(
-            project_id="proj", location="us-central1",
-            credential_json=None,
-            default_model="m",
-        )
-        assert p.configured is True
-
-    def test_vertex_configured_false_no_project(self):
-        p = VertexProvider(
-            project_id=None, location="us-central1",
-            credential_json='{"type":"service_account"}',
-            default_model="m",
-        )
-        assert p.configured is False
-
     def test_configured_true(self):
-        p = OpenAIProvider(api_key="sk-abc", default_model="m", base_url="http://x")
+        p = AnthropicProvider(api_key="sk-abc", default_model="m", base_url="http://x", api_version="v")
         assert p.configured is True
 
     def test_configured_false(self):
-        p = OpenAIProvider(api_key=None, default_model="m", base_url="http://x")
+        p = AnthropicProvider(api_key=None, default_model="m", base_url="http://x", api_version="v")
         assert p.configured is False
 
     def test_configured_false_empty_string(self):
-        p = OpenAIProvider(api_key="", default_model="m", base_url="http://x")
+        p = AnthropicProvider(api_key="", default_model="m", base_url="http://x", api_version="v")
         assert p.configured is False
 
     def test_base_url_strips_trailing_slash(self):
-        p = OpenAIProvider(api_key="k", default_model="m", base_url="http://x/v1/")
+        p = AnthropicProvider(api_key="k", default_model="m", base_url="http://x/v1/", api_version="v")
         assert p.base_url == "http://x/v1"

@@ -11,8 +11,8 @@ from deathstar_server.config import Settings
 from deathstar_server.errors import AppError
 from deathstar_server.providers.registry import ProviderRegistry
 from deathstar_server.services.github import GitHubService
-from deathstar_server.services.gitops import DiffSnapshot, GitService
-from deathstar_shared.models import ErrorCode, ProviderName, WorkflowKind, WorkflowRequest, WorkflowResponse
+from deathstar_server.services.gitops import GitService
+from deathstar_shared.models import ErrorCode, WorkflowKind, WorkflowRequest, WorkflowResponse
 
 logger = logging.getLogger(__name__)
 
@@ -150,30 +150,106 @@ class WorkflowService:
                 status_code=400,
             )
 
-        workspace_context = self.git.build_workspace_context(request.workspace_subpath)
-        system = _join_system_prompts(
-            request.system,
-            "You are editing code on a remote git workspace. Return only a unified diff that "
-            "can be applied with git apply. Use repo-relative paths. Do not wrap the diff in "
-            "markdown fences. Do not include prose.",
+        target = self.git.resolve_target(request.workspace_subpath)
+        full_tree = self.git.full_file_tree(target)
+        tree_text = "\n".join(full_tree) if full_tree else "<empty>"
+
+        # ── Pass 1: Ask the LLM which files it needs to edit ──────────
+        plan_system = (
+            "You are a code editing assistant. Given a task and a file tree, "
+            "identify which existing files need to be modified and any new files "
+            "that need to be created.\n\n"
+            "Return ONLY a JSON object with two keys:\n"
+            '- "files_to_modify": array of repo-relative paths from the tree below\n'
+            '- "files_to_create": array of repo-relative paths for new files\n\n'
+            "RULES:\n"
+            "- files_to_modify MUST only contain paths from the file tree\n"
+            "- Keep the list minimal — only files that actually need changes\n"
+            "- Do NOT wrap in markdown fences"
         )
-        prompt = (
+        plan_prompt = (
             f"Task:\n{request.prompt}\n\n"
-            f"Workspace context:\n{workspace_context}\n\n"
-            "Return a unified diff only."
+            f"Complete file tree:\n{tree_text}\n\n"
+            "Return the JSON file list only."
+        )
+
+        plan_result = await self.providers.generate_text(
+            provider=request.provider,
+            prompt=plan_prompt,
+            model=request.model,
+            system=plan_system,
+            timeout_seconds=min(request.timeout_seconds, 60),
+        )
+
+        # Parse file list from plan
+        try:
+            plan = _extract_json_object(plan_result.text)
+            files_to_modify = [str(f) for f in (plan.get("files_to_modify") or []) if isinstance(f, str)]
+            files_to_create = [str(f) for f in (plan.get("files_to_create") or []) if isinstance(f, str)]
+        except AppError:
+            logger.warning("patch plan response was not valid JSON, falling back to workspace context")
+            files_to_modify = []
+            files_to_create = []
+
+        # ── Pass 2: Fetch file contents and generate the diff ─────────
+        if files_to_modify:
+            file_contents = self.git.read_files_by_paths(request.workspace_subpath, files_to_modify)
+            numbered_files: list[str] = []
+            for path, content in file_contents.items():
+                lines = content.split("\n")
+                numbered = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines))
+                numbered_files.append(f"File: {path}\n{numbered}")
+            files_context = "\n\n".join(numbered_files)
+        else:
+            files_context = self.git.build_workspace_context(request.workspace_subpath)
+
+        diff_system = _join_system_prompts(
+            request.system,
+            "You are editing code on a remote git workspace. Return ONLY a valid unified diff.\n\n"
+            "CRITICAL RULES:\n"
+            "- You may ONLY modify files whose full contents are provided below.\n"
+            "- Context lines MUST be copied EXACTLY from the numbered file contents provided.\n"
+            "- Do NOT invent or guess file contents — use what is given.\n"
+            "- For new files, use --- /dev/null as the old-file path.\n\n"
+            "Diff format requirements:\n"
+            "- Start each file with: diff --git a/path b/path\n"
+            "- Then: --- a/path\n"
+            "- Then: +++ b/path\n"
+            "- Then hunk headers: @@ -start,count +start,count @@\n"
+            "- Context lines (unchanged) must start with a SPACE character\n"
+            "- Added lines start with +\n"
+            "- Removed lines start with -\n"
+            "- Use repo-relative paths (not absolute paths)\n"
+            "- Do NOT wrap in markdown fences or backticks\n"
+            "- Do NOT include any prose, explanation, or commentary\n"
+            "- Include 3 lines of context around each change\n"
+            "- Line numbers in @@ headers must match the source file line numbers",
+        )
+
+        new_files_note = ""
+        if files_to_create:
+            new_files_note = "\n\nNew files to create:\n" + "\n".join(files_to_create)
+
+        diff_prompt = (
+            f"Task:\n{request.prompt}\n\n"
+            f"Complete file tree:\n{tree_text}\n\n"
+            f"File contents (with line numbers):\n{files_context}"
+            f"{new_files_note}\n\n"
+            "Return a unified diff only — no other text."
         )
 
         result = await self.providers.generate_text(
             provider=request.provider,
-            prompt=prompt,
+            prompt=diff_prompt,
             model=request.model,
-            system=system,
+            system=diff_system,
             timeout_seconds=request.timeout_seconds,
         )
 
         patch_text = _extract_unified_diff(result.text)
         artifacts: dict[str, object] = {
             "patch": patch_text,
+            "files_planned": files_to_modify + files_to_create,
             "remote_response_id": result.remote_response_id,
         }
 

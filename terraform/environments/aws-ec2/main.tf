@@ -1,10 +1,10 @@
-data "aws_ssm_parameter" "amazon_linux_2023" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+data "aws_ssm_parameter" "ubuntu_2404" {
+  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
 
 locals {
   repo_root                    = abspath("${path.module}/../../..")
-  ssh_user                     = "ec2-user"
+  ssh_user                     = "ubuntu"
   effective_tailscale_hostname = trimspace(var.tailscale_hostname) != "" ? trimspace(var.tailscale_hostname) : var.project_name
 
   runtime_files = toset(concat(
@@ -18,6 +18,10 @@ locals {
     [for file in fileset(local.repo_root, "cli/**") : file],
     [for file in fileset(local.repo_root, "server/**") : file],
     [for file in fileset(local.repo_root, "shared/**") : file],
+    [for file in fileset(local.repo_root, "plugins/**") : file],
+    [for file in fileset(local.repo_root, "web/{package.json,package-lock.json,index.html,vite.config.ts,tsconfig.json,tsconfig.app.json}") : file],
+    [for file in fileset(local.repo_root, "web/public/**") : file],
+    [for file in fileset(local.repo_root, "web/src/**") : file],
   ))
 
   runtime_revision = sha256(join("", [
@@ -126,7 +130,6 @@ locals {
     {
       aws_region           = var.aws_region
       artifact_bucket_name = module.storage.artifact_bucket_name
-      runtime_revision     = local.runtime_revision
     },
   )
 
@@ -175,7 +178,7 @@ module "instance" {
   source                      = "../../modules/instance"
   depends_on                  = [aws_s3_object.runtime_files]
   name                        = var.project_name
-  ami_id                      = data.aws_ssm_parameter.amazon_linux_2023.value
+  ami_id                      = data.aws_ssm_parameter.ubuntu_2404.value
   instance_type               = var.instance_type
   subnet_id                   = module.network.subnet_id
   availability_zone           = module.network.availability_zone

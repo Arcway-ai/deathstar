@@ -41,7 +41,7 @@ def _build_var_flags(config: CLIConfig, region: str) -> list[str]:
         f"-var=create_backup_bucket={str(config.create_backup_bucket).lower()}",
         f"-var=backup_bucket_name={config.backup_bucket_name}",
         f"-var=force_destroy_backup_bucket={str(config.force_destroy_backup_bucket).lower()}",
-        f"-var=enable_web_ui={str(config.enable_web_ui).lower()}",
+        "-var=enable_web_ui=true",
         f"-var=web_ui_port={config.web_ui_port}",
         f"-var=git_author_name={config.git_author_name}",
         f"-var=git_author_email={config.git_author_email}",
@@ -84,10 +84,18 @@ def terraform_init(config: CLIConfig, region: str) -> None:
     _run(config, region, ["terraform", "init", "-input=false"])
 
 
-def terraform_apply(config: CLIConfig, region: str, auto_approve: bool) -> None:
+def terraform_apply(
+    config: CLIConfig,
+    region: str,
+    auto_approve: bool,
+    targets: list[str] | None = None,
+) -> None:
     command = ["terraform", "apply", "-input=false", *_build_var_flags(config, region)]
     if auto_approve:
         command.insert(2, "-auto-approve")
+    if targets:
+        for t in targets:
+            command.append(f"-target={t}")
     _run(config, region, command)
 
 

@@ -12,10 +12,7 @@ class DeathStarModel(BaseModel):
 
 
 class ProviderName(str, Enum):
-    OPENAI = "openai"
     ANTHROPIC = "anthropic"
-    GOOGLE = "google"
-    VERTEX = "vertex"
 
 
 class WorkflowKind(str, Enum):
@@ -23,6 +20,9 @@ class WorkflowKind(str, Enum):
     PATCH = "patch"
     PR = "pr"
     REVIEW = "review"
+    DOCS = "docs"
+    AUDIT = "audit"
+    PLAN = "plan"
 
 
 class ErrorCode(str, Enum):
@@ -110,7 +110,7 @@ class StatusResponse(DeathStarModel):
     preferred_transport: Literal["tailscale", "ssm"] = "ssm"
     tailscale_enabled: bool = False
     tailscale_hostname: str | None = None
-    ssh_user: str = "ec2-user"
+    ssh_user: str = "ubuntu"
     providers: dict[str, ProviderStatus]
     workflows: list[WorkflowKind]
 
@@ -145,10 +145,77 @@ class RestoreResponse(DeathStarModel):
 # ---------------------------------------------------------------------------
 
 
+class ReviewSeverity(str, Enum):
+    ERROR = "error"
+    WARNING = "warning"
+    SUGGESTION = "suggestion"
+    NITPICK = "nitpick"
+
+
+class ReviewVerdict(str, Enum):
+    APPROVE = "approve"
+    REQUEST_CHANGES = "request_changes"
+    COMMENT = "comment"
+
+
+class ReviewFinding(DeathStarModel):
+    id: str
+    file: str
+    line_start: int | None = None
+    line_end: int | None = None
+    severity: ReviewSeverity
+    title: str
+    body: str
+    original_code: str | None = None
+    suggested_code: str | None = None
+
+
+class StructuredReview(DeathStarModel):
+    summary: str
+    verdict: ReviewVerdict
+    findings: list[ReviewFinding] = Field(default_factory=list)
+
+
+class PostReviewRequest(DeathStarModel):
+    pr_url: str = Field(max_length=500)
+    summary: str = Field(max_length=10_000)
+    verdict: ReviewVerdict
+    findings: list[ReviewFinding] = Field(default_factory=list)
+
+
+class ApplySuggestionsRequest(DeathStarModel):
+    pr_url: str = Field(max_length=500)
+    findings: list[ReviewFinding]
+    commit_message: str | None = Field(default=None, max_length=500)
+
+
+class ApplySuggestionsResponse(DeathStarModel):
+    commit_sha: str
+    files_changed: int
+    commit_url: str
+    applied: list[str] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+
+
 class RepoInfo(DeathStarModel):
     name: str
     branch: str
     dirty: bool
+
+
+class GitHubPullRequestSummary(DeathStarModel):
+    number: int
+    title: str
+    state: str
+    user: str
+    head_branch: str
+    base_branch: str
+    updated_at: str
+    additions: int | None = None
+    deletions: int | None = None
+    changed_files: int | None = None
+    draft: bool = False
+    url: str
 
 
 class ChatRequest(DeathStarModel):
@@ -160,6 +227,7 @@ class ChatRequest(DeathStarModel):
     model: str | None = Field(default=None, max_length=200)
     system: str | None = Field(default=None, max_length=200_000)
     write_changes: bool = False
+    pr_url: str | None = Field(default=None, max_length=500)
 
     @field_validator("repo")
     @classmethod
@@ -180,6 +248,7 @@ class ChatResponse(DeathStarModel):
     model: str
     duration_ms: int
     usage: UsageMetrics | None = None
+    cost_usd: float | None = None
     error: ErrorEnvelope | None = None
     status: Literal["succeeded", "failed"]
 
@@ -193,6 +262,7 @@ class ConversationMessage(DeathStarModel):
     provider: ProviderName | None = None
     model: str | None = None
     duration_ms: int | None = None
+    agent_blocks: list[dict[str, Any]] | None = None
 
 
 class ConversationSummary(DeathStarModel):
@@ -232,7 +302,13 @@ class CloneRequest(DeathStarModel):
     full_name: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$")
 
 
+class CheckoutRequest(DeathStarModel):
+    """Checkout an existing branch (allows main/master)."""
+    branch: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9_./-]+$", max_length=200)
+
+
 class BranchRequest(DeathStarModel):
+    """Create or delete a branch (rejects main/master)."""
     branch: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9_./-]+$", max_length=200)
     from_branch: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_./-]+$", max_length=200)
 
@@ -268,6 +344,34 @@ class SaveMemoryRequest(DeathStarModel):
 
 
 # ---------------------------------------------------------------------------
+# Feedback
+# ---------------------------------------------------------------------------
+
+
+class FeedbackKind(str, Enum):
+    THUMBS_UP = "thumbs_up"
+    THUMBS_DOWN = "thumbs_down"
+
+
+class FeedbackRequest(DeathStarModel):
+    message_id: str = Field(min_length=1, max_length=200)
+    conversation_id: str | None = Field(default=None, max_length=200)
+    kind: FeedbackKind
+    repo: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9_./ -]+$")
+    content: str = Field(default="", max_length=10_000)
+    prompt: str = Field(default="", max_length=2000)
+    comment: str = Field(default="", max_length=1000)
+
+
+class FeedbackResponse(DeathStarModel):
+    id: str
+    message_id: str
+    kind: FeedbackKind
+    repo: str
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
 # Repo Context
 # ---------------------------------------------------------------------------
 
@@ -277,3 +381,4 @@ class RepoContextResponse(DeathStarModel):
     recent_commits: list[str]
     claude_md: str | None = None
     file_tree: list[str]
+    conflict_files: list[str] = []

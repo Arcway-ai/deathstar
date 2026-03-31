@@ -1,0 +1,8 @@
+{
+  "name": "deathstar-plan",
+  "description": "Structured implementation planning methodology for DeathStar",
+  "author": {
+    "name": "DeathStar",
+    "email": "deathstar@local"
+  }
+}

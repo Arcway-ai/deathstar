@@ -39,21 +39,9 @@ def _ssm_client(config: CLIConfig, region: str):
 
 def provider_target(config: CLIConfig, provider: ProviderName) -> SecretTarget:
     mapping = {
-        ProviderName.OPENAI: SecretTarget(
-            label="OpenAI API key",
-            parameter_name=config.openai_parameter_name,
-        ),
         ProviderName.ANTHROPIC: SecretTarget(
             label="Anthropic API key",
             parameter_name=config.anthropic_parameter_name,
-        ),
-        ProviderName.GOOGLE: SecretTarget(
-            label="Google API key",
-            parameter_name=config.google_parameter_name,
-        ),
-        ProviderName.VERTEX: SecretTarget(
-            label="Vertex AI credential config (JSON — SA key or WIF config)",
-            parameter_name=config.vertex_parameter_name,
         ),
     }
     return mapping[provider]
@@ -98,10 +86,7 @@ def bootstrap_targets(
     include_github: bool,
 ) -> list[SecretTarget]:
     targets = [
-        provider_target(config, ProviderName.OPENAI),
         provider_target(config, ProviderName.ANTHROPIC),
-        provider_target(config, ProviderName.GOOGLE),
-        provider_target(config, ProviderName.VERTEX),
     ]
 
     if include_tailscale:

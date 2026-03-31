@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { X, Key, Cpu, Brain } from "lucide-react";
+import { X, Cpu, Brain } from "lucide-react";
 import { useStore } from "../store";
 import type { ProviderName } from "../types";
 
 export default function SettingsPanel() {
   const toggleSettings = useStore((s) => s.toggleSettings);
-  const [tab, setTab] = useState<"general" | "providers" | "memory">("general");
+  const [tab, setTab] = useState<"providers" | "memory">("providers");
 
   return (
     <>
@@ -30,7 +30,6 @@ export default function SettingsPanel() {
         {/* Tabs */}
         <div className="flex border-b border-border-subtle">
           {[
-            { id: "general" as const, icon: Key, label: "General" },
             { id: "providers" as const, icon: Cpu, label: "Providers" },
             { id: "memory" as const, icon: Brain, label: "Memory" },
           ].map((t) => (
@@ -51,54 +50,11 @@ export default function SettingsPanel() {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4">
-          {tab === "general" && <GeneralTab />}
           {tab === "providers" && <ProvidersTab />}
           {tab === "memory" && <MemoryTab />}
         </div>
       </div>
     </>
-  );
-}
-
-function GeneralTab() {
-  const [token, setToken] = useState(
-    localStorage.getItem("ds_api_token") ?? "",
-  );
-
-  const save = () => {
-    if (token.trim()) {
-      localStorage.setItem("ds_api_token", token.trim());
-    } else {
-      localStorage.removeItem("ds_api_token");
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-          API Token
-        </label>
-        <div className="flex gap-2">
-          <input
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="Enter your DEATHSTAR_API_TOKEN"
-            className="flex-1 rounded-md border border-border-subtle bg-bg-surface px-3 py-2 text-xs text-text-primary placeholder:text-text-muted outline-none focus:border-accent/50"
-          />
-          <button
-            onClick={save}
-            className="rounded-md bg-accent px-3 py-2 text-xs font-medium text-bg-deep hover:bg-accent-hover transition-colors"
-          >
-            Save
-          </button>
-        </div>
-        <p className="mt-1 text-[10px] text-text-muted">
-          Required for authenticated API endpoints. Stored in localStorage.
-        </p>
-      </div>
-    </div>
   );
 }
 

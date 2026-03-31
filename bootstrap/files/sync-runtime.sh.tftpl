@@ -1,10 +1,31 @@
 #!/bin/bash
 set -euo pipefail
 
+BUCKET="${artifact_bucket_name}"
+REGION="${aws_region}"
+
+# Discover the latest runtime revision in S3.
+# Each terraform apply uploads to runtime/<sha256>/... — pick the newest prefix.
+LATEST_REV=$(aws s3api list-objects-v2 \
+  --bucket "$BUCKET" \
+  --prefix "runtime/" \
+  --delimiter "/" \
+  --query 'CommonPrefixes[-1].Prefix' \
+  --output text \
+  --region "$REGION" \
+| sed 's|^runtime/||;s|/$||')
+
+if [ -z "$LATEST_REV" ] || [ "$LATEST_REV" = "None" ]; then
+  echo "ERROR: no runtime revision found in s3://$BUCKET/runtime/" >&2
+  exit 1
+fi
+
+echo "Syncing runtime revision: $LATEST_REV"
+
 mkdir -p /opt/deathstar/repo
 
 aws s3 sync \
-  "s3://${artifact_bucket_name}/runtime/${runtime_revision}/" \
+  "s3://$BUCKET/runtime/$LATEST_REV/" \
   /opt/deathstar/repo \
   --delete \
-  --region "${aws_region}"
+  --region "$REGION"

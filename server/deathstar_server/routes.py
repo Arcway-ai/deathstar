@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from deathstar_server.app_state import backup_service, settings, workflow_service
+from deathstar_server.app_state import backup_service, settings
 from deathstar_shared.models import (
     BackupRequest,
     BackupResponse,
@@ -10,9 +10,6 @@ from deathstar_shared.models import (
     RestoreRequest,
     RestoreResponse,
     StatusResponse,
-    WorkflowKind,
-    WorkflowRequest,
-    WorkflowResponse,
 )
 from deathstar_shared.version import VERSION, full_version
 
@@ -39,19 +36,9 @@ def status() -> StatusResponse:
         tailscale_enabled=settings.tailscale_enabled,
         tailscale_hostname=settings.tailscale_hostname,
         ssh_user=settings.ssh_user,
-        providers=workflow_service.providers.status(),
-        workflows=[
-            WorkflowKind.PROMPT,
-            WorkflowKind.PATCH,
-            WorkflowKind.PR,
-            WorkflowKind.REVIEW,
-        ],
+        providers={},
+        workflows=[],
     )
-
-
-@router.post("/run", response_model=WorkflowResponse)
-async def run(request: WorkflowRequest) -> WorkflowResponse:
-    return await workflow_service.execute(request)
 
 
 @router.get("/logs", response_model=LogsResponse)

@@ -42,32 +42,15 @@ def _make_settings(tmp_path: Path) -> Settings:
         backup_s3_prefix="workspace-backups",
         aws_region="us-west-1",
         log_level="INFO",
-        openai_api_key="sk-test",
-        anthropic_api_key="ant-test",
-        google_api_key="goog-test",
         github_token="ghp-test",
-        openai_api_base_url="https://api.openai.com/v1",
-        anthropic_api_base_url="https://api.anthropic.com/v1",
-        anthropic_api_version="2023-06-01",
-        google_api_base_url="https://generativelanguage.googleapis.com/v1beta",
-        default_openai_model="gpt-4o-mini",
-        default_anthropic_model="claude-sonnet-4-5-20250514",
-        default_google_model="gemini-2.0-flash",
-        default_vertex_model="gemini-2.0-flash",
-        vertex_project_id=None,
-        vertex_location="us-central1",
-        vertex_service_account_key=None,
-        git_author_name="DeathStar",
-        git_author_email="deathstar@local",
         tailscale_enabled=False,
         tailscale_hostname=None,
-        ssh_user="ec2-user",
+        ssh_user="ubuntu",
         api_token=None,
-        enable_web_ui=False,
     )
 
 
-def _make_provider_result(text: str = "response text", model: str = "gpt-4o-mini") -> ProviderResult:
+def _make_provider_result(text: str = "response text", model: str = "claude-sonnet-4-5-20250514") -> ProviderResult:
     return ProviderResult(
         text=text,
         model=model,
@@ -81,9 +64,7 @@ def workflow_deps(tmp_path):
     settings = _make_settings(tmp_path)
     providers = MagicMock(spec=ProviderRegistry)
     providers.providers = {
-        ProviderName.OPENAI: MagicMock(default_model="gpt-4o-mini"),
         ProviderName.ANTHROPIC: MagicMock(default_model="claude-sonnet-4-5-20250514"),
-        ProviderName.GOOGLE: MagicMock(default_model="gemini-2.0-flash"),
     }
     providers.generate_text = AsyncMock(return_value=_make_provider_result())
     git = MagicMock(spec=GitService)
@@ -102,7 +83,7 @@ class TestPromptWorkflow:
         service, providers, git, github = workflow_deps
         request = WorkflowRequest(
             workflow=WorkflowKind.PROMPT,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Explain Python",
         )
 
@@ -112,7 +93,7 @@ class TestPromptWorkflow:
         assert result.status == "succeeded"
         assert result.content == "response text"
         assert result.workflow == WorkflowKind.PROMPT
-        assert result.provider == ProviderName.OPENAI
+        assert result.provider == ProviderName.ANTHROPIC
         assert result.usage is not None
         providers.generate_text.assert_awaited_once()
 
@@ -123,7 +104,7 @@ class TestPromptWorkflow:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.PROMPT,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Explain this code",
             workspace_subpath="myrepo",
         )
@@ -147,7 +128,7 @@ class TestPatchWorkflow:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.PATCH,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Fix the bug",
             workspace_subpath=".",
         )
@@ -167,7 +148,7 @@ class TestPatchWorkflow:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.PATCH,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Fix bug",
             workspace_subpath="myrepo",
             write_changes=False,
@@ -190,7 +171,7 @@ class TestPatchWorkflow:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.PATCH,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Fix bug",
             workspace_subpath="myrepo",
             write_changes=True,
@@ -214,7 +195,7 @@ class TestPRWorkflow:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.PR,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Create PR",
             workspace_subpath=".",
         )
@@ -244,7 +225,7 @@ class TestPRWorkflow:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.PR,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Create PR for bug fix",
             workspace_subpath="myrepo",
             open_pr=True,
@@ -274,7 +255,7 @@ class TestPRWorkflow:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.PR,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Summarize changes",
             workspace_subpath="myrepo",
             open_pr=False,
@@ -307,7 +288,7 @@ class TestReviewWorkflow:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.REVIEW,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Review my code",
             workspace_subpath="myrepo",
         )
@@ -324,7 +305,7 @@ class TestReviewWorkflow:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.REVIEW,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="Review",
             workspace_subpath=".",
         )
@@ -349,7 +330,7 @@ class TestErrorHandling:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.PROMPT,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="hi",
         )
 
@@ -366,7 +347,7 @@ class TestErrorHandling:
 
         request = WorkflowRequest(
             workflow=WorkflowKind.PROMPT,
-            provider=ProviderName.OPENAI,
+            provider=ProviderName.ANTHROPIC,
             prompt="hi",
         )
 
@@ -476,3 +457,110 @@ class TestGenerateBranchName:
     def test_empty_title_uses_default(self):
         name = _generate_branch_name("!!!")
         assert "change" in name
+
+
+# ---------------------------------------------------------------------------
+# Suggestion safety checks
+# ---------------------------------------------------------------------------
+
+class TestExtractIdentifiersFromImports:
+    def test_python_from_import(self):
+        code = "from os.path import join, exists\n"
+        ids = GitHubService._extract_identifiers_from_imports(code)
+        assert ids == {"join", "exists"}
+
+    def test_python_from_import_with_alias(self):
+        code = "from pathlib import Path as P\n"
+        ids = GitHubService._extract_identifiers_from_imports(code)
+        assert ids == {"P"}
+
+    def test_python_import(self):
+        code = "import os\nimport json\n"
+        ids = GitHubService._extract_identifiers_from_imports(code)
+        assert ids == {"os", "json"}
+
+    def test_js_named_import(self):
+        code = "import { useState, useEffect } from 'react';\n"
+        ids = GitHubService._extract_identifiers_from_imports(code)
+        assert "useState" in ids
+        assert "useEffect" in ids
+
+    def test_js_default_import(self):
+        code = "import React from 'react';\n"
+        ids = GitHubService._extract_identifiers_from_imports(code)
+        assert ids == {"React"}
+
+    def test_ts_type_import(self):
+        code = "import type { ReactNode, FC } from 'react';\n"
+        ids = GitHubService._extract_identifiers_from_imports(code)
+        assert "ReactNode" in ids
+        assert "FC" in ids
+
+    def test_mixed_imports(self):
+        code = (
+            "from datetime import datetime\n"
+            "import re\n"
+            "import { AppError } from './errors';\n"
+        )
+        ids = GitHubService._extract_identifiers_from_imports(code)
+        assert "datetime" in ids
+        assert "re" in ids
+        assert "AppError" in ids
+
+
+class TestCheckSuggestionSafety:
+    def test_safe_suggestion_passes(self):
+        original = "import os\nimport json\n\nprint(os.getcwd())\n"
+        # Removing json is safe — it's not used
+        modified = "import os\n\nprint(os.getcwd())\n"
+        result = GitHubService._check_suggestion_safety(original, modified, "Remove unused import")
+        assert result is None
+
+    def test_removing_used_import_blocked(self):
+        original = "from pathlib import Path\nimport os\n\ndef foo():\n    return Path('/tmp')\n"
+        # Removing Path is unsafe — it's used in foo()
+        modified = "import os\n\ndef foo():\n    return Path('/tmp')\n"
+        result = GitHubService._check_suggestion_safety(original, modified, "Remove Path import")
+        assert result is not None
+        assert "Path" in result
+
+    def test_removing_used_ts_import_blocked(self):
+        original = (
+            "import { useState, useEffect } from 'react';\n\n"
+            "function App() {\n  const [x, setX] = useState(0);\n  useEffect(() => {}, []);\n}\n"
+        )
+        # Removing useEffect is unsafe
+        modified = (
+            "import { useState } from 'react';\n\n"
+            "function App() {\n  const [x, setX] = useState(0);\n  useEffect(() => {}, []);\n}\n"
+        )
+        result = GitHubService._check_suggestion_safety(original, modified, "Remove useEffect")
+        assert result is not None
+        assert "useEffect" in result
+
+    def test_no_imports_changed_passes(self):
+        original = "import os\n\nx = 1\ny = x + 1\n"
+        modified = "import os\n\nx = 1\ny = x + 2\n"
+        result = GitHubService._check_suggestion_safety(original, modified, "Fix math")
+        assert result is None
+
+    def test_partial_name_no_false_positive(self):
+        # "Path" is removed but "PathLike" is used — should NOT trigger
+        original = "from pathlib import Path\nfrom os import PathLike\n\ndef foo() -> PathLike:\n    pass\n"
+        modified = "from os import PathLike\n\ndef foo() -> PathLike:\n    pass\n"
+        result = GitHubService._check_suggestion_safety(original, modified, "Remove unused Path")
+        assert result is None
+
+    def test_multiple_removed_imports_some_used(self):
+        original = (
+            "from typing import List, Dict, Optional\n\n"
+            "def foo(x: Optional[str]) -> Dict[str, int]:\n    return {}\n"
+        )
+        # Removing all three, but Optional and Dict are still used
+        modified = (
+            "\n\n"
+            "def foo(x: Optional[str]) -> Dict[str, int]:\n    return {}\n"
+        )
+        result = GitHubService._check_suggestion_safety(original, modified, "Remove typing imports")
+        assert result is not None
+        assert "Optional" in result or "Dict" in result

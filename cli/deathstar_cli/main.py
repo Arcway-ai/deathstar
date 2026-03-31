@@ -365,6 +365,266 @@ def tailscale_setup(
     typer.echo(f"{action}: {target.parameter_name} in {effective_region}{suffix}")
 
 
+@tailscale_app.command("cleanup")
+def tailscale_cleanup(
+    client_id: str | None = typer.Option(
+        None,
+        "--client-id",
+        help="Tailscale OAuth client ID. Defaults to DEATHSTAR_TAILSCALE_OAUTH_CLIENT_ID.",
+    ),
+    client_secret: str | None = typer.Option(
+        None,
+        "--client-secret",
+        help="Tailscale OAuth client secret. Defaults to DEATHSTAR_TAILSCALE_OAUTH_CLIENT_SECRET.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Skip prompts."),
+) -> None:
+    """Clean up Tailscale devices after a deploy or upgrade.
+
+    When the EC2 instance is replaced, the new node registers with a
+    suffixed name (e.g. deathstar-1) because the old node still exists.
+    This command:
+
+      1. Deletes offline devices matching your hostname
+      2. Renames any suffixed device (deathstar-1) back to the base hostname
+
+    Run this after a deploy/upgrade, or let it happen automatically by
+    setting both DEATHSTAR_TAILSCALE_OAUTH_CLIENT_ID and
+    DEATHSTAR_TAILSCALE_OAUTH_CLIENT_SECRET in .env.
+
+    Requires OAuth client scopes: "Devices: Read" + "Devices: Write".
+    """
+    result = _tailscale_cleanup(client_id=client_id, client_secret=client_secret, yes=yes)
+    if not result["deleted"] and not result["renamed"]:
+        typer.echo("Nothing to clean up.")
+
+
+@tailscale_app.command("fix")
+def tailscale_fix(
+    region: str | None = typer.Option(None, "--region", help="AWS region override."),
+    client_id: str | None = typer.Option(
+        None,
+        "--client-id",
+        help="Tailscale OAuth client ID.",
+    ),
+    client_secret: str | None = typer.Option(
+        None,
+        "--client-secret",
+        help="Tailscale OAuth client secret.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Skip prompts."),
+) -> None:
+    """Fix Tailscale connectivity after an instance replacement.
+
+    When the EC2 instance is replaced, the old Tailscale node lingers and
+    the new one registers with a suffixed name (e.g. deathstar-1).  This
+    command:
+
+      1. Cleans up stale/suffixed devices via the Tailscale API
+      2. Re-runs tailscale up on the instance via SSM (break-glass)
+      3. Verifies the connection is working
+
+    Requires OAuth client scopes: "Devices: Read" + "Devices: Write".
+    """
+    config = _config()
+    effective_region = region or config.region
+
+    # Step 1 — API cleanup (delete stale, rename suffixed)
+    typer.echo("  [1/3] Cleaning up stale Tailscale devices...")
+    try:
+        result = _tailscale_cleanup(client_id=client_id, client_secret=client_secret, yes=yes)
+        if result["deleted"] or result["renamed"]:
+            typer.echo(f"        Cleaned: {len(result['deleted'])} deleted, {len(result['renamed'])} renamed")
+        else:
+            typer.echo("        No stale devices found.")
+    except (typer.BadParameter, httpx.HTTPError) as exc:
+        typer.echo(f"        API cleanup failed: {exc}", err=True)
+        typer.echo("        Continuing with SSM restart...")
+
+    # Step 2 — re-register Tailscale on the instance via SSM
+    typer.echo("  [2/3] Re-registering Tailscale on instance via SSM...")
+    outputs = terraform_outputs(config, effective_region)
+    instance_id = str(outputs["instance_id"])
+    hostname = config.tailscale_hostname
+    auth_param = config.tailscale_auth_parameter_name
+
+    # Build the tailscale up flags to match configure-tailscale.sh
+    ts_flags = f"--hostname={hostname} --reset"
+    if config.enable_tailscale_ssh:
+        ts_flags += " --ssh"
+    if config.tailscale_advertise_tags:
+        ts_flags += f" --advertise-tags={','.join(config.tailscale_advertise_tags)}"
+
+    ssm_script = (
+        f'TS_AUTH_KEY=$(aws ssm get-parameter --region {effective_region}'
+        f' --name "{auth_param}" --with-decryption'
+        f" --query 'Parameter.Value' --output text) && "
+        f"systemctl restart tailscaled && sleep 2 && "
+        f"tailscale up --auth-key=$TS_AUTH_KEY {ts_flags} && "
+        f"tailscale status"
+    )
+
+    try:
+        output = run_via_ssm(config, effective_region, instance_id, ssm_script)
+        typer.echo("        Tailscale re-registered.")
+        if output.strip():
+            for line in output.strip().splitlines()[:5]:
+                typer.echo(f"        {line}")
+    except RuntimeError as exc:
+        typer.echo(f"        SSM command failed: {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    # Step 3 — verify connectivity
+    typer.echo("  [3/3] Verifying Tailscale connectivity...")
+    import time
+    hostname = config.tailscale_hostname
+
+    for attempt in range(6):
+        try:
+            result_ping = subprocess.run(
+                ["tailscale", "ping", "--timeout=3s", "-c1", hostname],
+                capture_output=True,
+                text=True,
+            )
+            if result_ping.returncode == 0:
+                typer.echo(f"        Connected to {hostname}")
+                return
+        except FileNotFoundError:
+            typer.echo("        tailscale CLI not found locally", err=True)
+            raise typer.Exit(code=1)
+        if attempt < 5:
+            time.sleep(3)
+
+    typer.echo(f"        Could not reach {hostname} — the node may need time to re-register.", err=True)
+    typer.echo(f"        Try: tailscale ping {hostname}")
+
+
+def _get_tailscale_token(
+    *,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+) -> str | None:
+    """Resolve OAuth credentials and return an access token, or None if unavailable."""
+    from deathstar_cli.tailscale_auth import get_oauth_token
+
+    config = _config()
+    resolved_id = client_id or config.tailscale_oauth_client_id
+    resolved_secret = client_secret or config.tailscale_oauth_client_secret
+
+    if not resolved_id:
+        typer.echo("No Tailscale OAuth client configured — skipping cleanup.")
+        typer.echo("Set DEATHSTAR_TAILSCALE_OAUTH_CLIENT_ID and DEATHSTAR_TAILSCALE_OAUTH_CLIENT_SECRET in .env")
+        return None
+
+    if not resolved_secret:
+        import getpass
+
+        resolved_secret = getpass.getpass("Tailscale OAuth client secret: ")
+        if not resolved_secret:
+            raise typer.BadParameter("client secret cannot be empty")
+
+    return get_oauth_token(resolved_id, resolved_secret)
+
+
+def _device_display_name(device: dict) -> str:
+    """Extract the short machine name from a Tailscale device.
+
+    The API returns a `name` like "deathstar-1.tailnet-abc.ts.net" and a
+    `hostname` like "deathstar".  The `-1` suffix only appears in `name`,
+    so we derive the display name from the FQDN by stripping the tailnet
+    domain.
+    """
+    fqdn = device.get("name", "")
+    if "." in fqdn:
+        return fqdn.split(".")[0]
+    # Fallback to hostname if name is missing or unqualified.
+    return device.get("hostname", "")
+
+
+def _tailscale_cleanup(
+    *,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    yes: bool = False,
+) -> dict[str, list[str]]:
+    """Delete stale devices and rename suffixed ones back to the base hostname.
+
+    Returns {"deleted": [...], "renamed": [...]}.
+    """
+    from deathstar_cli.tailscale_auth import (
+        delete_device,
+        list_devices,
+        rename_device,
+    )
+
+    access_token = _get_tailscale_token(client_id=client_id, client_secret=client_secret)
+    if not access_token:
+        return {"deleted": [], "renamed": []}
+
+    config = _config()
+    hostname = config.tailscale_hostname
+    devices = list_devices(access_token)
+
+    # Partition matching devices into: delete (offline, base name) vs rename (suffixed).
+    # The Tailscale API `hostname` field is what the machine set (always "deathstar"),
+    # but the `name` field is the MagicDNS FQDN where the suffix lives
+    # (e.g. "deathstar-1.tailnet-abc.ts.net").
+    to_delete: list[dict] = []
+    to_rename: list[dict] = []
+
+    for device in devices:
+        display = _device_display_name(device)
+        if display != hostname and not display.startswith(f"{hostname}-"):
+            continue
+
+        if display != hostname:
+            # Suffixed device (e.g. deathstar-1) — rename it regardless of online status.
+            to_rename.append(device)
+        elif not device.get("online", False):
+            # Base-named device that's offline — stale, delete it.
+            to_delete.append(device)
+
+    # Show summary and confirm.
+    if not to_delete and not to_rename:
+        return {"deleted": [], "renamed": []}
+
+    if not yes:
+        if to_delete:
+            typer.echo(f"  Found {len(to_delete)} offline device(s) to remove:")
+            for d in to_delete:
+                addr = d.get("addresses", ["?"])[0]
+                typer.echo(f"    - {_device_display_name(d)} ({addr})")
+        if to_rename:
+            typer.echo(f"  Found {len(to_rename)} device(s) to rename → {hostname}:")
+            for d in to_rename:
+                addr = d.get("addresses", ["?"])[0]
+                typer.echo(f"    - {_device_display_name(d)} ({addr})")
+        if not typer.confirm("  Proceed?"):
+            return {"deleted": [], "renamed": []}
+
+    # Delete stale devices first (so the rename target hostname is free).
+    deleted: list[str] = []
+    for device in to_delete:
+        device_id = device.get("id") or device.get("nodeId")
+        if device_id:
+            delete_device(access_token, device_id)
+            display = _device_display_name(device)
+            deleted.append(display)
+            typer.echo(f"  Deleted: {display}")
+
+    # Rename suffixed devices back to the base hostname.
+    renamed: list[str] = []
+    for device in to_rename:
+        device_id = device.get("id") or device.get("nodeId")
+        if device_id:
+            old_name = _device_display_name(device)
+            rename_device(access_token, device_id, hostname)
+            renamed.append(f"{old_name} → {hostname}")
+            typer.echo(f"  Renamed: {old_name} → {hostname}")
+
+    return {"deleted": deleted, "renamed": renamed}
+
+
 @app.command()
 def deploy(
     region: str | None = typer.Option(None, "--region", help="AWS region override."),
@@ -378,8 +638,91 @@ def deploy(
     if not yes and not typer.confirm(f"Deploy DeathStar into {effective_region}?"):
         raise typer.Exit(code=1)
 
+    # Clean up stale Tailscale nodes before deploy so the new instance gets a clean hostname.
+    if config.enable_tailscale and config.tailscale_oauth_client_id and config.tailscale_oauth_client_secret:
+        try:
+            _tailscale_cleanup(yes=yes)
+        except (typer.BadParameter, httpx.HTTPError):
+            pass  # best-effort during deploy
+
     terraform_apply(config, effective_region, auto_approve=yes)
     _display_terraform_summary(effective_region)
+
+
+@app.command()
+def redeploy(
+    region: str | None = typer.Option(None, "--region", help="AWS region override."),
+    yes: bool = typer.Option(False, "--yes", help="Skip interactive confirmation."),
+) -> None:
+    """Push code changes and rebuild the container without replacing the instance.
+
+    Steps:
+      1. terraform apply — uploads new code to S3 (instance stays)
+      2. SSM restart — re-syncs code from S3 and rebuilds Docker image
+    """
+    config = _config()
+    effective_region = region or config.region
+
+    typer.echo("  [1/2] Uploading code to S3...")
+    terraform_init(config, effective_region)
+    # Only target S3 runtime files — never replace the instance on redeploy.
+    terraform_apply(
+        config,
+        effective_region,
+        auto_approve=yes,
+        targets=["aws_s3_object.runtime_files"],
+    )
+
+    typer.echo("  [2/2] Blue/green deploy on instance...")
+    outputs = terraform_outputs(config, effective_region)
+    instance_id = str(outputs["instance_id"])
+
+    session_kwargs: dict[str, str] = {"region_name": effective_region}
+    if config.aws_profile:
+        session_kwargs["profile_name"] = config.aws_profile
+
+    ssm = boto3.Session(**session_kwargs).client("ssm")
+
+    response = ssm.send_command(
+        InstanceIds=[instance_id],
+        DocumentName="AWS-RunShellScript",
+        Parameters={"commands": ["systemctl restart deathstar-runtime.service"]},
+        TimeoutSeconds=300,
+    )
+    command_id = response["Command"]["CommandId"]
+
+    import time  # noqa: E402 — late import is fine for a CLI command
+
+    for _ in range(120):
+        time.sleep(2)
+        try:
+            invocation = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+        except ssm.exceptions.InvocationDoesNotExist:
+            continue
+
+        if invocation["Status"] in ("Success", "Failed", "Cancelled", "TimedOut"):
+            if invocation["Status"] != "Success":
+                stderr = invocation.get("StandardErrorContent", "")
+                typer.echo(f"        Restart failed: {stderr[:300]}", err=True)
+                raise typer.Exit(code=1)
+            typer.echo("        Runtime restarted successfully.")
+            break
+    else:
+        typer.echo("        Timed out waiting for restart.", err=True)
+        raise typer.Exit(code=1)
+
+    # Verify health
+    time.sleep(5)
+    try:
+        client = RemoteAPIClient(
+            config,
+            effective_region,
+            transport=_validate_transport(config.remote_transport),
+        )
+        health = client._request("GET", "/v1/health")
+        typer.echo(f"  Redeploy complete. Version: {health.get('version', 'unknown')}")
+    except (RuntimeError, httpx.HTTPError):
+        typer.echo("  Redeploy complete. Instance may still be starting — run `deathstar status` in a moment.")
 
 
 @app.command()
@@ -397,7 +740,8 @@ def upgrade(
       3. Reinstall the deathstar CLI package (picks up new code)
       4. Compare local vs remote version
       5. Create a backup on the remote instance (unless --skip-backup)
-      6. Run terraform apply to redeploy
+      6. Remove stale Tailscale devices (if OAuth credentials are configured)
+      7. Run terraform apply to redeploy
 
     For open source users: just `deathstar upgrade`.
     """
@@ -407,7 +751,7 @@ def upgrade(
     effective_region = region or config.region
 
     # Step 1: Check for uncommitted changes in the deathstar repo
-    typer.echo("  [1/6] Checking local repo state...")
+    typer.echo("  [1/7] Checking local repo state...")
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -423,29 +767,45 @@ def upgrade(
     except subprocess.CalledProcessError:
         typer.echo("        Warning: could not check git status.", err=True)
 
-    # Step 2: Pull latest
-    typer.echo("  [2/6] Pulling latest changes...")
+    # Step 2: Pull latest (skip if no remote tracking branch)
+    typer.echo("  [2/7] Pulling latest changes...")
+    has_upstream = False
     try:
-        result = subprocess.run(
-            ["git", "pull", "--ff-only"],
+        subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
             cwd=str(config.project_root),
             capture_output=True,
             text=True,
             check=True,
         )
-        pull_output = result.stdout.strip()
-        if "Already up to date" in pull_output:
-            typer.echo("        Already up to date.")
-        else:
-            typer.echo(f"        {pull_output.splitlines()[-1] if pull_output else 'Updated.'}")
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        typer.echo(f"        git pull failed: {stderr[:200]}", err=True)
-        typer.echo("        Tip: commit or stash local changes, or pull manually.", err=True)
-        raise typer.Exit(code=1) from exc
+        has_upstream = True
+    except subprocess.CalledProcessError:
+        pass
+
+    if not has_upstream:
+        typer.echo("        No remote tracking branch — skipping pull.")
+    else:
+        try:
+            result = subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=str(config.project_root),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            pull_output = result.stdout.strip()
+            if "Already up to date" in pull_output:
+                typer.echo("        Already up to date.")
+            else:
+                typer.echo(f"        {pull_output.splitlines()[-1] if pull_output else 'Updated.'}")
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            typer.echo(f"        git pull failed: {stderr[:200]}", err=True)
+            typer.echo("        Tip: commit or stash local changes, or pull manually.", err=True)
+            raise typer.Exit(code=1) from exc
 
     # Step 3: Reinstall CLI package
-    typer.echo("  [3/6] Upgrading local CLI package...")
+    typer.echo("  [3/7] Upgrading local CLI package...")
     installer = "uv" if shutil.which("uv") else "pip"
     if installer == "uv":
         install_cmd = ["uv", "pip", "install", "-e", ".[dev]"]
@@ -469,7 +829,7 @@ def upgrade(
             raise typer.Exit(code=1) from exc
 
     # Step 4: Version comparison
-    typer.echo("  [4/6] Checking versions...")
+    typer.echo("  [4/7] Checking versions...")
     local_ver = full_version()
     typer.echo(f"        Local:  {local_ver}")
 
@@ -493,7 +853,7 @@ def upgrade(
 
     # Step 5: Backup
     if not skip_backup and remote_ver:
-        typer.echo("  [5/6] Creating pre-upgrade backup...")
+        typer.echo("  [5/7] Creating pre-upgrade backup...")
         try:
             client = RemoteAPIClient(
                 config,
@@ -507,10 +867,23 @@ def upgrade(
             if not yes and not typer.confirm("        Continue without backup?"):
                 raise typer.Exit(code=1) from exc
     else:
-        typer.echo("  [5/6] Skipping backup.")
+        typer.echo("  [5/7] Skipping backup.")
 
-    # Step 6: Redeploy
-    typer.echo("  [6/6] Deploying...")
+    # Step 6: Tailscale cleanup
+    if config.enable_tailscale:
+        typer.echo("  [6/7] Cleaning up Tailscale devices...")
+        try:
+            result = _tailscale_cleanup(yes=yes)
+            if not result["deleted"] and not result["renamed"]:
+                typer.echo("        Nothing to clean up.")
+        except (typer.BadParameter, httpx.HTTPError) as exc:
+            typer.echo(f"        Warning: Tailscale cleanup failed: {exc}", err=True)
+            typer.echo("        The new instance may get a suffixed hostname (e.g. deathstar-1).", err=True)
+    else:
+        typer.echo("  [6/7] Tailscale not enabled — skipping cleanup.")
+
+    # Step 7: Redeploy
+    typer.echo("  [7/7] Deploying...")
     terraform_init(config, effective_region)
     terraform_apply(config, effective_region, auto_approve=yes)
 
@@ -703,11 +1076,14 @@ def connect(
             raise typer.BadParameter(
                 "this deployment does not have Tailscale enabled; use --transport ssm or redeploy with Tailscale"
             )
-        connect_via_tailscale(
-            str(outputs.get("tailscale_hostname") or config.tailscale_hostname),
-            str(outputs.get("ssh_user", "ec2-user")),
-        )
-        return
+        try:
+            connect_via_tailscale(
+                str(outputs.get("tailscale_hostname") or config.tailscale_hostname),
+                str(outputs.get("ssh_user", "ubuntu")),
+            )
+            return
+        except (subprocess.CalledProcessError, RuntimeError):
+            typer.echo("  Tailscale SSH failed — falling back to SSM...", err=True)
 
     start_shell_session(config, effective_region, str(outputs["instance_id"]))
 
@@ -854,7 +1230,7 @@ def _run_remote_command(
                 "this deployment does not have Tailscale enabled; use --transport ssm"
             )
         hostname = str(outputs.get("tailscale_hostname") or config.tailscale_hostname)
-        ssh_user = str(outputs.get("ssh_user", "ec2-user"))
+        ssh_user = str(outputs.get("ssh_user", "ubuntu"))
         return run_via_tailscale(hostname, ssh_user, command)
 
     return run_via_ssm(config, effective_region, str(outputs["instance_id"]), command)
@@ -902,5 +1278,5 @@ def run_cli() -> None:
     try:
         app()
     except (RuntimeError, subprocess.CalledProcessError, httpx.HTTPError) as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=1) from exc
+        typer.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1)

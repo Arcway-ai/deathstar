@@ -1,74 +1,58 @@
+import { useNavigate } from "react-router-dom";
 import {
   MessageSquare,
-  FolderTree,
   Brain,
   Trash2,
-  X,
 } from "lucide-react";
 import { useStore } from "../store";
 import type { SidebarView } from "../types";
 
 const tabs: { id: SidebarView; icon: typeof MessageSquare; label: string }[] = [
   { id: "conversations", icon: MessageSquare, label: "Chats" },
-  { id: "files", icon: FolderTree, label: "Files" },
   { id: "memory", icon: Brain, label: "Memory" },
 ];
 
 export default function Sidebar() {
-  const open = useStore((s) => s.sidebarOpen);
   const view = useStore((s) => s.sidebarView);
   const setSidebarView = useStore((s) => s.setSidebarView);
-  const toggleSidebar = useStore((s) => s.toggleSidebar);
 
-  if (!open) return null;
+  // Guard against stale persisted values from old sidebar views
+  const safeView: SidebarView = view === "conversations" || view === "memory" ? view : "conversations";
 
   return (
-    <>
-      {/* Mobile backdrop */}
-      <div
-        className="fixed inset-0 z-30 bg-black/50 md:hidden"
-        onClick={toggleSidebar}
-      />
-      <aside className="absolute left-0 top-0 z-40 flex h-full w-72 flex-col border-r border-border-subtle bg-bg-primary animate-slide-left md:relative md:animate-none">
-        {/* Tab bar */}
-        <div className="flex items-center border-b border-border-subtle">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setSidebarView(tab.id)}
-              className={`flex flex-1 items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
-                view === tab.id
-                  ? "border-b-2 border-accent text-accent"
-                  : "text-text-muted hover:text-text-secondary"
-              }`}
-            >
-              <tab.icon size={14} />
-              {tab.label}
-            </button>
-          ))}
+    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border-subtle bg-bg-primary">
+      {/* Tab bar */}
+      <div className="flex items-center border-b border-border-subtle">
+        {tabs.map((tab) => (
           <button
-            onClick={toggleSidebar}
-            className="flex h-8 w-8 items-center justify-center text-text-muted hover:text-text-secondary md:hidden"
+            key={tab.id}
+            onClick={() => setSidebarView(tab.id)}
+            className={`flex flex-1 items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
+              safeView === tab.id
+                ? "border-b-2 border-accent text-accent"
+                : "text-text-muted hover:text-text-secondary"
+            }`}
           >
-            <X size={16} />
+            <tab.icon size={14} />
+            {tab.label}
           </button>
-        </div>
+        ))}
+      </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-2">
-          {view === "conversations" && <ConversationList />}
-          {view === "files" && <FileTreePanel />}
-          {view === "memory" && <MemoryPanel />}
-        </div>
-      </aside>
-    </>
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-2">
+        {safeView === "conversations" && <ConversationList />}
+        {safeView === "memory" && <MemoryPanel />}
+      </div>
+    </aside>
   );
 }
 
 function ConversationList() {
+  const navigate = useNavigate();
   const conversations = useStore((s) => s.conversations);
   const conversationId = useStore((s) => s.conversationId);
-  const selectConversation = useStore((s) => s.selectConversation);
+  const selectedRepo = useStore((s) => s.selectedRepo);
   const deleteConversation = useStore((s) => s.deleteConversation);
 
   if (conversations.length === 0) {
@@ -89,7 +73,11 @@ function ConversationList() {
               ? "bg-accent-muted text-accent"
               : "text-text-secondary hover:bg-bg-hover"
           }`}
-          onClick={() => selectConversation(c.id)}
+          onClick={() => {
+            if (selectedRepo) {
+              navigate(`/${encodeURIComponent(selectedRepo)}/c/${encodeURIComponent(c.id)}`);
+            }
+          }}
         >
           <div className="min-w-0 flex-1">
             <p className="truncate text-xs font-medium">{c.title}</p>
@@ -107,46 +95,6 @@ function ConversationList() {
             <Trash2 size={12} />
           </button>
         </div>
-      ))}
-    </div>
-  );
-}
-
-function FileTreePanel() {
-  const selectedRepo = useStore((s) => s.selectedRepo);
-  const fileTree = useStore((s) => s.fileTree);
-  const loadFileTree = useStore((s) => s.loadFileTree);
-  const openFile = useStore((s) => s.openFile);
-
-  if (!selectedRepo) {
-    return (
-      <p className="px-2 py-8 text-center text-xs text-text-muted">
-        Select a repo first
-      </p>
-    );
-  }
-
-  if (fileTree.length === 0) {
-    return (
-      <button
-        onClick={() => loadFileTree(selectedRepo)}
-        className="mx-auto mt-8 block rounded-md border border-border-subtle px-3 py-1.5 text-xs text-text-secondary hover:border-border-default hover:text-text-primary transition-colors"
-      >
-        Load file tree
-      </button>
-    );
-  }
-
-  return (
-    <div className="space-y-px">
-      {fileTree.map((path) => (
-        <button
-          key={path}
-          onClick={() => openFile(selectedRepo, path)}
-          className="flex w-full items-center rounded px-2 py-1 text-left font-mono text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors"
-        >
-          <span className="truncate">{path}</span>
-        </button>
       ))}
     </div>
   );
