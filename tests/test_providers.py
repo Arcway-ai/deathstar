@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -9,13 +8,12 @@ import pytest
 from deathstar_server.errors import AppError
 from deathstar_server.providers.anthropic import AnthropicProvider
 from deathstar_server.providers.base import (
-    ProviderResult,
     as_usage,
     ensure_text,
     normalize_client_error,
     normalize_http_error,
 )
-from deathstar_shared.models import ErrorCode, ProviderName, UsageMetrics
+from deathstar_shared.models import ErrorCode, ProviderName
 
 
 # ---------------------------------------------------------------------------

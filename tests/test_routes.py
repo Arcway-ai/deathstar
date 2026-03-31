@@ -42,12 +42,12 @@ def _build_app(tmp_path: Path, api_token: str | None = None):
         if "deathstar_server.routes" in sys.modules:
             importlib.reload(sys.modules["deathstar_server.routes"])
         else:
-            import deathstar_server.routes  # noqa: F811
+            pass  # noqa: F811
 
         if "deathstar_server.app" in sys.modules:
             importlib.reload(sys.modules["deathstar_server.app"])
         else:
-            import deathstar_server.app  # noqa: F811
+            pass  # noqa: F811
 
         from deathstar_server.app import app
         from fastapi.testclient import TestClient

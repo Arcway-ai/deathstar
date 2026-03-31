@@ -41,7 +41,7 @@ from deathstar_shared.models import (
     WorkflowKind,
     WorkflowRequest,
 )
-from deathstar_shared.version import VERSION, full_version
+from deathstar_shared.version import full_version
 
 app = typer.Typer(no_args_is_help=True, help="DeathStar local operator CLI.")
 secrets_app = typer.Typer(help="Manage remote-only secrets in AWS SSM Parameter Store.")

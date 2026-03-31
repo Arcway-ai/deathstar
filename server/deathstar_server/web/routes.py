@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
-import time
 from pathlib import Path
 
 from fastapi import APIRouter, Query, Request
@@ -658,7 +656,7 @@ def _build_status_message(repo_root: Path) -> str:
         text=True,
     ).stdout.strip()
 
-    lines = [l.strip() for l in status_output.splitlines() if l.strip()]
+    lines = [ln.strip() for ln in status_output.splitlines() if ln.strip()]
     modified, added, deleted, renamed = [], [], [], []
     for line in lines:
         code = line[:2].strip()
@@ -780,7 +778,7 @@ def claude_auth_logout() -> dict:
     """Clear stored token and log out of Claude CLI."""
     _clear_stored_token()
     try:
-        result = subprocess.run(
+        subprocess.run(
             ["claude", "auth", "logout"],
             capture_output=True,
             text=True,

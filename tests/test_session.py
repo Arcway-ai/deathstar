@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import time
 
-import pytest
 
 from deathstar_server.session import (
     SESSION_COOKIE_NAME,

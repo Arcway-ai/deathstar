@@ -247,7 +247,7 @@ wheels = [
 ]
 
 [[package]]
-name = "deathstar"
+name = "deathstar-ai"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },

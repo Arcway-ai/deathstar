@@ -239,7 +239,6 @@ class TestWebAuthBypass:
         assert resp.status_code == 401
 
     def test_index_sets_session_cookie(self, web_client_auth):
-        from deathstar_server.session import SESSION_COOKIE_NAME
         client, _, _ = web_client_auth
         resp = client.get("/")
         # Cookie is set if index.html exists; just check no auth error
