@@ -906,6 +906,9 @@ async def _read_messages(websocket: WebSocket, session: AgentSession, *, prompt:
                         # Track in blocks for DB storage
                         if accumulated_blocks and accumulated_blocks[-1].get("type") == "text":
                             if block.text not in accumulated_blocks[-1]["text"]:
+                                # Separate consecutive text blocks with a paragraph break
+                                if accumulated_blocks[-1]["text"] and not accumulated_blocks[-1]["text"].endswith("\n\n"):
+                                    accumulated_blocks[-1]["text"] += "\n\n"
                                 accumulated_blocks[-1]["text"] += block.text
                         else:
                             if not any(b.get("type") == "text" and block.text in b["text"] for b in accumulated_blocks):
@@ -956,7 +959,20 @@ async def _read_messages(websocket: WebSocket, session: AgentSession, *, prompt:
                 event_type = event_data.get("type", "")
                 if msg_count <= 5 or event_type != "content_block_delta":
                     logger.debug("  StreamEvent: %s", event_type)
-                if event_type == "content_block_delta":
+                if event_type == "content_block_start":
+                    # Track when a new text content block begins so we can
+                    # insert paragraph breaks between separate text blocks.
+                    cb = event_data.get("content_block", {})
+                    if cb.get("type") == "text":
+                        if accumulated_blocks and accumulated_blocks[-1].get("type") == "text" and accumulated_blocks[-1]["text"]:
+                            # New text block after an existing one — add paragraph break
+                            sep = "\n\n"
+                            accumulated_text += sep
+                            delta_sent_text += sep
+                            accumulated_blocks[-1]["text"] += sep
+                            await _send(websocket, "text_delta", text=sep)
+
+                elif event_type == "content_block_delta":
                     delta = event_data.get("delta", {})
                     if delta.get("type") == "text_delta":
                         text = delta.get("text", "")
