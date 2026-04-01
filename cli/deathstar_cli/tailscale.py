@@ -27,6 +27,54 @@ def connect_via_tailscale(hostname: str, ssh_user: str) -> None:
     subprocess.run(["ssh", f"{ssh_user}@{target}"], check=True)
 
 
+def push_image_via_tailscale(hostname: str, ssh_user: str, image_tag: str) -> None:
+    """Push a Docker image to a remote host via Tailscale SSH.
+
+    Runs: docker save <tag> | gzip | ssh <host> docker load
+    """
+    ensure_ssh_binary()
+    target = resolve_peer_target(hostname)
+    ssh_dest = f"{ssh_user}@{target}"
+
+    # Pipeline: docker save → gzip → ssh docker load
+    save_proc = subprocess.Popen(
+        ["docker", "save", image_tag],
+        stdout=subprocess.PIPE,
+    )
+    gzip_proc = subprocess.Popen(
+        ["gzip", "-1"],
+        stdin=save_proc.stdout,
+        stdout=subprocess.PIPE,
+    )
+    # Allow save_proc to receive SIGPIPE if gzip exits
+    if save_proc.stdout:
+        save_proc.stdout.close()
+
+    load_proc = subprocess.Popen(
+        ["ssh", "-o", "StrictHostKeyChecking=accept-new", ssh_dest, "docker load"],
+        stdin=gzip_proc.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if gzip_proc.stdout:
+        gzip_proc.stdout.close()
+
+    stdout, stderr = load_proc.communicate()
+
+    # Check all processes
+    save_rc = save_proc.wait()
+    gzip_rc = gzip_proc.wait()
+    load_rc = load_proc.returncode
+
+    if save_rc != 0:
+        raise RuntimeError(f"docker save failed (exit {save_rc})")
+    if gzip_rc != 0:
+        raise RuntimeError(f"gzip failed (exit {gzip_rc})")
+    if load_rc != 0:
+        raise RuntimeError(f"docker load failed: {stderr.strip()[:300]}")
+
+
 def run_via_tailscale(hostname: str, ssh_user: str, command: str) -> str:
     ensure_ssh_binary()
     target = resolve_peer_target(hostname)

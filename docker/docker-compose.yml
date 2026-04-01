@@ -1,8 +1,6 @@
 services:
   control-api:
-    build:
-      context: /opt/deathstar/repo
-      dockerfile: docker/control-api.Dockerfile
+    image: deathstar-app:latest
     container_name: deathstar-control-api
     restart: unless-stopped
     env_file:

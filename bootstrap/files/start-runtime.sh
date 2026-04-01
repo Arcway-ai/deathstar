@@ -1,11 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-# Blue/green deploy: build new image, health-check it, then swap.
+# Blue/green deploy: health-check new image, then swap.
 # The old container keeps serving traffic until the new one is verified healthy.
+#
+# Image source:
+#   - Initial deploy (cloud-init): built from source via sync-runtime.sh + docker build
+#   - Subsequent deploys (redeploy/upgrade): pre-loaded via `docker load`
 
 COMPOSE_FILE="/opt/deathstar/repo/docker/docker-compose.yml"
 SERVICE="control-api"
+IMAGE="deathstar-app:latest"
 HEALTH_URL="http://127.0.0.1:8081/v1/health"
 HEALTH_TIMEOUT=60
 HEALTH_INTERVAL=3
@@ -21,14 +26,19 @@ compose() {
   fi
 }
 
-# ── Step 1: Build the new image (old container keeps running) ──
-echo "[blue/green] Building new image..."
-compose build --build-arg "CACHEBUST=$(date +%s)" "$SERVICE"
+# ── Step 1: Ensure image exists ──────────────────────────────────
+# If the image isn't loaded yet (first deploy), build it from source.
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "[blue/green] Image not found — building from source..."
+  docker build \
+    -t "$IMAGE" \
+    -f /opt/deathstar/repo/docker/control-api.Dockerfile \
+    /opt/deathstar/repo
+fi
 
-NEW_IMAGE=$(compose config --images | head -1)
-echo "[blue/green] New image: $NEW_IMAGE"
+echo "[blue/green] Using image: $IMAGE"
 
-# ── Step 2: Check if there's an existing container running ──
+# ── Step 2: Check if there's an existing container running ───────
 OLD_CONTAINER=$(docker ps -q -f "name=deathstar-control-api" 2>/dev/null || true)
 
 if [ -z "$OLD_CONTAINER" ]; then
@@ -41,10 +51,9 @@ fi
 
 echo "[blue/green] Old container running: $OLD_CONTAINER"
 
-# ── Step 3: Start canary container on port 8081 for health check ──
+# ── Step 3: Start canary container on port 8081 for health check ─
 echo "[blue/green] Starting canary on port 8081..."
 
-# Extract env file and volumes from compose config for the canary
 CANARY_NAME="deathstar-canary-$$"
 docker run -d \
   --name "$CANARY_NAME" \
@@ -54,11 +63,11 @@ docker run -d \
   -v /workspace:/workspace \
   -v /workspace/deathstar/logs:/var/log/deathstar \
   -v /workspace/deathstar/.claude:/root/.claude \
-  "$NEW_IMAGE" \
+  "$IMAGE" \
   uvicorn deathstar_server.main:app --host 0.0.0.0 --port 8080 \
   >/dev/null
 
-# ── Step 4: Health check the canary ──
+# ── Step 4: Health check the canary ─────────────────────────────
 echo "[blue/green] Waiting for canary health check..."
 elapsed=0
 healthy=false
@@ -73,7 +82,7 @@ while [ "$elapsed" -lt "$HEALTH_TIMEOUT" ]; do
   echo "[blue/green]   ...waiting ($elapsed/${HEALTH_TIMEOUT}s)"
 done
 
-# ── Step 5: Swap or rollback ──
+# ── Step 5: Swap or rollback ────────────────────────────────────
 if [ "$healthy" = true ]; then
   echo "[blue/green] Canary healthy! Swapping..."
 

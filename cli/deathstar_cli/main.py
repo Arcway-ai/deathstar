@@ -28,7 +28,7 @@ from deathstar_cli.secrets import (
     resolve_secret_target,
 )
 from deathstar_cli.ssm import run_via_ssm, start_shell_session
-from deathstar_cli.tailscale import connect_via_tailscale, run_via_tailscale
+from deathstar_cli.tailscale import connect_via_tailscale, push_image_via_tailscale, run_via_tailscale
 from deathstar_cli.terraform import (
     terraform_apply,
     terraform_destroy,
@@ -953,32 +953,53 @@ def deploy(
     _display_terraform_summary(effective_region)
 
 
-@app.command()
-def redeploy(
-    region: str | None = typer.Option(None, "--region", help="AWS region override."),
-    yes: bool = typer.Option(False, "--yes", help="Skip interactive confirmation."),
-) -> None:
-    """Push code changes and rebuild the container without replacing the instance.
+def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
+    """Build the Docker image locally and push it to the remote instance."""
+    from deathstar_shared.version import VERSION
 
-    Steps:
-      1. terraform apply — uploads new code to S3 (instance stays)
-      2. SSM restart — re-syncs code from S3 and rebuilds Docker image
-    """
-    config = _config()
-    effective_region = region or config.region
+    image_tag = f"deathstar-app:{VERSION}"
 
-    typer.echo("  [1/2] Uploading code to S3...")
-    terraform_init(config, effective_region)
-    # Only target S3 runtime files — never replace the instance on redeploy.
-    terraform_apply(
-        config,
-        effective_region,
-        auto_approve=yes,
-        targets=["aws_s3_object.runtime_files"],
-    )
+    # Step 1: Build locally
+    typer.echo(f"  [1/3] Building Docker image ({image_tag})...")
+    build_cmd = [
+        "docker", "build",
+        "--platform", "linux/amd64",
+        "-t", image_tag,
+        "-t", "deathstar-app:latest",
+        "-f", "docker/control-api.Dockerfile",
+        ".",
+    ]
+    try:
+        subprocess.run(
+            build_cmd,
+            cwd=str(config.project_root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        typer.echo("        Build complete.")
+    except subprocess.CalledProcessError as exc:
+        typer.echo(f"        Build failed: {(exc.stderr or '')[:500]}", err=True)
+        raise typer.Exit(code=1) from exc
 
-    typer.echo("  [2/2] Blue/green deploy on instance...")
+    # Step 2: Push to instance via Tailscale SSH
+    typer.echo("  [2/3] Pushing image to instance...")
     outputs = terraform_outputs(config, effective_region)
+    tailscale_hostname = str(
+        outputs.get("tailscale_hostname") or config.tailscale_hostname
+    ).strip()
+    ssh_user = str(outputs.get("ssh_user", "ubuntu"))
+
+    try:
+        push_image_via_tailscale(tailscale_hostname, ssh_user, image_tag)
+        typer.echo("        Image pushed.")
+    except RuntimeError as exc:
+        typer.echo(f"        Push failed: {exc}", err=True)
+        typer.echo("        Tip: ensure Tailscale SSH is working (`deathstar connect`).", err=True)
+        raise typer.Exit(code=1) from exc
+
+    # Step 3: Restart container on instance
+    typer.echo("  [3/3] Restarting container...")
     instance_id = str(outputs["instance_id"])
 
     session_kwargs: dict[str, str] = {"region_name": effective_region}
@@ -991,11 +1012,11 @@ def redeploy(
         InstanceIds=[instance_id],
         DocumentName="AWS-RunShellScript",
         Parameters={"commands": ["systemctl restart deathstar-runtime.service"]},
-        TimeoutSeconds=300,
+        TimeoutSeconds=600,
     )
     command_id = response["Command"]["CommandId"]
 
-    for _ in range(120):
+    for _ in range(180):
         time.sleep(2)
         try:
             invocation = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
@@ -1007,22 +1028,39 @@ def redeploy(
                 stderr = invocation.get("StandardErrorContent", "")
                 typer.echo(f"        Restart failed: {stderr[:300]}", err=True)
                 raise typer.Exit(code=1)
-            typer.echo("        Runtime restarted successfully.")
+            typer.echo("        Container restarted.")
             break
     else:
         typer.echo("        Timed out waiting for restart.", err=True)
         raise typer.Exit(code=1)
 
     # Verify health
-    typer.echo("  Waiting for instance to come up...")
+    typer.echo("        Waiting for instance to come up...")
     resolved_transport = _validate_transport(config.remote_transport)
-    health = _wait_for_healthy(config, effective_region, resolved_transport, timeout_seconds=90)
+    health = _wait_for_healthy(config, effective_region, resolved_transport)
     if health:
-        typer.echo(f"  Redeploy complete. Version: {health.get('version', 'unknown')}")
+        typer.echo(f"  Deploy complete. Version: {health.get('version', 'unknown')}")
     else:
         typer.echo("  Instance did not become healthy within the timeout.", err=True)
         typer.echo("  Run `deathstar status` to check manually.", err=True)
         raise typer.Exit(code=1)
+
+
+@app.command()
+def redeploy(
+    region: str | None = typer.Option(None, "--region", help="AWS region override."),
+    yes: bool = typer.Option(False, "--yes", help="Skip interactive confirmation."),
+) -> None:
+    """Build the Docker image locally and deploy to the remote instance.
+
+    Steps:
+      1. Build Docker image locally (linux/amd64)
+      2. Push image to instance via Tailscale SSH (docker save | ssh docker load)
+      3. Restart container with blue/green health check
+    """
+    config = _config()
+    effective_region = region or config.region
+    _build_and_push_image(config, effective_region)
 
 
 @app.command()
@@ -1036,16 +1074,14 @@ def upgrade(
     """Upgrade the CLI and redeploy the remote instance.
 
     Supports two install modes:
-      - **Source (git clone):** pull latest, reinstall editable, terraform apply + redeploy
-      - **PyPI (`uv tool install deathstar-ai`):** upgrade from PyPI, terraform apply + redeploy
+      - **Source (git clone):** pull latest, reinstall editable
+      - **PyPI (`uv tool install deathstar-ai`):** upgrade from PyPI
 
     Steps:
       1. Update local CLI (git pull + reinstall, or PyPI upgrade)
       2. Compare local vs remote version
       3. Create a backup on the remote instance (unless --skip-backup)
-      4. Upload code to S3 via terraform apply
-      5. Trigger Docker rebuild on the instance via SSM
-      6. Wait for the instance to become healthy
+      4. Build Docker image locally and push to instance via SSH
     """
     import shutil
 
@@ -1201,99 +1237,8 @@ def upgrade(
     else:
         typer.echo("  [4/6] Skipping backup.")
 
-    # Upload code to S3
-    quiet = not verbose
-    typer.echo("  [5/6] Uploading code to S3...")
-    terraform_init(config, effective_region, quiet=quiet)
-    terraform_apply(config, effective_region, auto_approve=yes, quiet=quiet)
-    typer.echo("        Done.")
-
-    typer.echo("")
-    typer.echo("        Triggering Docker rebuild...")
-    outputs = terraform_outputs(config, effective_region)
-    instance_id = str(outputs["instance_id"])
-
-    session_kwargs: dict[str, str] = {"region_name": effective_region}
-    if config.aws_profile:
-        session_kwargs["profile_name"] = config.aws_profile
-
-    ssm = boto3.Session(**session_kwargs).client("ssm")
-
-    # Overwrite the sync-runtime.sh on the instance so the service's
-    # ExecStartPre picks up the correct S3 revision. The cloud-init
-    # version uses alphabetical ordering which can pick stale revisions.
-    bucket = str(outputs.get("artifact_bucket_name", ""))
-    fix_sync_script = (
-        f"cat > /opt/deathstar/sync-runtime.sh << 'SYNCEOF'\n"
-        f"#!/bin/bash\n"
-        f"set -euo pipefail\n"
-        f'BUCKET="{bucket}"\n'
-        f'REGION="{effective_region}"\n'
-        f"LATEST_REV=$(aws s3api list-objects-v2 "
-        f'--bucket "$BUCKET" --prefix "runtime/" '
-        f"--query 'sort_by(Contents, &LastModified)[-1].Key' "
-        f'--output text --region "$REGION" '
-        f"| sed 's|^runtime/||' | cut -d'/' -f1)\n"
-        f'if [ -z "$LATEST_REV" ] || [ "$LATEST_REV" = "None" ]; then\n'
-        f'  echo "ERROR: no runtime revision found in s3://$BUCKET/runtime/" >&2\n'
-        f"  exit 1\n"
-        f"fi\n"
-        f'echo "Syncing runtime revision: $LATEST_REV"\n'
-        f"mkdir -p /opt/deathstar/repo\n"
-        f'aws s3 sync "s3://$BUCKET/runtime/$LATEST_REV/" /opt/deathstar/repo '
-        f'--delete --region "$REGION"\n'
-        f"SYNCEOF\n"
-        f"chmod +x /opt/deathstar/sync-runtime.sh"
-    )
-    # Patch start-runtime.sh to use CACHEBUST arg so Docker re-copies code layers.
-    # Use grep to check if already patched (idempotent).
-    fix_start_script = (
-        "grep -q CACHEBUST /opt/deathstar/start-runtime.sh || "
-        "sed -i 's|compose build \"$SERVICE\"|"
-        "compose build --build-arg \"CACHEBUST=$(date +%s)\" \"$SERVICE\"|' "
-        "/opt/deathstar/start-runtime.sh"
-    )
-    response = ssm.send_command(
-        InstanceIds=[instance_id],
-        DocumentName="AWS-RunShellScript",
-        Parameters={"commands": [
-            fix_sync_script,
-            fix_start_script,
-            "systemctl restart deathstar-runtime.service",
-        ]},
-        TimeoutSeconds=600,
-    )
-    command_id = response["Command"]["CommandId"]
-
-    for _ in range(180):
-        time.sleep(2)
-        try:
-            invocation = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
-        except ssm.exceptions.InvocationDoesNotExist:
-            continue
-
-        if invocation["Status"] in ("Success", "Failed", "Cancelled", "TimedOut"):
-            if invocation["Status"] != "Success":
-                stderr = invocation.get("StandardErrorContent", "")
-                typer.echo(f"        Restart failed: {stderr[:300]}", err=True)
-                raise typer.Exit(code=1)
-            typer.echo("        Runtime restarted successfully.")
-            break
-    else:
-        typer.echo("        Timed out waiting for restart.", err=True)
-        raise typer.Exit(code=1)
-
-    # Step 6: Wait for the instance to become healthy
-    typer.echo("")
-    typer.echo("  [6/6] Waiting for instance to come up...")
-    resolved_transport = _validate_transport(transport if transport != "auto" else config.remote_transport)
-    health = _wait_for_healthy(config, effective_region, resolved_transport)
-    if health:
-        typer.echo(f"  Upgrade complete. Remote version: {health.get('version', 'unknown')}")
-    else:
-        typer.echo("  Instance did not become healthy within the timeout.", err=True)
-        typer.echo("  Run `deathstar status` to check manually.", err=True)
-        raise typer.Exit(code=1)
+    # Build locally and push to instance
+    _build_and_push_image(config, effective_region)
 
 
 @app.command()
