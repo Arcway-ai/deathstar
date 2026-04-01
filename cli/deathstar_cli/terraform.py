@@ -67,8 +67,27 @@ def _run(
     region: str,
     command: list[str],
     capture_output: bool = False,
+    quiet: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     ensure_binary("terraform")
+
+    if quiet and not capture_output:
+        # Suppress stdout but let errors through
+        result = subprocess.run(
+            command,
+            cwd=config.terraform_dir,
+            env=_terraform_env(config, region),
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            # Show the full output on failure so the user can debug
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print(result.stderr)
+            result.check_returncode()
+        return result
 
     return subprocess.run(
         command,
@@ -80,8 +99,8 @@ def _run(
     )
 
 
-def terraform_init(config: CLIConfig, region: str) -> None:
-    _run(config, region, ["terraform", "init", "-input=false"])
+def terraform_init(config: CLIConfig, region: str, quiet: bool = False) -> None:
+    _run(config, region, ["terraform", "init", "-input=false"], quiet=quiet)
 
 
 def terraform_apply(
@@ -89,6 +108,7 @@ def terraform_apply(
     region: str,
     auto_approve: bool,
     targets: list[str] | None = None,
+    quiet: bool = False,
 ) -> None:
     command = ["terraform", "apply", "-input=false", *_build_var_flags(config, region)]
     if auto_approve:
@@ -96,7 +116,7 @@ def terraform_apply(
     if targets:
         for t in targets:
             command.append(f"-target={t}")
-    _run(config, region, command)
+    _run(config, region, command, quiet=quiet)
 
 
 def terraform_destroy(config: CLIConfig, region: str, auto_approve: bool) -> None:

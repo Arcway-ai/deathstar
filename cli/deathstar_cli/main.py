@@ -1031,6 +1031,7 @@ def upgrade(
     yes: bool = typer.Option(False, "--yes", help="Skip interactive confirmations."),
     skip_backup: bool = typer.Option(False, "--skip-backup", help="Skip pre-upgrade backup."),
     transport: Literal["auto", "tailscale", "ssm"] = typer.Option("auto", "--transport"),
+    verbose: bool = typer.Option(False, "--verbose", help="Show full terraform output."),
 ) -> None:
     """Upgrade the CLI and redeploy the remote instance.
 
@@ -1201,12 +1202,11 @@ def upgrade(
         typer.echo("  [4/6] Skipping backup.")
 
     # Upload code to S3
+    quiet = not verbose
     typer.echo("  [5/6] Uploading code to S3...")
-    terraform_init(config, effective_region)
-    terraform_apply(config, effective_region, auto_approve=yes)
-
-    typer.echo("")
-    _display_terraform_summary(effective_region)
+    terraform_init(config, effective_region, quiet=quiet)
+    terraform_apply(config, effective_region, auto_approve=yes, quiet=quiet)
+    typer.echo("        Done.")
 
     typer.echo("")
     typer.echo("        Triggering Docker rebuild...")
@@ -1222,12 +1222,16 @@ def upgrade(
     response = ssm.send_command(
         InstanceIds=[instance_id],
         DocumentName="AWS-RunShellScript",
-        Parameters={"commands": ["systemctl restart deathstar-runtime.service"]},
-        TimeoutSeconds=300,
+        Parameters={"commands": [
+            # Prune Docker build cache so the new code is picked up
+            "docker builder prune -af 2>/dev/null || true",
+            "systemctl restart deathstar-runtime.service",
+        ]},
+        TimeoutSeconds=600,
     )
     command_id = response["Command"]["CommandId"]
 
-    for _ in range(120):
+    for _ in range(180):
         time.sleep(2)
         try:
             invocation = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
