@@ -5,15 +5,16 @@ BUCKET="${artifact_bucket_name}"
 REGION="${aws_region}"
 
 # Discover the latest runtime revision in S3.
-# Each terraform apply uploads to runtime/<sha256>/... — pick the newest prefix.
+# Each terraform apply uploads to runtime/<sha256>/... — pick the one with the
+# most recently modified object (not alphabetical, since the sha256 prefix
+# doesn't sort by time).
 LATEST_REV=$(aws s3api list-objects-v2 \
   --bucket "$BUCKET" \
   --prefix "runtime/" \
-  --delimiter "/" \
-  --query 'CommonPrefixes[-1].Prefix' \
+  --query 'sort_by(Contents, &LastModified)[-1].Key' \
   --output text \
   --region "$REGION" \
-| sed 's|^runtime/||;s|/$||')
+| sed 's|^runtime/||' | cut -d'/' -f1)
 
 if [ -z "$LATEST_REV" ] || [ "$LATEST_REV" = "None" ]; then
   echo "ERROR: no runtime revision found in s3://$BUCKET/runtime/" >&2

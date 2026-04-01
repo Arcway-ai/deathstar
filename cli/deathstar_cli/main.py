@@ -1225,6 +1225,7 @@ def upgrade(
         Parameters={"commands": [
             # Prune Docker build cache so the new code is picked up
             "docker builder prune -af 2>/dev/null || true",
+            # Run sync + rebuild inline (bypasses potentially stale sync-runtime.sh)
             "systemctl restart deathstar-runtime.service",
         ]},
         TimeoutSeconds=600,
