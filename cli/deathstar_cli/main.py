@@ -964,6 +964,22 @@ def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
         typer.echo("Install Docker Desktop: https://docs.docker.com/get-docker/", err=True)
         raise typer.Exit(code=1)
 
+    # Check that the installed CLI version matches the source version.
+    # Mismatches happen when uv tool caches a stale install.
+    source_version_file = config.project_root / "shared" / "deathstar_shared" / "version.py"
+    if source_version_file.exists():
+        for line in source_version_file.read_text().splitlines():
+            if line.startswith("VERSION"):
+                source_ver = line.split('"')[1]
+                if source_ver != VERSION:
+                    typer.echo(
+                        f"Error: CLI version ({VERSION}) doesn't match source ({source_ver}).",
+                        err=True,
+                    )
+                    typer.echo("Run: uv tool install -e . --force", err=True)
+                    raise typer.Exit(code=1)
+                break
+
     image_tag = f"deathstar-app:{VERSION}"
 
     # Step 1: Build locally
