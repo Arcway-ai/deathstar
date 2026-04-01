@@ -1193,11 +1193,29 @@ function _ensureAgentSocket(): void {
           refreshContext();
           refreshRepos();
           break;
-        case "local_checkout":
+        case "local_checkout": {
+          const fromBranch = (event.data.from_branch as string) || "unknown";
+          const toBranch = (event.data.to_branch as string) || "unknown";
+          // Inject a system note into the active conversation so the agent
+          // knows the branch changed when it builds the next prompt
+          if (s.activeConversation && fromBranch !== toBranch) {
+            const note: ConversationMessage = {
+              id: `branch-switch-${Date.now()}`,
+              role: "user",
+              content: `[Branch switched from \`${fromBranch}\` to \`${toBranch}\`]`,
+              timestamp: new Date().toISOString(),
+            };
+            useStore.setState((prev) => ({
+              activeConversation: prev.activeConversation
+                ? { ...prev.activeConversation, messages: [...prev.activeConversation.messages, note] }
+                : null,
+            }));
+          }
           refreshContext();
           refreshBranches();
           refreshCommits();
           break;
+        }
         case "branch_update":
           refreshBranches();
           break;
