@@ -154,7 +154,17 @@ The web UI is always enabled and served at port 8080 (only accessible over Tails
 
 ### 4. Install The CLI
 
+**From PyPI (recommended):**
+
 ```bash
+uv tool install deathstar-ai
+```
+
+**From source (for contributors):**
+
+```bash
+git clone https://github.com/Arcway-ai/deathstar.git
+cd deathstar
 uv tool install -e . --force
 ```
 
@@ -387,13 +397,11 @@ Use `redeploy` for frontend changes, API route updates, or any code-only change.
 deathstar upgrade
 ```
 
-1. Checks for uncommitted local changes
-2. Pulls latest code with `git pull --ff-only`
-3. Reinstalls the local CLI package
-4. Compares local vs remote version
-5. Backs up the remote workspace (unless `--skip-backup`)
-6. Cleans up stale Tailscale devices
-7. Redeploys
+Automatically detects your install mode:
+- **PyPI install:** upgrades from PyPI (`uv tool upgrade deathstar-ai`)
+- **Source install:** pulls latest code and reinstalls the editable package
+
+Then backs up, uploads code to S3, triggers a Docker rebuild on the instance, and waits for it to come up healthy.
 
 ```bash
 deathstar upgrade --yes           # auto-approve everything

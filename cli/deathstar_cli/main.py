@@ -1032,101 +1032,133 @@ def upgrade(
     skip_backup: bool = typer.Option(False, "--skip-backup", help="Skip pre-upgrade backup."),
     transport: Literal["auto", "tailscale", "ssm"] = typer.Option("auto", "--transport"),
 ) -> None:
-    """Pull the latest code, upgrade the CLI, back up the instance, and redeploy.
+    """Upgrade the CLI and redeploy the remote instance.
+
+    Supports two install modes:
+      - **Source (git clone):** pull latest, reinstall editable, terraform apply + redeploy
+      - **PyPI (`uv tool install deathstar-ai`):** upgrade from PyPI, terraform apply + redeploy
 
     Steps:
-      1. Check for local uncommitted changes
-      2. Pull latest from the current branch
-      3. Reinstall the deathstar CLI package (picks up new code)
-      4. Compare local vs remote version
-      5. Create a backup on the remote instance (unless --skip-backup)
-      6. Remove stale Tailscale devices (if OAuth credentials are configured)
-      7. Run terraform apply to redeploy
-
-    For open source users: just `deathstar upgrade`.
+      1. Update local CLI (git pull + reinstall, or PyPI upgrade)
+      2. Compare local vs remote version
+      3. Create a backup on the remote instance (unless --skip-backup)
+      4. Remove stale Tailscale devices (if OAuth credentials are configured)
+      5. Upload code to S3 via terraform apply
+      6. Trigger Docker rebuild on the instance via SSM
+      7. Wait for the instance to become healthy
     """
     import shutil
 
     config = _config()
     effective_region = region or config.region
 
-    # Step 1: Check for uncommitted changes in the deathstar repo
-    typer.echo("  [1/7] Checking local repo state...")
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(config.project_root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        if result.stdout.strip():
-            typer.echo("        Warning: you have uncommitted changes in the DeathStar repo.")
-            if not yes and not typer.confirm("        Continue anyway?"):
-                raise typer.Exit(code=1)
-    except subprocess.CalledProcessError:
-        typer.echo("        Warning: could not check git status.", err=True)
+    # Detect install mode: source (editable) vs PyPI
+    is_source_install = (config.project_root / ".git").is_dir()
+    installer = "uv" if shutil.which("uv") else "pip"
 
-    # Step 2: Pull latest (skip if no remote tracking branch)
-    typer.echo("  [2/7] Pulling latest changes...")
-    has_upstream = False
-    try:
-        subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-            cwd=str(config.project_root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        has_upstream = True
-    except subprocess.CalledProcessError:
-        pass
-
-    if not has_upstream:
-        typer.echo("        No remote tracking branch — skipping pull.")
-    else:
+    if is_source_install:
+        # Step 1a: Check for uncommitted changes
+        typer.echo("  [1/7] Checking local repo state...")
         try:
             result = subprocess.run(
-                ["git", "pull", "--ff-only"],
+                ["git", "status", "--porcelain"],
                 cwd=str(config.project_root),
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            pull_output = result.stdout.strip()
-            if "Already up to date" in pull_output:
-                typer.echo("        Already up to date.")
-            else:
-                typer.echo(f"        {pull_output.splitlines()[-1] if pull_output else 'Updated.'}")
+            if result.stdout.strip():
+                typer.echo("        Warning: you have uncommitted changes in the DeathStar repo.")
+                if not yes and not typer.confirm("        Continue anyway?"):
+                    raise typer.Exit(code=1)
+        except subprocess.CalledProcessError:
+            typer.echo("        Warning: could not check git status.", err=True)
+
+        # Step 1b: Pull latest
+        typer.echo("  [2/7] Pulling latest changes...")
+        has_upstream = False
+        try:
+            subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                cwd=str(config.project_root),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            has_upstream = True
+        except subprocess.CalledProcessError:
+            pass
+
+        if not has_upstream:
+            typer.echo("        No remote tracking branch — skipping pull.")
+        else:
+            try:
+                result = subprocess.run(
+                    ["git", "pull", "--ff-only"],
+                    cwd=str(config.project_root),
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                pull_output = result.stdout.strip()
+                if "Already up to date" in pull_output:
+                    typer.echo("        Already up to date.")
+                else:
+                    typer.echo(f"        {pull_output.splitlines()[-1] if pull_output else 'Updated.'}")
+            except subprocess.CalledProcessError as exc:
+                stderr = (exc.stderr or "").strip()
+                typer.echo(f"        git pull failed: {stderr[:200]}", err=True)
+                typer.echo("        Tip: commit or stash local changes, or pull manually.", err=True)
+                raise typer.Exit(code=1) from exc
+
+        # Step 1c: Reinstall editable package
+        typer.echo("  [3/7] Upgrading local CLI package...")
+        if installer == "uv":
+            install_cmd = ["uv", "pip", "install", "-e", ".[dev]"]
+        else:
+            install_cmd = ["pip", "install", "-e", ".[dev]"]
+
+        try:
+            subprocess.run(
+                install_cmd,
+                cwd=str(config.project_root),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            typer.echo(f"        Reinstalled via {installer}.")
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or "").strip()
-            typer.echo(f"        git pull failed: {stderr[:200]}", err=True)
-            typer.echo("        Tip: commit or stash local changes, or pull manually.", err=True)
-            raise typer.Exit(code=1) from exc
-
-    # Step 3: Reinstall CLI package
-    typer.echo("  [3/7] Upgrading local CLI package...")
-    installer = "uv" if shutil.which("uv") else "pip"
-    if installer == "uv":
-        install_cmd = ["uv", "pip", "install", "-e", ".[dev]"]
+            typer.echo(f"        Warning: package install failed: {stderr[:200]}", err=True)
+            if not yes and not typer.confirm("        Continue with deploy anyway?"):
+                raise typer.Exit(code=1) from exc
     else:
-        install_cmd = ["pip", "install", "-e", ".[dev]"]
+        # PyPI install — upgrade from the registry
+        typer.echo("  [1/7] PyPI install detected.")
+        typer.echo("  [2/7] Upgrading from PyPI...")
+        if installer == "uv":
+            upgrade_cmd = ["uv", "tool", "upgrade", "deathstar-ai"]
+        else:
+            upgrade_cmd = ["pip", "install", "--upgrade", "deathstar-ai"]
 
-    try:
-        subprocess.run(
-            install_cmd,
-            cwd=str(config.project_root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        typer.echo(f"        Reinstalled via {installer}.")
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        typer.echo(f"        Warning: package install failed: {stderr[:200]}", err=True)
-        typer.echo(f"        You may need to run `{installer} pip install -e '.[dev]'` manually.", err=True)
-        if not yes and not typer.confirm("        Continue with deploy anyway?"):
-            raise typer.Exit(code=1) from exc
+        try:
+            result = subprocess.run(
+                upgrade_cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            output = result.stdout.strip()
+            if "Already" in output or "Nothing to upgrade" in output:
+                typer.echo("        Already on latest version.")
+            else:
+                typer.echo(f"        {output.splitlines()[-1] if output else 'Upgraded.'}")
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            typer.echo(f"        Warning: upgrade failed: {stderr[:200]}", err=True)
+            if not yes and not typer.confirm("        Continue with deploy anyway?"):
+                raise typer.Exit(code=1) from exc
+        typer.echo("  [3/7] Skipping (PyPI install).")
 
     # Step 4: Version comparison
     typer.echo("  [4/7] Checking versions...")
@@ -1151,9 +1183,9 @@ def upgrade(
         if not yes and not typer.confirm("        Redeploy anyway?"):
             raise typer.Exit(0)
 
-    # Step 5: Backup
+    # Step 3: Backup
     if not skip_backup and remote_ver:
-        typer.echo("  [5/7] Creating pre-upgrade backup...")
+        typer.echo("  [3/7] Creating pre-upgrade backup...")
         try:
             client = RemoteAPIClient(
                 config,
@@ -1167,11 +1199,11 @@ def upgrade(
             if not yes and not typer.confirm("        Continue without backup?"):
                 raise typer.Exit(code=1) from exc
     else:
-        typer.echo("  [5/7] Skipping backup.")
+        typer.echo("  [3/7] Skipping backup.")
 
-    # Step 6: Tailscale cleanup
+    # Step 4: Tailscale cleanup
     if config.enable_tailscale:
-        typer.echo("  [6/7] Cleaning up Tailscale devices...")
+        typer.echo("  [4/7] Cleaning up Tailscale devices...")
         try:
             result = _tailscale_cleanup(yes=yes)
             if not result["deleted"] and not result["renamed"]:
@@ -1180,19 +1212,56 @@ def upgrade(
             typer.echo(f"        Warning: Tailscale cleanup failed: {exc}", err=True)
             typer.echo("        The new instance may get a suffixed hostname (e.g. deathstar-1).", err=True)
     else:
-        typer.echo("  [6/7] Tailscale not enabled — skipping cleanup.")
+        typer.echo("  [4/7] Tailscale not enabled — skipping cleanup.")
 
-    # Step 7: Redeploy
-    typer.echo("  [7/7] Deploying...")
+    # Step 7: Upload code to S3 and trigger Docker rebuild
+    typer.echo("  [5/7] Uploading code to S3...")
     terraform_init(config, effective_region)
     terraform_apply(config, effective_region, auto_approve=yes)
 
     typer.echo("")
     _display_terraform_summary(effective_region)
 
-    # Post-deploy: wait for the new instance to become healthy
     typer.echo("")
-    typer.echo("  Waiting for instance to come up...")
+    typer.echo("  [6/7] Triggering Docker rebuild on instance...")
+    outputs = terraform_outputs(config, effective_region)
+    instance_id = str(outputs["instance_id"])
+
+    session_kwargs: dict[str, str] = {"region_name": effective_region}
+    if config.aws_profile:
+        session_kwargs["profile_name"] = config.aws_profile
+
+    ssm = boto3.Session(**session_kwargs).client("ssm")
+
+    response = ssm.send_command(
+        InstanceIds=[instance_id],
+        DocumentName="AWS-RunShellScript",
+        Parameters={"commands": ["systemctl restart deathstar-runtime.service"]},
+        TimeoutSeconds=300,
+    )
+    command_id = response["Command"]["CommandId"]
+
+    for _ in range(120):
+        time.sleep(2)
+        try:
+            invocation = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+        except ssm.exceptions.InvocationDoesNotExist:
+            continue
+
+        if invocation["Status"] in ("Success", "Failed", "Cancelled", "TimedOut"):
+            if invocation["Status"] != "Success":
+                stderr = invocation.get("StandardErrorContent", "")
+                typer.echo(f"        Restart failed: {stderr[:300]}", err=True)
+                raise typer.Exit(code=1)
+            typer.echo("        Runtime restarted successfully.")
+            break
+    else:
+        typer.echo("        Timed out waiting for restart.", err=True)
+        raise typer.Exit(code=1)
+
+    # Step 8: Wait for the instance to become healthy
+    typer.echo("")
+    typer.echo("  [7/7] Waiting for instance to come up...")
     resolved_transport = _validate_transport(transport if transport != "auto" else config.remote_transport)
     health = _wait_for_healthy(config, effective_region, resolved_transport)
     if health:
