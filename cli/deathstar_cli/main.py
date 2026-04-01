@@ -1222,12 +1222,7 @@ def upgrade(
     response = ssm.send_command(
         InstanceIds=[instance_id],
         DocumentName="AWS-RunShellScript",
-        Parameters={"commands": [
-            # Prune Docker build cache so the new code is picked up
-            "docker builder prune -af 2>/dev/null || true",
-            # Run sync + rebuild inline (bypasses potentially stale sync-runtime.sh)
-            "systemctl restart deathstar-runtime.service",
-        ]},
+        Parameters={"commands": ["systemctl restart deathstar-runtime.service"]},
         TimeoutSeconds=600,
     )
     command_id = response["Command"]["CommandId"]
