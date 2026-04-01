@@ -1,8 +1,6 @@
 import { useState } from "react";
 import {
   AlertTriangle,
-  ChevronDown,
-  ChevronRight,
   CircleDot,
   Copy,
   Check,
@@ -11,9 +9,12 @@ import {
   Layers,
   Zap,
 } from "lucide-react";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardHeader, CardTitle, CardAction, CardDescription, CardContent } from "@/components/ui/card";
 import type {
   PlanComplexity,
-  PlanPhase,
   PlanTask,
   StructuredPlan,
   TaskEffort,
@@ -57,20 +58,16 @@ export default function PlanPanel({ plan }: { plan: StructuredPlan }) {
   return (
     <div className="space-y-3 animate-fade-in">
       {/* Title + overview */}
-      <div className="rounded-lg border border-border-subtle bg-bg-surface/50 p-4">
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2">
+      <Card size="sm" className="ring-0 rounded-lg border border-border-subtle bg-bg-surface/50">
+        <CardHeader className="p-4 pb-0">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold text-text-primary font-display">
             <Layers size={16} className="text-accent shrink-0" />
-            <h3 className="text-sm font-semibold text-text-primary font-display">
-              {plan.title}
-            </h3>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${complexity.color} ${complexity.bg}`}
-            >
+            {plan.title}
+          </CardTitle>
+          <CardAction className="flex items-center gap-2">
+            <Badge variant="secondary" className={`h-5 ${complexity.color} ${complexity.bg}`}>
               {complexity.label}
-            </span>
+            </Badge>
             <button
               onClick={handleCopyMarkdown}
               className="rounded-md p-1 text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors"
@@ -78,170 +75,156 @@ export default function PlanPanel({ plan }: { plan: StructuredPlan }) {
             >
               {copied ? <Check size={13} /> : <Copy size={13} />}
             </button>
+          </CardAction>
+          <CardDescription className="text-xs text-text-secondary leading-relaxed">
+            {plan.overview}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <div className="flex items-center gap-3 text-[10px] text-text-muted">
+            <span>{plan.phases.length} phases</span>
+            <span>{totalTasks} tasks</span>
+            <span>{totalFiles} files</span>
+            {plan.risks.length > 0 && (
+              <span className="text-amber-400">
+                {plan.risks.length} risk{plan.risks.length !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
-        </div>
-        <p className="text-xs text-text-secondary leading-relaxed">
-          {plan.overview}
-        </p>
-        <div className="mt-2 flex items-center gap-3 text-[10px] text-text-muted">
-          <span>{plan.phases.length} phases</span>
-          <span>{totalTasks} tasks</span>
-          <span>{totalFiles} files</span>
-          {plan.risks.length > 0 && (
-            <span className="text-amber-400">
-              {plan.risks.length} risk{plan.risks.length !== 1 ? "s" : ""}
-            </span>
-          )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {/* Phases */}
-      <div className="space-y-2">
+      <Accordion defaultValue={["phase-0"]} className="space-y-2">
         {plan.phases.map((phase, i) => (
-          <PhaseCard key={phase.id} phase={phase} index={i} />
+          <AccordionItem
+            key={phase.id}
+            value={`phase-${i}`}
+            className="rounded-lg border border-border-subtle overflow-hidden"
+          >
+            <AccordionTrigger className="px-3 py-2.5 hover:no-underline hover:bg-bg-hover [&_[data-slot=accordion-trigger-icon]]:text-text-muted">
+              <div className="flex items-center gap-2 flex-1 min-w-0 mr-2">
+                <CircleDot size={12} className="text-accent shrink-0" />
+                <span className="text-[10px] font-mono text-text-muted shrink-0">
+                  P{i + 1}
+                </span>
+                <span className="text-xs font-medium text-text-primary truncate flex-1">
+                  {phase.name}
+                </span>
+                <Badge variant="secondary" className="h-4 px-1.5 text-[10px] text-text-muted shrink-0">
+                  {phase.tasks.length} task{phase.tasks.length !== 1 ? "s" : ""}
+                </Badge>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="border-t border-border-subtle bg-bg-surface/30">
+                <p className="px-3 pt-2 pb-1.5 text-xs text-text-secondary">
+                  {phase.description}
+                </p>
+                <div className="px-3 pb-2.5">
+                  <Accordion className="space-y-1.5">
+                    {phase.tasks.map((task) => (
+                      <TaskItem key={task.id} task={task} />
+                    ))}
+                  </Accordion>
+                </div>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
         ))}
-      </div>
+      </Accordion>
 
       {/* Risks */}
       {plan.risks.length > 0 && (
-        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <AlertTriangle size={13} className="text-amber-400" />
-            <span className="text-xs font-medium text-amber-400">Risks</span>
-          </div>
-          <ul className="space-y-1">
-            {plan.risks.map((risk, i) => (
-              <li
-                key={i}
-                className="flex items-start gap-1.5 text-xs text-text-secondary"
-              >
-                <span className="mt-1.5 h-1 w-1 rounded-full bg-amber-400/60 shrink-0" />
-                {risk}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <Alert className="border-amber-500/20 bg-amber-500/5 [&>svg]:text-amber-400">
+          <AlertTriangle />
+          <AlertTitle className="text-xs font-medium text-amber-400">Risks</AlertTitle>
+          <AlertDescription>
+            <ul className="space-y-1 mt-1">
+              {plan.risks.map((risk, i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-1.5 text-xs text-text-secondary"
+                >
+                  <span className="mt-1.5 h-1 w-1 rounded-full bg-amber-400/60 shrink-0" />
+                  {risk}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Open questions */}
       {plan.open_questions.length > 0 && (
-        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <HelpCircle size={13} className="text-blue-400" />
-            <span className="text-xs font-medium text-blue-400">
-              Open Questions
-            </span>
-          </div>
-          <ul className="space-y-1">
-            {plan.open_questions.map((q, i) => (
-              <li
-                key={i}
-                className="flex items-start gap-1.5 text-xs text-text-secondary"
-              >
-                <span className="mt-1.5 h-1 w-1 rounded-full bg-blue-400/60 shrink-0" />
-                {q}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <Alert className="border-blue-500/20 bg-blue-500/5 [&>svg]:text-blue-400">
+          <HelpCircle />
+          <AlertTitle className="text-xs font-medium text-blue-400">Open Questions</AlertTitle>
+          <AlertDescription>
+            <ul className="space-y-1 mt-1">
+              {plan.open_questions.map((q, i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-1.5 text-xs text-text-secondary"
+                >
+                  <span className="mt-1.5 h-1 w-1 rounded-full bg-blue-400/60 shrink-0" />
+                  {q}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
       )}
     </div>
   );
 }
 
-/* ── PhaseCard ─────────────────────────────────────────────────── */
+/* ── TaskItem (Accordion) ────────────────────────────────────── */
 
-function PhaseCard({ phase, index }: { phase: PlanPhase; index: number }) {
-  const [expanded, setExpanded] = useState(index === 0); // First phase open by default
-
-  return (
-    <div className="rounded-lg border border-border-subtle overflow-hidden">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-bg-hover transition-colors"
-      >
-        {expanded ? (
-          <ChevronDown size={14} className="text-text-muted shrink-0" />
-        ) : (
-          <ChevronRight size={14} className="text-text-muted shrink-0" />
-        )}
-        <CircleDot size={12} className="text-accent shrink-0" />
-        <span className="text-[10px] font-mono text-text-muted shrink-0">
-          P{index + 1}
-        </span>
-        <span className="text-xs font-medium text-text-primary truncate flex-1">
-          {phase.name}
-        </span>
-        <span className="text-[10px] text-text-muted shrink-0">
-          {phase.tasks.length} task{phase.tasks.length !== 1 ? "s" : ""}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-border-subtle bg-bg-surface/30 animate-fade-in">
-          <p className="px-3 pt-2 pb-1.5 text-xs text-text-secondary">
-            {phase.description}
-          </p>
-          <div className="px-3 pb-2.5 space-y-1.5">
-            {phase.tasks.map((task) => (
-              <TaskCard key={task.id} task={task} />
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── TaskCard ──────────────────────────────────────────────────── */
-
-function TaskCard({ task }: { task: PlanTask }) {
-  const [expanded, setExpanded] = useState(false);
+function TaskItem({ task }: { task: PlanTask }) {
   const effort = effortConfig[task.effort];
 
   return (
-    <div className="rounded-md border border-border-subtle bg-bg-primary">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-bg-hover/50 transition-colors"
-      >
-        {expanded ? (
-          <ChevronDown size={12} className="text-text-muted shrink-0" />
-        ) : (
-          <ChevronRight size={12} className="text-text-muted shrink-0" />
-        )}
-        <Zap size={10} className="text-text-muted shrink-0" />
-        <span className="text-[11px] text-text-primary truncate flex-1">
-          {task.title}
-        </span>
-        <span
-          className={`rounded px-1.5 py-0.5 text-[9px] font-mono font-medium ${effort.color} bg-bg-surface`}
-        >
-          {effort.label}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-border-subtle px-2.5 py-2 space-y-1.5 animate-fade-in">
+    <AccordionItem
+      value={task.id}
+      className="rounded-md border border-border-subtle bg-bg-primary"
+    >
+      <AccordionTrigger className="px-2.5 py-2 hover:no-underline hover:bg-bg-hover/50 text-xs [&_[data-slot=accordion-trigger-icon]]:text-text-muted [&_[data-slot=accordion-trigger-icon]]:size-3">
+        <div className="flex items-center gap-2 flex-1 min-w-0 mr-2">
+          <Zap size={10} className="text-text-muted shrink-0" />
+          <span className="text-[11px] text-text-primary truncate flex-1">
+            {task.title}
+          </span>
+          <Badge
+            variant="secondary"
+            className={`h-4 px-1.5 text-[9px] font-mono font-medium ${effort.color}`}
+          >
+            {effort.label}
+          </Badge>
+        </div>
+      </AccordionTrigger>
+      <AccordionContent>
+        <div className="border-t border-border-subtle px-2.5 py-2 space-y-1.5">
           <p className="text-[11px] text-text-secondary leading-relaxed">
             {task.description}
           </p>
           {task.files.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {task.files.map((f) => (
-                <span
+                <Badge
                   key={f}
-                  className="inline-flex items-center gap-0.5 rounded bg-bg-elevated px-1.5 py-0.5 text-[9px] font-mono text-text-muted"
+                  variant="secondary"
+                  className="h-4 gap-0.5 px-1.5 text-[9px] font-mono text-text-muted"
                 >
                   <FileCode size={8} />
                   {f}
-                </span>
+                </Badge>
               ))}
             </div>
           )}
         </div>
-      )}
-    </div>
+      </AccordionContent>
+    </AccordionItem>
   );
 }
 

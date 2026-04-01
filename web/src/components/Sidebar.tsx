@@ -5,46 +5,49 @@ import {
   Trash2,
 } from "lucide-react";
 import { useStore } from "../store";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import type { SidebarView } from "../types";
-
-const tabs: { id: SidebarView; icon: typeof MessageSquare; label: string }[] = [
-  { id: "conversations", icon: MessageSquare, label: "Chats" },
-  { id: "memory", icon: Brain, label: "Memory" },
-];
 
 export default function Sidebar() {
   const view = useStore((s) => s.sidebarView);
   const setSidebarView = useStore((s) => s.setSidebarView);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
 
-  // Guard against stale persisted values from old sidebar views
   const safeView: SidebarView = view === "conversations" || view === "memory" ? view : "conversations";
 
   return (
     <aside className={`absolute left-0 top-0 z-40 flex h-full w-72 shrink-0 flex-col border-r border-border-subtle bg-bg-primary transition-transform duration-200 md:relative md:z-auto md:translate-x-0 ${sidebarOpen ? "translate-x-0 animate-slide-left" : "-translate-x-full"}`}>
-      {/* Tab bar */}
-      <div className="flex items-center border-b border-border-subtle">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setSidebarView(tab.id)}
-            className={`flex flex-1 items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
-              safeView === tab.id
-                ? "border-b-2 border-accent text-accent"
-                : "text-text-muted hover:text-text-secondary"
-            }`}
+      <Tabs
+        value={safeView}
+        onValueChange={(v) => setSidebarView(v as SidebarView)}
+        className="flex flex-1 flex-col overflow-hidden"
+      >
+        <TabsList variant="line" className="w-full shrink-0 rounded-none border-b border-border-subtle bg-transparent p-0">
+          <TabsTrigger
+            value="conversations"
+            className="flex-1 gap-1.5 rounded-none py-2.5 text-xs text-text-muted data-active:text-accent data-active:after:bg-accent"
           >
-            <tab.icon size={14} />
-            {tab.label}
-          </button>
-        ))}
-      </div>
+            <MessageSquare size={14} />
+            Chats
+          </TabsTrigger>
+          <TabsTrigger
+            value="memory"
+            className="flex-1 gap-1.5 rounded-none py-2.5 text-xs text-text-muted data-active:text-accent data-active:after:bg-accent"
+          >
+            <Brain size={14} />
+            Memory
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-2">
-        {safeView === "conversations" && <ConversationList />}
-        {safeView === "memory" && <MemoryPanel />}
-      </div>
+        <TabsContent value="conversations" className="flex-1 overflow-y-auto p-2">
+          <ConversationList />
+        </TabsContent>
+        <TabsContent value="memory" className="flex-1 overflow-y-auto p-2">
+          <MemoryPanel />
+        </TabsContent>
+      </Tabs>
     </aside>
   );
 }
@@ -83,7 +86,6 @@ function ConversationList() {
             onClick={() => {
               if (selectedRepo) {
                 navigate(`/${encodeURIComponent(selectedRepo)}/c/${encodeURIComponent(c.id)}`);
-                // Close sidebar on mobile after selection
                 if (window.innerWidth < 768) toggleSidebar();
               }
             }}
@@ -95,9 +97,9 @@ function ConversationList() {
                   {c.message_count} messages
                 </span>
                 {showBranchBadge && (
-                  <span className="rounded bg-bg-hover px-1 py-0.5 text-[9px] text-text-muted">
+                  <Badge variant="secondary" className="h-4 px-1 text-[9px] text-text-muted">
                     {c.branch}
-                  </span>
+                  </Badge>
                 )}
               </div>
             </div>
@@ -145,25 +147,24 @@ function MemoryPanel() {
   return (
     <div className="space-y-2">
       {memories.map((m) => (
-        <div
-          key={m.id}
-          className="group rounded-md border border-border-subtle bg-bg-surface p-2"
-        >
-          <p className="text-xs text-text-secondary line-clamp-3">
-            {m.content}
-          </p>
-          <div className="mt-1 flex items-center justify-between">
-            <span className="text-[10px] text-text-muted">
-              {new Date(m.created_at).toLocaleDateString()}
-            </span>
-            <button
-              onClick={() => deleteMemory(m.id)}
-              className="invisible text-text-muted hover:text-error group-hover:visible"
-            >
-              <Trash2 size={10} />
-            </button>
-          </div>
-        </div>
+        <Card key={m.id} size="sm" className="group ring-0 rounded-md border border-border-subtle bg-bg-surface">
+          <CardContent className="p-2">
+            <p className="text-xs text-text-secondary line-clamp-3">
+              {m.content}
+            </p>
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-[10px] text-text-muted">
+                {new Date(m.created_at).toLocaleDateString()}
+              </span>
+              <button
+                onClick={() => deleteMemory(m.id)}
+                className="invisible text-text-muted hover:text-error group-hover:visible"
+              >
+                <Trash2 size={10} />
+              </button>
+            </div>
+          </CardContent>
+        </Card>
       ))}
     </div>
   );

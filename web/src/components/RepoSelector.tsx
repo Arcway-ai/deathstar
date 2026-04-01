@@ -10,6 +10,8 @@ import {
   Check,
 } from "lucide-react";
 import { useStore } from "../store";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { TIEFighterLoader, DeathStarSpinner } from "./DeathStarLoader";
 import Starfield from "./Starfield";
 
@@ -48,37 +50,25 @@ export default function RepoSelector() {
         </div>
 
         {/* Tabs */}
-        <div className="mb-4 flex rounded-lg bg-bg-surface p-0.5">
-          <button
-            onClick={() => setTab("local")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-2 text-xs font-medium transition-colors ${
-              tab === "local"
-                ? "bg-bg-elevated text-text-primary shadow-sm"
-                : "text-text-muted hover:text-text-secondary"
-            }`}
-          >
-            <Folder size={14} />
-            Local Repos
-          </button>
-          <button
-            onClick={() => setTab("github")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-2 text-xs font-medium transition-colors ${
-              tab === "github"
-                ? "bg-bg-elevated text-text-primary shadow-sm"
-                : "text-text-muted hover:text-text-secondary"
-            }`}
-          >
-            <Globe size={14} />
-            GitHub
-          </button>
-        </div>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "local" | "github")} className="mb-4">
+          <TabsList className="w-full bg-bg-surface">
+            <TabsTrigger value="local" className="flex-1 gap-1.5 text-xs data-active:bg-bg-elevated data-active:text-text-primary data-active:shadow-sm">
+              <Folder size={14} />
+              Local Repos
+            </TabsTrigger>
+            <TabsTrigger value="github" className="flex-1 gap-1.5 text-xs data-active:bg-bg-elevated data-active:text-text-primary data-active:shadow-sm">
+              <Globe size={14} />
+              GitHub
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Content */}
-        {tab === "local" ? (
-          <LocalRepoList search={search} />
-        ) : (
-          <GitHubRepoList search={search} />
-        )}
+          <TabsContent value="local">
+            <LocalRepoList search={search} />
+          </TabsContent>
+          <TabsContent value="github">
+            <GitHubRepoList search={search} />
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
@@ -209,9 +199,9 @@ function GitHubRepoList({ search }: { search: string }) {
   return (
     <div className="space-y-1 max-h-[50vh] overflow-y-auto">
       {cloneError && (
-        <div className="rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-xs text-error mb-2">
-          {cloneError}
-        </div>
+        <Alert variant="destructive" className="mb-2 border-error/30 bg-error/10 py-2 text-xs text-error [&>svg]:text-error">
+          <AlertDescription className="text-xs text-error">{cloneError}</AlertDescription>
+        </Alert>
       )}
       {filtered.map((repo) => {
         const alreadyCloned = localRepoNames.has(repo.name);

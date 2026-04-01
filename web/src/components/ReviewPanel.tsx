@@ -1,11 +1,8 @@
-import { useState } from "react";
 import {
   AlertTriangle,
   Bug,
   Check,
   CheckCircle,
-  ChevronDown,
-  ChevronRight,
   ExternalLink,
   FileCode,
   GitCommit,
@@ -17,6 +14,9 @@ import {
   XCircle,
 } from "lucide-react";
 import { useStore } from "../store";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import type {
   FindingAction,
   ReviewFinding,
@@ -116,7 +116,6 @@ export default function ReviewPanel({ review }: { review: StructuredReview }) {
       findingActions[f.id] === "accepted",
   );
 
-  // Group findings by severity
   const bySeverity = review.findings.reduce(
     (acc, f) => {
       acc[f.severity] = (acc[f.severity] || 0) + 1;
@@ -127,32 +126,37 @@ export default function ReviewPanel({ review }: { review: StructuredReview }) {
 
   return (
     <div className="space-y-3 animate-fade-in">
-      {/* Verdict + Summary header */}
-      <div className={`rounded-lg border ${verdict.bg} border-border-subtle p-4`}>
-        <div className="flex items-center gap-2 mb-2">
-          <VerdictIcon size={18} className={verdict.color} />
-          <span className={`text-sm font-semibold ${verdict.color}`}>
-            {verdict.label}
-          </span>
-          <div className="ml-auto flex items-center gap-2 text-[10px] text-text-muted">
-            {(["error", "warning", "suggestion", "nitpick"] as ReviewSeverity[]).map(
-              (sev) =>
-                bySeverity[sev] ? (
-                  <span
-                    key={sev}
-                    className={`flex items-center gap-0.5 ${severityConfig[sev].color}`}
-                  >
-                    {bySeverity[sev]} {severityConfig[sev].label.toLowerCase()}
-                    {bySeverity[sev] > 1 ? "s" : ""}
-                  </span>
-                ) : null,
-            )}
-          </div>
-        </div>
-        <p className="text-sm text-text-secondary leading-relaxed">
-          {review.summary}
-        </p>
-      </div>
+      {/* Verdict + Summary */}
+      <Card size="sm" className={`ring-0 rounded-lg border border-border-subtle ${verdict.bg}`}>
+        <CardHeader className="p-4 pb-0">
+          <CardTitle className="flex items-center gap-2">
+            <VerdictIcon size={18} className={verdict.color} />
+            <span className={`text-sm font-semibold ${verdict.color}`}>
+              {verdict.label}
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              {(["error", "warning", "suggestion", "nitpick"] as ReviewSeverity[]).map(
+                (sev) =>
+                  bySeverity[sev] ? (
+                    <Badge
+                      key={sev}
+                      variant="secondary"
+                      className={`h-4 px-1.5 text-[10px] ${severityConfig[sev].color}`}
+                    >
+                      {bySeverity[sev]} {severityConfig[sev].label.toLowerCase()}
+                      {bySeverity[sev] > 1 ? "s" : ""}
+                    </Badge>
+                  ) : null,
+              )}
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <p className="text-sm text-text-secondary leading-relaxed">
+            {review.summary}
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Bulk actions */}
       {review.findings.length > 0 && (
@@ -187,27 +191,29 @@ export default function ReviewPanel({ review }: { review: StructuredReview }) {
       )}
 
       {/* Findings list */}
-      <div className="space-y-2">
+      <Accordion>
         {review.findings.map((finding) => (
-          <FindingCard
+          <FindingItem
             key={finding.id}
             finding={finding}
             action={findingActions[finding.id] || "pending"}
             onAction={(a) => setFindingAction(finding.id, a)}
           />
         ))}
-      </div>
+      </Accordion>
 
       {review.findings.length === 0 && (
-        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-6 text-center">
-          <CheckCircle size={24} className="mx-auto mb-2 text-emerald-400" />
-          <p className="text-sm text-emerald-400 font-medium">
-            No issues found
-          </p>
-          <p className="text-xs text-text-muted mt-1">
-            This PR looks good to go.
-          </p>
-        </div>
+        <Card size="sm" className="ring-0 rounded-lg border border-emerald-500/20 bg-emerald-500/5">
+          <CardContent className="px-4 py-6 text-center">
+            <CheckCircle size={24} className="mx-auto mb-2 text-emerald-400" />
+            <p className="text-sm text-emerald-400 font-medium">
+              No issues found
+            </p>
+            <p className="text-xs text-text-muted mt-1">
+              This PR looks good to go.
+            </p>
+          </CardContent>
+        </Card>
       )}
 
       {/* Action buttons */}
@@ -225,9 +231,9 @@ export default function ReviewPanel({ review }: { review: StructuredReview }) {
             )}
             Post Review to GitHub
             {acceptedCount > 0 && (
-              <span className="rounded bg-bg-deep/20 px-1.5 py-0.5 text-[10px]">
+              <Badge variant="secondary" className="h-4 px-1.5 text-[10px] bg-bg-deep/20">
                 {acceptedCount}
-              </span>
+              </Badge>
             )}
           </button>
 
@@ -261,9 +267,9 @@ export default function ReviewPanel({ review }: { review: StructuredReview }) {
   );
 }
 
-/* ── FindingCard ───────────────────────────────────────────────── */
+/* ── FindingItem (Accordion) ─────────────────────────────────── */
 
-function FindingCard({
+function FindingItem({
   finding,
   action,
   onAction,
@@ -272,7 +278,6 @@ function FindingCard({
   action: FindingAction;
   onAction: (a: FindingAction) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const sev = severityConfig[finding.severity];
   const SevIcon = sev.icon;
 
@@ -283,46 +288,43 @@ function FindingCard({
   };
 
   return (
-    <div
-      className={`rounded-lg border transition-all duration-200 ${actionStyles[action]}`}
+    <AccordionItem
+      value={finding.id}
+      className={`rounded-lg border transition-all duration-200 mb-2 ${actionStyles[action]}`}
     >
-      {/* Header row */}
+      {/* Header row - custom trigger with action buttons */}
       <div className="flex items-start gap-2 px-3 py-2.5">
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="mt-0.5 shrink-0 text-text-muted hover:text-text-primary transition-colors"
-        >
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </button>
-
-        <SevIcon size={14} className={`mt-0.5 shrink-0 ${sev.color}`} />
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className={`text-[10px] font-medium ${sev.color} ${sev.bg} rounded px-1.5 py-0.5`}>
-              {sev.label}
-            </span>
-            <span className="text-xs font-medium text-text-primary truncate">
-              {finding.title}
-            </span>
+        <AccordionTrigger className="flex-1 p-0 hover:no-underline [&_[data-slot=accordion-trigger-icon]]:size-3.5 [&_[data-slot=accordion-trigger-icon]]:text-text-muted">
+          <div className="flex items-start gap-2 flex-1 min-w-0 mr-2">
+            <SevIcon size={14} className={`mt-0.5 shrink-0 ${sev.color}`} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className={`h-4 px-1.5 text-[10px] ${sev.color} ${sev.bg}`}>
+                  {sev.label}
+                </Badge>
+                <span className="text-xs font-medium text-text-primary truncate">
+                  {finding.title}
+                </span>
+              </div>
+              <div className="mt-0.5 flex items-center gap-2 text-[10px] text-text-muted">
+                <span className="flex items-center gap-0.5">
+                  <FileCode size={9} />
+                  {finding.file}
+                </span>
+                {finding.line_start != null && (
+                  <span>
+                    L{finding.line_start}
+                    {finding.line_end && finding.line_end !== finding.line_start
+                      ? `–${finding.line_end}`
+                      : ""}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-text-muted">
-            <span className="flex items-center gap-0.5">
-              <FileCode size={9} />
-              {finding.file}
-            </span>
-            {finding.line_start != null && (
-              <span>
-                L{finding.line_start}
-                {finding.line_end && finding.line_end !== finding.line_start
-                  ? `–${finding.line_end}`
-                  : ""}
-              </span>
-            )}
-          </div>
-        </div>
+        </AccordionTrigger>
 
-        {/* Accept / Reject buttons */}
+        {/* Accept / Reject buttons outside the trigger */}
         <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={() =>
@@ -354,8 +356,8 @@ function FindingCard({
       </div>
 
       {/* Expanded details */}
-      {expanded && (
-        <div className="border-t border-border-subtle px-3 py-2.5 space-y-2 animate-fade-in">
+      <AccordionContent>
+        <div className="border-t border-border-subtle px-3 py-2.5 space-y-2">
           <p className="text-xs text-text-secondary leading-relaxed">
             {finding.body}
           </p>
@@ -382,7 +384,7 @@ function FindingCard({
             </div>
           )}
         </div>
-      )}
-    </div>
+      </AccordionContent>
+    </AccordionItem>
   );
 }

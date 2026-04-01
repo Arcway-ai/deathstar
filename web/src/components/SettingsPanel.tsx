@@ -1,60 +1,57 @@
 import { useState } from "react";
-import { X, Cpu, Brain } from "lucide-react";
+import { Cpu, Brain } from "lucide-react";
 import { useStore } from "../store";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import type { ProviderName } from "../types";
 
 export default function SettingsPanel() {
+  const settingsOpen = useStore((s) => s.settingsOpen);
   const toggleSettings = useStore((s) => s.toggleSettings);
   const [tab, setTab] = useState<"providers" | "memory">("providers");
 
   return (
-    <>
-      <div
-        className="fixed inset-0 z-50 bg-black/60"
-        onClick={toggleSettings}
-      />
-      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-border-subtle bg-bg-primary animate-slide-right">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
-          <h2 className="font-display text-sm font-bold text-text-primary">
+    <Sheet open={settingsOpen} onOpenChange={() => toggleSettings()}>
+      <SheetContent side="right" className="w-full sm:max-w-md bg-bg-primary border-border-subtle flex flex-col gap-0 p-0">
+        <SheetHeader className="px-4 py-3 border-b border-border-subtle">
+          <SheetTitle className="font-display text-sm font-bold text-text-primary">
             Settings
-          </h2>
-          <button
-            onClick={toggleSettings}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-bg-hover hover:text-text-secondary"
-          >
-            <X size={16} />
-          </button>
-        </div>
+          </SheetTitle>
+        </SheetHeader>
 
-        {/* Tabs */}
-        <div className="flex border-b border-border-subtle">
-          {[
-            { id: "providers" as const, icon: Cpu, label: "Providers" },
-            { id: "memory" as const, icon: Brain, label: "Memory" },
-          ].map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`flex flex-1 items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
-                tab === t.id
-                  ? "border-b-2 border-accent text-accent"
-                  : "text-text-muted hover:text-text-secondary"
-              }`}
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as "providers" | "memory")}
+          className="flex flex-1 flex-col overflow-hidden"
+        >
+          <TabsList variant="line" className="w-full shrink-0 rounded-none border-b border-border-subtle bg-transparent p-0">
+            <TabsTrigger
+              value="providers"
+              className="flex-1 gap-1.5 rounded-none py-2.5 text-xs text-text-muted data-active:text-accent data-active:after:bg-accent"
             >
-              <t.icon size={14} />
-              {t.label}
-            </button>
-          ))}
-        </div>
+              <Cpu size={14} />
+              Providers
+            </TabsTrigger>
+            <TabsTrigger
+              value="memory"
+              className="flex-1 gap-1.5 rounded-none py-2.5 text-xs text-text-muted data-active:text-accent data-active:after:bg-accent"
+            >
+              <Brain size={14} />
+              Memory
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
-          {tab === "providers" && <ProvidersTab />}
-          {tab === "memory" && <MemoryTab />}
-        </div>
-      </div>
-    </>
+          <TabsContent value="providers" className="flex-1 overflow-y-auto p-4">
+            <ProvidersTab />
+          </TabsContent>
+          <TabsContent value="memory" className="flex-1 overflow-y-auto p-4">
+            <MemoryTab />
+          </TabsContent>
+        </Tabs>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -66,32 +63,37 @@ function ProvidersTab() {
   return (
     <div className="space-y-2">
       {Object.entries(providers).map(([name, status]) => (
-        <button
+        <Card
           key={name}
-          onClick={() => setProvider(name as ProviderName)}
-          className={`flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors ${
+          size="sm"
+          className={`ring-0 rounded-lg cursor-pointer transition-colors ${
             name === selectedProvider
-              ? "border-accent/50 bg-accent-muted"
-              : "border-border-subtle bg-bg-surface hover:border-border-default"
+              ? "border border-accent/50 bg-accent-muted"
+              : "border border-border-subtle bg-bg-surface hover:border-border-default"
           }`}
+          onClick={() => setProvider(name as ProviderName)}
         >
-          <div
-            className={`h-2 w-2 rounded-full ${
-              status.configured ? "bg-success" : "bg-text-muted"
-            }`}
-          />
-          <div>
-            <p className="text-xs font-medium text-text-primary capitalize">
-              {name}
-            </p>
-            <p className="text-[10px] text-text-muted font-mono">
-              {status.default_model}
-            </p>
-          </div>
-          {name === selectedProvider && (
-            <span className="ml-auto text-[10px] text-accent">Active</span>
-          )}
-        </button>
+          <CardContent className="flex items-center gap-3 px-4 py-3">
+            <div
+              className={`h-2 w-2 rounded-full ${
+                status.configured ? "bg-success" : "bg-text-muted"
+              }`}
+            />
+            <div>
+              <p className="text-xs font-medium text-text-primary capitalize">
+                {name}
+              </p>
+              <p className="text-[10px] text-text-muted font-mono">
+                {status.default_model}
+              </p>
+            </div>
+            {name === selectedProvider && (
+              <Badge variant="secondary" className="ml-auto h-4 px-1.5 text-[10px] text-accent">
+                Active
+              </Badge>
+            )}
+          </CardContent>
+        </Card>
       ))}
       {Object.keys(providers).length === 0 && (
         <p className="py-4 text-center text-xs text-text-muted">
@@ -131,32 +133,28 @@ function MemoryTab() {
       ) : (
         <div className="space-y-2">
           {memories.map((m) => (
-            <div
-              key={m.id}
-              className="rounded-lg border border-border-subtle bg-bg-surface p-3"
-            >
-              <p className="text-xs text-text-secondary line-clamp-4 whitespace-pre-wrap">
-                {m.content}
-              </p>
-              <div className="mt-2 flex items-center justify-between">
-                <div className="flex flex-wrap gap-1">
-                  {m.tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="rounded bg-bg-elevated px-1.5 py-0.5 text-[10px] text-text-muted"
-                    >
-                      {tag}
-                    </span>
-                  ))}
+            <Card key={m.id} size="sm" className="ring-0 rounded-lg border border-border-subtle bg-bg-surface">
+              <CardContent className="p-3">
+                <p className="text-xs text-text-secondary line-clamp-4 whitespace-pre-wrap">
+                  {m.content}
+                </p>
+                <div className="mt-2 flex items-center justify-between">
+                  <div className="flex flex-wrap gap-1">
+                    {m.tags.map((tag) => (
+                      <Badge key={tag} variant="secondary" className="h-4 px-1.5 text-[10px] text-text-muted">
+                        {tag}
+                      </Badge>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => deleteMemory(m.id)}
+                    className="text-[10px] text-text-muted hover:text-error"
+                  >
+                    Remove
+                  </button>
                 </div>
-                <button
-                  onClick={() => deleteMemory(m.id)}
-                  className="text-[10px] text-text-muted hover:text-error"
-                >
-                  Remove
-                </button>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}

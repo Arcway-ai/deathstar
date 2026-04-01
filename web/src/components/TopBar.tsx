@@ -10,6 +10,7 @@ import {
 import { useState } from "react";
 import { useStore } from "../store";
 import * as api from "../api";
+import { Separator } from "@/components/ui/separator";
 import ClaudeAuth from "./ClaudeAuth";
 import ModelSelector from "./ModelSelector";
 import PersonaSelector from "./PersonaSelector";
@@ -55,7 +56,7 @@ export default function TopBar() {
 
       <ThemeSelector />
 
-      <div className="mx-1 h-4 w-px bg-border-subtle" />
+      <Separator orientation="vertical" className="mx-1 h-4 bg-border-subtle" />
 
       {/* LLM / chat controls — left side */}
       <ClaudeAuth />

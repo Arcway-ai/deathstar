@@ -1,29 +1,18 @@
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { themes } from "../themes";
 import { useStore } from "../store";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import type { Theme } from "../themes";
 
 export default function ThemeSelector() {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
 
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
         className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-bg-hover"
         title={theme.name}
       >
@@ -32,24 +21,22 @@ export default function ThemeSelector() {
           style={{ background: theme.swatch }}
         />
         <ChevronDown size={10} className="text-text-muted" />
-      </button>
+      </PopoverTrigger>
 
-      {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-border-subtle bg-bg-surface p-1 shadow-xl animate-fade-in">
-          {themes.map((t) => (
-            <ThemeOption
-              key={t.id}
-              theme={t}
-              selected={t.id === theme.id}
-              onSelect={() => {
-                setTheme(t);
-                setOpen(false);
-              }}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+      <PopoverContent align="start" className="w-56 gap-0 p-1 border-border-subtle bg-bg-surface">
+        {themes.map((t) => (
+          <ThemeOption
+            key={t.id}
+            theme={t}
+            selected={t.id === theme.id}
+            onSelect={() => {
+              setTheme(t);
+              setOpen(false);
+            }}
+          />
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 }
 

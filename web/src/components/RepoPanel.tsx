@@ -18,14 +18,11 @@ import {
 import { useStore } from "../store";
 import { buildTree } from "../fileTree";
 import { characterAvatarUrl } from "../avatars";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { TreeNode } from "../fileTree";
 import type { RightPanelView } from "../types";
 import BranchSelector from "./BranchSelector";
-
-const tabs: { id: RightPanelView; icon: typeof FolderTree; label: string }[] = [
-  { id: "files", icon: FolderTree, label: "Files" },
-  { id: "commits", icon: GitCommitHorizontal, label: "Commits" },
-];
 
 export default function RepoPanel() {
   const navigate = useNavigate();
@@ -40,19 +37,6 @@ export default function RepoPanel() {
   const currentRepo = repos.find((r) => r.name === selectedRepo);
   const isDirty = currentRepo?.dirty ?? false;
   const [repoDropdownOpen, setRepoDropdownOpen] = useState(false);
-  const repoDropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close repo dropdown on click outside
-  useEffect(() => {
-    if (!repoDropdownOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (repoDropdownRef.current && !repoDropdownRef.current.contains(e.target as Node)) {
-        setRepoDropdownOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [repoDropdownOpen]);
 
   if (!open || !selectedRepo) return null;
 
@@ -68,40 +52,36 @@ export default function RepoPanel() {
         <div className="border-b border-border-subtle px-3 py-2">
           <div className="flex items-center justify-between mb-1.5">
             {/* Repo dropdown */}
-            <div ref={repoDropdownRef} className="relative">
-              <button
-                onClick={() => setRepoDropdownOpen(!repoDropdownOpen)}
-                className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-medium text-text-primary hover:bg-bg-hover transition-colors"
-              >
+            <Popover open={repoDropdownOpen} onOpenChange={setRepoDropdownOpen}>
+              <PopoverTrigger className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-medium text-text-primary hover:bg-bg-hover transition-colors">
                 <span className="max-w-[160px] truncate font-display font-bold text-sm">
                   {selectedRepo}
                 </span>
                 <ChevronDown size={12} className="text-text-muted" />
-              </button>
-              {repoDropdownOpen && (
-                <div className="absolute left-0 top-full z-50 mt-1 min-w-[200px] rounded-lg border border-border-subtle bg-bg-surface p-1 shadow-xl animate-fade-in">
-                  {repos.map((r) => (
-                    <button
-                      key={r.name}
-                      onClick={() => {
-                        navigate(`/${encodeURIComponent(r.name)}`);
-                        setRepoDropdownOpen(false);
-                      }}
-                      className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors ${
-                        r.name === selectedRepo
-                          ? "bg-accent-muted text-accent"
-                          : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                      }`}
-                    >
-                      <span className="truncate">{r.name}</span>
-                      {r.dirty && (
-                        <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+              </PopoverTrigger>
+
+              <PopoverContent align="start" className="min-w-[200px] gap-0 p-1 border-border-subtle bg-bg-surface">
+                {repos.map((r) => (
+                  <button
+                    key={r.name}
+                    onClick={() => {
+                      navigate(`/${encodeURIComponent(r.name)}`);
+                      setRepoDropdownOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors ${
+                      r.name === selectedRepo
+                        ? "bg-accent-muted text-accent"
+                        : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                    }`}
+                  >
+                    <span className="truncate">{r.name}</span>
+                    {r.dirty && (
+                      <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-warning" />
+                    )}
+                  </button>
+                ))}
+              </PopoverContent>
+            </Popover>
 
             <button
               onClick={toggleRightPanel}
@@ -130,29 +110,36 @@ export default function RepoPanel() {
           </div>
         </div>
 
-        {/* Tab bar */}
-        <div className="flex items-center border-b border-border-subtle">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setRightPanelView(tab.id)}
-              className={`flex flex-1 items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
-                view === tab.id
-                  ? "border-b-2 border-accent text-accent"
-                  : "text-text-muted hover:text-text-secondary"
-              }`}
+        {/* Tab bar + Content */}
+        <Tabs
+          value={view}
+          onValueChange={(v) => setRightPanelView(v as RightPanelView)}
+          className="flex flex-1 flex-col overflow-hidden"
+        >
+          <TabsList variant="line" className="w-full shrink-0 rounded-none border-b border-border-subtle bg-transparent p-0">
+            <TabsTrigger
+              value="files"
+              className="flex-1 gap-1.5 rounded-none py-2.5 text-xs text-text-muted data-active:text-accent data-active:after:bg-accent"
             >
-              <tab.icon size={14} />
-              {tab.label}
-            </button>
-          ))}
-        </div>
+              <FolderTree size={14} />
+              Files
+            </TabsTrigger>
+            <TabsTrigger
+              value="commits"
+              className="flex-1 gap-1.5 rounded-none py-2.5 text-xs text-text-muted data-active:text-accent data-active:after:bg-accent"
+            >
+              <GitCommitHorizontal size={14} />
+              Commits
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-2">
-          {view === "files" && <FileTreePanel />}
-          {view === "commits" && <CommitsPanel />}
-        </div>
+          <TabsContent value="files" className="flex-1 overflow-y-auto p-2">
+            <FileTreePanel />
+          </TabsContent>
+          <TabsContent value="commits" className="flex-1 overflow-y-auto p-2">
+            <CommitsPanel />
+          </TabsContent>
+        </Tabs>
       </aside>
     </>
   );
@@ -177,7 +164,6 @@ function FileTreePanel() {
     }
   }, [selectedRepo, fileTree.length, loadFileTree]);
 
-  // Cmd+P / Ctrl+P to focus search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "p") {
@@ -189,7 +175,6 @@ function FileTreePanel() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Fuzzy-ish search: split query into terms, all must match the path
   const filtered = useMemo(() => {
     if (!query.trim()) return null;
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -245,7 +230,6 @@ function FileTreePanel() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") { setQuery(""); searchRef.current?.blur(); }
-            // Enter opens first result
             if (e.key === "Enter" && filtered && filtered.length > 0 && filtered[0]) {
               openFile(selectedRepo, filtered[0]);
               setQuery("");

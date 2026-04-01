@@ -12,7 +12,7 @@ import RepoSelector from "./components/RepoSelector";
 import FileViewer from "./components/FileViewer";
 import TerminalPanel from "./components/Terminal";
 import Superlaser from "./components/Superlaser";
-import { ToastContainer } from "./components/Toast";
+import { Toaster } from "./components/ui/sonner";
 
 export default function App() {
   const { repo: urlRepo, conversationId: urlConversationId } = useParams();
@@ -138,7 +138,7 @@ export default function App() {
         {isAuthed && <RepoPanel />}
       </div>
       <Superlaser />
-      <ToastContainer />
+      <Toaster />
     </div>
   );
 }

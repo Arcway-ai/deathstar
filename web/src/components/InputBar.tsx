@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Send, AlertCircle, GitBranch } from "lucide-react";
 import { useStore } from "../store";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -135,10 +136,10 @@ export default function InputBar() {
       </Dialog>
 
       {sendError && (
-        <div className="mb-2 flex items-center gap-1.5 rounded-md bg-error/10 px-3 py-1.5 text-xs text-error">
-          <AlertCircle size={12} />
-          {sendError}
-        </div>
+        <Alert variant="destructive" className="mb-2 border-error/30 bg-error/10 py-1.5 text-xs text-error [&>svg]:text-error">
+          <AlertCircle className="size-3" />
+          <AlertDescription className="text-xs text-error">{sendError}</AlertDescription>
+        </Alert>
       )}
 
       {/* Input + agent controls */}

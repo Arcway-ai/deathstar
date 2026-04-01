@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { GitBranch, Plus, Check, Loader2, Trash2, RefreshCw, GitPullRequest, ExternalLink } from "lucide-react";
 import { useStore } from "../store";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Badge } from "@/components/ui/badge";
 
 export default function BranchSelector() {
   const repoContext = useStore((s) => s.repoContext);
@@ -15,7 +17,6 @@ export default function BranchSelector() {
   const syncBranch = useStore((s) => s.syncBranch);
   const pullRequests = useStore((s) => s.pullRequests);
 
-  // Map branch names to their open PRs
   const branchPRMap = useMemo(() => {
     const map = new Map<string, { number: number; url: string; draft: boolean }>();
     for (const pr of pullRequests) {
@@ -34,44 +35,19 @@ export default function BranchSelector() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const inlineInputRef = useRef<HTMLInputElement>(null);
 
   const currentRepo = repos.find((r) => r.name === selectedRepo);
   const currentBranch = repoContext?.branch ?? currentRepo?.branch ?? "unknown";
 
-  // Close on outside click
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setCreating(false);
-        setInlineCreate(false);
-        setError(null);
-      }
-    }
-    if (open || inlineCreate) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open, inlineCreate]);
-
-  // Focus input when creating
   useEffect(() => {
     if (creating) inputRef.current?.focus();
   }, [creating]);
 
-  // Focus inline input
   useEffect(() => {
     if (inlineCreate) inlineInputRef.current?.focus();
   }, [inlineCreate]);
-
-  const handleOpen = () => {
-    setOpen(!open);
-    setCreating(false);
-    setInlineCreate(false);
-    setError(null);
-    if (!open) loadBranches();
-  };
 
   const handleSwitch = async (branch: string) => {
     if (branch === currentBranch) return;
@@ -135,93 +111,28 @@ export default function BranchSelector() {
   };
 
   const isDefault = (b: string) => b === "main" || b === "master";
-
   const onDefaultBranch = isDefault(currentBranch);
 
   if (!currentRepo) return null;
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      <div className="flex items-center gap-1">
-        <button
-          onClick={handleOpen}
-          className="flex items-center gap-1.5 rounded-md bg-bg-surface px-2 py-1 text-xs hover:bg-bg-hover transition-colors"
-          title="Switch branch"
-        >
+    <div className="flex items-center gap-1">
+      {/* Main branch dropdown */}
+      <Popover
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (v) { setInlineCreate(false); setCreating(false); setError(null); loadBranches(); }
+        }}
+      >
+        <PopoverTrigger className="flex items-center gap-1.5 rounded-md bg-bg-surface px-2 py-1 text-xs hover:bg-bg-hover transition-colors">
           <GitBranch size={12} className="text-text-muted" />
           <span className="font-mono text-text-secondary max-w-[100px] truncate">
             {currentBranch}
           </span>
-          {branchPRMap.has(currentBranch) && (
-            <a
-              href={branchPRMap.get(currentBranch)!.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="flex items-center gap-0.5 rounded bg-accent/15 px-1 py-0.5 text-[10px] text-accent hover:bg-accent/25 transition-colors"
-              title={`PR #${branchPRMap.get(currentBranch)!.number}${branchPRMap.get(currentBranch)!.draft ? " (draft)" : ""}`}
-            >
-              <GitPullRequest size={9} />
-              #{branchPRMap.get(currentBranch)!.number}
-            </a>
-          )}
-        </button>
-        <button
-          onClick={() => { setInlineCreate(!inlineCreate); setError(null); setNewBranchName(""); }}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:text-accent hover:bg-bg-hover transition-colors"
-          title="New branch"
-        >
-          <Plus size={12} />
-        </button>
-        {onDefaultBranch && (
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-text-muted hover:text-accent hover:bg-bg-hover transition-colors disabled:opacity-50"
-            title="Pull latest from origin"
-          >
-            <RefreshCw size={10} className={syncing ? "animate-spin" : ""} />
-          </button>
-        )}
-      </div>
+        </PopoverTrigger>
 
-      {/* Inline new-branch input (no dropdown needed) */}
-      {inlineCreate && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-border-subtle bg-bg-surface p-2 shadow-xl animate-fade-in">
-          <div className="flex gap-1.5">
-            <input
-              ref={inlineInputRef}
-              type="text"
-              value={newBranchName}
-              onChange={(e) => setNewBranchName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreate();
-                if (e.key === "Escape") { setInlineCreate(false); setNewBranchName(""); }
-              }}
-              placeholder="new-branch-name"
-              className="flex-1 rounded-md border border-border-subtle bg-bg-primary px-2 py-1 text-xs font-mono text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
-            />
-            <button
-              onClick={handleCreate}
-              disabled={!newBranchName.trim() || switching !== null}
-              className="rounded-md bg-accent px-2 py-1 text-xs font-medium text-white hover:bg-accent/90 disabled:opacity-40 transition-colors"
-            >
-              {switching === newBranchName.trim() ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                "Create"
-              )}
-            </button>
-          </div>
-          <p className="mt-1 text-[10px] text-text-muted">
-            Branch from <span className="font-mono">{currentBranch}</span>
-          </p>
-          {error && <p className="mt-1 text-[10px] text-red-400">{error}</p>}
-        </div>
-      )}
-
-      {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-border-subtle bg-bg-surface shadow-xl">
+        <PopoverContent align="start" className="w-64 gap-0 p-0 border-border-subtle bg-bg-surface">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2">
             <span className="text-xs font-medium text-text-secondary">Branches</span>
@@ -329,9 +240,9 @@ export default function BranchSelector() {
                       </a>
                     )}
                     {isDefault(branch) && (
-                      <span className={`${branchPRMap.has(branch) ? "" : "ml-auto "}shrink-0 rounded bg-bg-hover px-1 py-0.5 text-[10px] text-text-muted`}>
+                      <Badge variant="secondary" className={`${branchPRMap.has(branch) ? "" : "ml-auto "}h-4 shrink-0 px-1 text-[10px] text-text-muted`}>
                         default
-                      </span>
+                      </Badge>
                     )}
                   </button>
                   {!isDefault(branch) && branch !== currentBranch && (
@@ -352,7 +263,80 @@ export default function BranchSelector() {
               ))
             )}
           </div>
-        </div>
+        </PopoverContent>
+      </Popover>
+
+      {/* PR badge for current branch */}
+      {branchPRMap.has(currentBranch) && (
+        <a
+          href={branchPRMap.get(currentBranch)!.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-0.5 rounded bg-accent/15 px-1 py-0.5 text-[10px] text-accent hover:bg-accent/25 transition-colors"
+          title={`PR #${branchPRMap.get(currentBranch)!.number}${branchPRMap.get(currentBranch)!.draft ? " (draft)" : ""}`}
+        >
+          <GitPullRequest size={9} />
+          #{branchPRMap.get(currentBranch)!.number}
+        </a>
+      )}
+
+      {/* Inline create branch */}
+      <Popover
+        open={inlineCreate}
+        onOpenChange={(v) => {
+          setInlineCreate(v);
+          if (v) { setOpen(false); setError(null); setNewBranchName(""); }
+        }}
+      >
+        <PopoverTrigger
+          className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:text-accent hover:bg-bg-hover transition-colors"
+          title="New branch"
+        >
+          <Plus size={12} />
+        </PopoverTrigger>
+
+        <PopoverContent align="start" className="w-64 gap-0 p-2 border-border-subtle bg-bg-surface">
+          <div className="flex gap-1.5">
+            <input
+              ref={inlineInputRef}
+              type="text"
+              value={newBranchName}
+              onChange={(e) => setNewBranchName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreate();
+                if (e.key === "Escape") setInlineCreate(false);
+              }}
+              placeholder="new-branch-name"
+              className="flex-1 rounded-md border border-border-subtle bg-bg-primary px-2 py-1 text-xs font-mono text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
+            />
+            <button
+              onClick={handleCreate}
+              disabled={!newBranchName.trim() || switching !== null}
+              className="rounded-md bg-accent px-2 py-1 text-xs font-medium text-white hover:bg-accent/90 disabled:opacity-40 transition-colors"
+            >
+              {switching === newBranchName.trim() ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                "Create"
+              )}
+            </button>
+          </div>
+          <p className="mt-1 text-[10px] text-text-muted">
+            Branch from <span className="font-mono">{currentBranch}</span>
+          </p>
+          {error && <p className="mt-1 text-[10px] text-red-400">{error}</p>}
+        </PopoverContent>
+      </Popover>
+
+      {onDefaultBranch && (
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-text-muted hover:text-accent hover:bg-bg-hover transition-colors disabled:opacity-50"
+          title="Pull latest from origin"
+        >
+          <RefreshCw size={10} className={syncing ? "animate-spin" : ""} />
+        </button>
       )}
     </div>
   );
