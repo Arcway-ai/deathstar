@@ -578,7 +578,8 @@ code {
   --color-border: var(--border);
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
+  /* --color-accent intentionally omitted — defined in our @theme block
+     and overridden at runtime by applyTheme() for character themes */
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -599,11 +600,6 @@ code {
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
 
-  /* Override shadcn's accent with our Imperial theme accent */
-  --color-accent: #4a9eff;
-  --color-accent-hover: #6cb4ff;
-  --color-accent-muted: #4a9eff40;
-  --color-accent-foreground: var(--accent-foreground);
 }
 
 /* Shadcn base variables — mapped to DeathStar Imperial theme */
