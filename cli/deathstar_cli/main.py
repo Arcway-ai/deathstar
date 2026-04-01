@@ -1001,17 +1001,26 @@ def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
     try:
         push_image_via_tailscale(tailscale_hostname, ssh_user, image_tag)
         # Also push the updated docker-compose.yml and start-runtime.sh
-        compose_file = str(config.project_root / "docker" / "docker-compose.yml")
-        start_script = str(config.project_root / "bootstrap" / "files" / "start-runtime.sh")
+        # Use ssh + sudo tee since the target dirs are root-owned
+        ssh_opts = ["-o", "StrictHostKeyChecking=accept-new"]
+        compose_file = config.project_root / "docker" / "docker-compose.yml"
+        start_script = config.project_root / "bootstrap" / "files" / "start-runtime.sh"
         for local, remote in [
             (compose_file, "/opt/deathstar/repo/docker/docker-compose.yml"),
             (start_script, "/opt/deathstar/start-runtime.sh"),
         ]:
             subprocess.run(
-                ["scp", "-o", "StrictHostKeyChecking=accept-new", local, f"{ssh_target}:{remote}"],
+                ["ssh", *ssh_opts, ssh_target, f"sudo tee {remote} > /dev/null"],
+                input=local.read_bytes(),
                 check=True,
                 capture_output=True,
             )
+        # Ensure start-runtime.sh is executable
+        subprocess.run(
+            ["ssh", *ssh_opts, ssh_target, "sudo chmod +x /opt/deathstar/start-runtime.sh"],
+            check=True,
+            capture_output=True,
+        )
         typer.echo("        Image and config pushed.")
     except (RuntimeError, subprocess.CalledProcessError) as exc:
         typer.echo(f"        Push failed: {exc}", err=True)
