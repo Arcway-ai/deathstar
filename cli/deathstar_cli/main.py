@@ -42,7 +42,7 @@ from deathstar_shared.models import (
     WorkflowKind,
     WorkflowRequest,
 )
-from deathstar_shared.version import full_version
+from deathstar_shared.version import VERSION, full_version
 
 app = typer.Typer(no_args_is_help=True, help="DeathStar local operator CLI.")
 secrets_app = typer.Typer(help="Manage remote-only secrets in AWS SSM Parameter Store.")
@@ -55,6 +55,70 @@ app.add_typer(tailscale_app, name="tailscale")
 app.add_typer(repos_app, name="repos")
 
 _SAFE_REPO_RE = re.compile(r"^[a-zA-Z0-9._:/@-]+$")
+
+
+def _parse_version(v: str) -> tuple[int, ...]:
+    """Parse a version string like '0.8.3' into a comparable tuple."""
+    return tuple(int(x) for x in re.split(r"[^0-9]+", v.strip()) if x)
+
+
+def _check_for_update() -> None:
+    """Check PyPI for a newer version, warn if outdated. Caches for 24h."""
+    import json
+    from pathlib import Path
+
+    cache_dir = Path.home() / ".cache" / "deathstar"
+    cache_file = cache_dir / "version-check.json"
+    ttl = 86400  # 24 hours
+
+    # Check cache first
+    try:
+        if cache_file.exists():
+            data = json.loads(cache_file.read_text())
+            if time.time() - data.get("checked_at", 0) < ttl:
+                latest = data.get("latest", "")
+                if latest and _parse_version(latest) > _parse_version(VERSION):
+                    typer.echo(
+                        f"\n  Update available: {VERSION} → {latest}"
+                        f"\n  Run: uv tool upgrade deathstar-ai\n",
+                        err=True,
+                    )
+                return
+    except Exception:
+        pass  # Corrupted cache, re-check
+
+    # Query PyPI (short timeout, best-effort)
+    try:
+        resp = httpx.get(
+            "https://pypi.org/pypi/deathstar-ai/json",
+            timeout=3.0,
+        )
+        resp.raise_for_status()
+        latest = resp.json()["info"]["version"]
+    except Exception:
+        return  # Network error, skip silently
+
+    # Cache the result
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps({"latest": latest, "checked_at": time.time()}))
+    except Exception:
+        pass
+
+    if _parse_version(latest) > _parse_version(VERSION):
+        typer.echo(
+            f"\n  Update available: {VERSION} → {latest}"
+            f"\n  Run: uv tool upgrade deathstar-ai\n",
+            err=True,
+        )
+
+
+@app.callback(invoke_without_command=True)
+def _main(ctx: typer.Context) -> None:
+    """DeathStar local operator CLI."""
+    if ctx.invoked_subcommand is None:
+        raise typer.Exit()
+    _check_for_update()
 
 
 def _config() -> CLIConfig:
