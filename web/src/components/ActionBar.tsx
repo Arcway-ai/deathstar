@@ -1,6 +1,5 @@
-import { GitPullRequest, ScanSearch, X } from "lucide-react";
+import { Archive, GitPullRequest, ScanSearch, X } from "lucide-react";
 import { useStore } from "../store";
-import { SuperlaserButton } from "./Superlaser";
 
 /**
  * Contextual action bar above the input.
@@ -16,6 +15,8 @@ export default function ActionBar() {
   const serverQueue = useStore((s) => s.serverQueue);
   const clearQueue = useStore((s) => s.clearQueue);
   const agentStream = useStore((s) => s.agentStream);
+  const fireSuperlaser = useStore((s) => s.fireSuperlaser);
+  const conversationId = useStore((s) => s.conversationId);
 
   const currentBranch = repoContext?.branch;
   const isOnFeatureBranch = currentBranch && currentBranch !== "main" && currentBranch !== "master";
@@ -24,7 +25,7 @@ export default function ActionBar() {
 
   const showMakePR = workflow === "patch" && isOnFeatureBranch && !sending;
   const showStartReview = workflow === "review" && selectedPR !== null && !sending;
-  const showCompact = !sending && !compacting;
+  const showCompact = !sending && !compacting && !!conversationId;
   const showQueue = serverQueue.length > 0;
 
   // Nothing to show
@@ -34,7 +35,16 @@ export default function ActionBar() {
     <div className="flex items-center gap-1.5 mb-1.5 px-0.5">
       {/* Left: contextual actions */}
       <div className="flex items-center gap-1.5">
-        {showCompact && <SuperlaserButton />}
+        {showCompact && (
+          <button
+            onClick={fireSuperlaser}
+            className="flex h-7 items-center gap-1.5 rounded-md border border-border-subtle px-2.5 text-[11px] font-medium text-text-secondary transition-colors hover:border-accent/30 hover:text-accent hover:bg-accent/10"
+            title="Compact conversation context"
+          >
+            <Archive size={12} />
+            Compact
+          </button>
+        )}
 
         {showMakePR && (
           <button
