@@ -997,10 +997,23 @@ def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
     ).strip()
     ssh_user = str(outputs.get("ssh_user", "ubuntu"))
 
+    ssh_target = f"{ssh_user}@{tailscale_hostname}"
     try:
         push_image_via_tailscale(tailscale_hostname, ssh_user, image_tag)
-        typer.echo("        Image pushed.")
-    except RuntimeError as exc:
+        # Also push the updated docker-compose.yml and start-runtime.sh
+        compose_file = str(config.project_root / "docker" / "docker-compose.yml")
+        start_script = str(config.project_root / "bootstrap" / "files" / "start-runtime.sh")
+        for local, remote in [
+            (compose_file, "/opt/deathstar/repo/docker/docker-compose.yml"),
+            (start_script, "/opt/deathstar/start-runtime.sh"),
+        ]:
+            subprocess.run(
+                ["scp", "-o", "StrictHostKeyChecking=accept-new", local, f"{ssh_target}:{remote}"],
+                check=True,
+                capture_output=True,
+            )
+        typer.echo("        Image and config pushed.")
+    except (RuntimeError, subprocess.CalledProcessError) as exc:
         typer.echo(f"        Push failed: {exc}", err=True)
         typer.echo("        Tip: ensure Tailscale SSH ACL allows your user to SSH as ubuntu.", err=True)
         raise typer.Exit(code=1) from exc
