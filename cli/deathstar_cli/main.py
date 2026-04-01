@@ -995,7 +995,7 @@ def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
         typer.echo("        Image pushed.")
     except RuntimeError as exc:
         typer.echo(f"        Push failed: {exc}", err=True)
-        typer.echo("        Tip: ensure Tailscale SSH is working (`deathstar connect`).", err=True)
+        typer.echo("        Tip: ensure Tailscale SSH ACL allows your user to SSH as ubuntu.", err=True)
         raise typer.Exit(code=1) from exc
 
     # Step 3: Restart container on instance
