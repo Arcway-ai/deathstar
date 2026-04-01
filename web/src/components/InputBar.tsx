@@ -1,11 +1,19 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, AlertCircle, Square, ScanSearch, Zap, GitPullRequest } from "lucide-react";
+import { Send, AlertCircle, Square, ScanSearch, Zap, GitPullRequest, GitBranch } from "lucide-react";
 import { useStore } from "../store";
 import { SuperlaserButton } from "./Superlaser";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 export default function InputBar() {
   const [text, setText] = useState("");
+  const [branchModal, setBranchModal] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
+  const [creatingBranch, setCreatingBranch] = useState(false);
+  const [branchError, setBranchError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const branchInputRef = useRef<HTMLInputElement>(null);
   const sending = useStore((s) => s.sending);
   const compacting = useStore((s) => s.compacting);
   const sendError = useStore((s) => s.sendError);
@@ -17,6 +25,7 @@ export default function InputBar() {
   const repoContext = useStore((s) => s.repoContext);
   const workflow = useStore((s) => s.workflow);
   const selectedPR = useStore((s) => s.selectedPR);
+  const createAndSwitchBranch = useStore((s) => s.createAndSwitchBranch);
 
   const serverQueue = useStore((s) => s.serverQueue);
   const clearQueue = useStore((s) => s.clearQueue);
@@ -43,19 +52,45 @@ export default function InputBar() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [text]);
 
+  // Focus branch name input when modal opens
+  useEffect(() => {
+    if (branchModal) branchInputRef.current?.focus();
+  }, [branchModal]);
+
+  const handleCreateBranchAndSend = async () => {
+    const name = newBranchName.trim();
+    if (!name) return;
+    setCreatingBranch(true);
+    setBranchError(null);
+    try {
+      await createAndSwitchBranch(name);
+      setBranchModal(false);
+      // Now send the original message on the new branch
+      const trimmed = text.trim();
+      if (trimmed) {
+        sendMessage(trimmed);
+        setText("");
+      }
+    } catch (e) {
+      setBranchError(e instanceof Error ? e.message : "Failed to create branch");
+    } finally {
+      setCreatingBranch(false);
+    }
+  };
+
   const handleSubmit = () => {
     const trimmed = text.trim();
 
     // For review mode, allow empty prompt (auto-generated from PR)
     if (!trimmed && !isReviewReady) return;
 
-    // Branch guard: warn if on main with code workflow
+    // Branch guard: block code changes on main/master
     if (repoContext?.branch === "main" || repoContext?.branch === "master") {
-      if (workflow === "patch") {
-        const confirmed = window.confirm(
-          `You're on the ${repoContext.branch} branch. Switch to a feature branch before making code changes. Continue anyway?`,
-        );
-        if (!confirmed) return;
+      if (workflow === "patch" || workflow === "pr") {
+        setBranchModal(true);
+        setNewBranchName("");
+        setBranchError(null);
+        return;
       }
     }
 
@@ -85,6 +120,43 @@ export default function InputBar() {
 
   return (
     <div>
+      {/* Branch guard modal */}
+      <Dialog open={branchModal} onOpenChange={setBranchModal}>
+        <DialogContent className="border-border-subtle bg-bg-surface sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-text-primary">
+              <GitBranch size={18} className="text-warning" />
+              Create a feature branch
+            </DialogTitle>
+            <DialogDescription className="text-text-secondary">
+              You&apos;re on <span className="font-mono font-semibold text-warning">{repoContext?.branch}</span>.
+              Code changes should be made on a feature branch to keep the default branch clean and enable pull request workflows.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2 mt-2">
+            <Input
+              ref={branchInputRef}
+              value={newBranchName}
+              onChange={(e) => setNewBranchName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateBranchAndSend();
+              }}
+              placeholder="feature/my-change"
+              className="flex-1 font-mono border-border-subtle bg-bg-primary text-text-primary placeholder:text-text-muted"
+            />
+            <Button
+              onClick={handleCreateBranchAndSend}
+              disabled={!newBranchName.trim() || creatingBranch}
+            >
+              {creatingBranch ? "Creating..." : "Create & send"}
+            </Button>
+          </div>
+          {branchError && (
+            <p className="text-xs text-error">{branchError}</p>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {sendError && (
         <div className="mb-2 flex items-center gap-1.5 rounded-md bg-error/10 px-3 py-1.5 text-xs text-error">
           <AlertCircle size={12} />
