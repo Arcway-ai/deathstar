@@ -1,4 +1,4 @@
-import { Archive, GitPullRequest, ScanSearch, Square, X, Zap } from "lucide-react";
+import { Archive, GitPullRequest, RefreshCw, ScanSearch, Square, X, Zap } from "lucide-react";
 import { useStore } from "../store";
 
 /**
@@ -19,11 +19,17 @@ export default function ActionBar() {
   const conversationId = useStore((s) => s.conversationId);
   const pokeAgent = useStore((s) => s.pokeAgent);
   const interruptAgent = useStore((s) => s.interruptAgent);
+  const pullRequests = useStore((s) => s.pullRequests);
 
   const currentBranch = repoContext?.branch;
   const isOnFeatureBranch = currentBranch && currentBranch !== "main" && currentBranch !== "master";
   const isAgentActive = sending && !agentStream.pendingPermission;
   const isBusy = isAgentActive || compacting;
+
+  // Check if current branch already has an open PR
+  const branchPR = currentBranch
+    ? pullRequests.find((pr) => pr.state === "open" && pr.head_branch === currentBranch)
+    : null;
 
   const canCompact = !!conversationId && !sending && !compacting;
   const canMakePR = !!(workflow === "patch" && isOnFeatureBranch && conversationId && !sending);
@@ -50,17 +56,23 @@ export default function ActionBar() {
         <button
           onClick={() => {
             if (canMakePR) {
-              sendMessage(
-                "Open a pull request for the changes on this branch. Write a good PR title and description based on the commits and changes.",
-              );
+              if (branchPR) {
+                sendMessage(
+                  `Update the PR description and title for PR #${branchPR.number} based on the latest commits and changes on this branch.`,
+                );
+              } else {
+                sendMessage(
+                  "Open a pull request for the changes on this branch. Write a good PR title and description based on the commits and changes.",
+                );
+              }
             }
           }}
           disabled={!canMakePR}
           className={`${btnBase} border border-accent/30 text-accent hover:bg-accent/10`}
-          title={!isOnFeatureBranch ? "Switch to a feature branch first" : !conversationId ? "Start a conversation first" : "Create a pull request"}
+          title={!isOnFeatureBranch ? "Switch to a feature branch first" : !conversationId ? "Start a conversation first" : branchPR ? `Update PR #${branchPR.number}` : "Create a pull request"}
         >
-          <GitPullRequest size={12} />
-          Make PR
+          {branchPR ? <RefreshCw size={12} /> : <GitPullRequest size={12} />}
+          {branchPR ? `Update PR #${branchPR.number}` : "Make PR"}
         </button>
 
         {workflow === "review" && (
