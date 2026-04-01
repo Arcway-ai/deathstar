@@ -1219,23 +1219,39 @@ def upgrade(
 
     ssm = boto3.Session(**session_kwargs).client("ssm")
 
-    # Build the S3 sync + restart command inline so we don't depend on
-    # the instance's sync-runtime.sh (which may be stale from cloud-init).
+    # Overwrite the sync-runtime.sh on the instance so the service's
+    # ExecStartPre picks up the correct S3 revision. The cloud-init
+    # version uses alphabetical ordering which can pick stale revisions.
     bucket = str(outputs.get("artifact_bucket_name", ""))
-    sync_and_restart = (
-        f'LATEST=$(aws s3api list-objects-v2 --bucket "{bucket}" --prefix "runtime/"'
-        f' --query \'sort_by(Contents, &LastModified)[-1].Key\''
-        f' --output text --region {effective_region}'
-        " | sed 's|^runtime/||' | cut -d'/' -f1) && "
-        f'echo "Syncing revision: $LATEST" && '
-        f'aws s3 sync "s3://{bucket}/runtime/$LATEST/" /opt/deathstar/repo'
-        f' --delete --region {effective_region} && '
-        "systemctl restart deathstar-runtime.service"
+    fix_sync_script = (
+        f"cat > /opt/deathstar/sync-runtime.sh << 'SYNCEOF'\n"
+        f"#!/bin/bash\n"
+        f"set -euo pipefail\n"
+        f'BUCKET="{bucket}"\n'
+        f'REGION="{effective_region}"\n'
+        f"LATEST_REV=$(aws s3api list-objects-v2 "
+        f'--bucket "$BUCKET" --prefix "runtime/" '
+        f"--query 'sort_by(Contents, &LastModified)[-1].Key' "
+        f'--output text --region "$REGION" '
+        f"| sed 's|^runtime/||' | cut -d'/' -f1)\n"
+        f'if [ -z "$LATEST_REV" ] || [ "$LATEST_REV" = "None" ]; then\n'
+        f'  echo "ERROR: no runtime revision found in s3://$BUCKET/runtime/" >&2\n'
+        f"  exit 1\n"
+        f"fi\n"
+        f'echo "Syncing runtime revision: $LATEST_REV"\n'
+        f"mkdir -p /opt/deathstar/repo\n"
+        f'aws s3 sync "s3://$BUCKET/runtime/$LATEST_REV/" /opt/deathstar/repo '
+        f'--delete --region "$REGION"\n'
+        f"SYNCEOF\n"
+        f"chmod +x /opt/deathstar/sync-runtime.sh"
     )
     response = ssm.send_command(
         InstanceIds=[instance_id],
         DocumentName="AWS-RunShellScript",
-        Parameters={"commands": [sync_and_restart]},
+        Parameters={"commands": [
+            fix_sync_script,
+            "systemctl restart deathstar-runtime.service",
+        ]},
         TimeoutSeconds=600,
     )
     command_id = response["Command"]["CommandId"]
