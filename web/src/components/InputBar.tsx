@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, AlertCircle, Square, Zap, GitBranch } from "lucide-react";
+import { Send, AlertCircle, GitBranch } from "lucide-react";
 import { useStore } from "../store";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -18,8 +18,6 @@ export default function InputBar() {
   const sendError = useStore((s) => s.sendError);
   const sendMessage = useStore((s) => s.sendMessage);
   const sendAgentInput = useStore((s) => s.sendAgentInput);
-  const interruptAgent = useStore((s) => s.interruptAgent);
-  const pokeAgent = useStore((s) => s.pokeAgent);
   const agentStream = useStore((s) => s.agentStream);
   const repoContext = useStore((s) => s.repoContext);
   const workflow = useStore((s) => s.workflow);
@@ -27,7 +25,6 @@ export default function InputBar() {
 
   const hasPendingPermission = agentStream.pendingPermission !== null;
   const isAgentWaitingForInput = sending && !agentStream.isStreaming && !hasPendingPermission;
-  const isAgentActive = sending && !hasPendingPermission;
   const isBusy = (sending && !isAgentWaitingForInput) || compacting;
 
   // Auto-resize textarea
@@ -155,37 +152,17 @@ export default function InputBar() {
           rows={1}
           className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-text-primary placeholder:text-text-muted outline-none"
         />
-        {isAgentActive ? (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={pokeAgent}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-warning/40 text-warning transition-colors hover:bg-warning/10"
-              title="Poke — nudge the agent to continue"
-            >
-              <Zap size={14} />
-            </button>
-            <button
-              onClick={interruptAgent}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-error/80 text-white transition-opacity hover:bg-error"
-              title="Stop agent"
-            >
-              <Square size={12} fill="currentColor" />
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={handleSubmit}
-            disabled={!text.trim()}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-bg-deep transition-opacity disabled:opacity-30 hover:bg-accent-hover"
-          >
-            <Send size={14} />
-          </button>
-        )}
+        <button
+          onClick={handleSubmit}
+          disabled={!text.trim()}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-bg-deep transition-opacity disabled:opacity-30 hover:bg-accent-hover"
+        >
+          <Send size={14} />
+        </button>
       </div>
 
       <p className="mt-1 hidden text-center text-[10px] text-text-muted sm:block">
         Shift+Enter for new line · Enter to {isBusy ? "queue" : "send"}
-        {isAgentActive && " · Esc to stop"}
       </p>
     </div>
   );
