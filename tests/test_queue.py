@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from deathstar_server.web.database import Database
 from deathstar_server.web.queue_store import QueueStore
 
@@ -70,7 +68,7 @@ class TestListPending:
 
     def test_excludes_completed(self, tmp_path):
         store = _make_queue_store(tmp_path)
-        item = store.enqueue(conversation_id="c1", repo="r1", message="a")
+        store.enqueue(conversation_id="c1", repo="r1", message="a")
         claimed = store.claim_next()
         assert claimed is not None
         store.mark_completed(str(claimed["id"]), "msg-1")
