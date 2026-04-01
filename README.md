@@ -520,10 +520,6 @@ Contributions are welcome! Here's how to get involved:
 
 All PRs require review and approval before merging. CI must pass (lint, test, typecheck, frontend build).
 
-## Docs
+## License
 
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/security.md`](docs/security.md)
-- [`docs/operations.md`](docs/operations.md)
-- [`docs/cli.md`](docs/cli.md)
-- [`docs/agent-system.md`](docs/agent-system.md)
+[AGPL-3.0](LICENSE)

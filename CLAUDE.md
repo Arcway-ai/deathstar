@@ -57,6 +57,10 @@ deathstar upgrade
 - `workspace_subpath` is always validated against path traversal on both CLI and server side.
 - Secrets are never logged or echoed. Use `getpass` for interactive input, SSM SecureString for storage.
 - Non-Python static files (HTML, CSS, JS) must be listed in `[tool.setuptools.package-data]` in `pyproject.toml` or they won't be included in the Docker image.
+- Frontend uses shadcn/ui (base-ui/react primitives) for all UI components. Add new components via `npx shadcn@latest add <name>`. Components live in `web/src/components/ui/`.
+- Frontend themes use CSS custom properties applied at runtime via `applyTheme()` in `themes.ts`. shadcn CSS variables (e.g. `--popover`, `--primary`) are synced from the active theme.
+- Use top-level imports only — never inline/dynamic imports.
+- Zustand store (`web/src/store.ts`) is the single source of truth for all frontend state. Use `useStore` selector hooks in components.
 
 ## Bootstrap & Terraform Template Conventions
 
@@ -68,13 +72,18 @@ deathstar upgrade
 
 - **Tailscale-first**: All remote operations default to Tailscale. SSM is break-glass only.
 - **Claude Agent SDK**: Web UI chat is powered by the Claude Agent SDK (`claude-agent-sdk`). Each workflow mode maps to different tool permissions and `ClaudeAgentOptions`. The SDK manages tool-calling, file access, and session continuity. Config lives in `server/deathstar_server/services/agent.py`.
+- **Agent worktrees**: Each agent session runs in an isolated git worktree (`server/deathstar_server/services/worktree.py`). This allows users to switch branches and make changes in the primary checkout without affecting a running agent. Worktrees are cleaned up after the session ends.
+- **Kamal-style deploy**: `redeploy` and `upgrade` build the Docker image locally, push it to the instance via `docker save | gzip | ssh docker load`, then restart with blue/green canary health check. No remote Docker builds or S3 file sync.
 - **Provider-agnostic (CLI)**: CLI workflows still use the multi-provider layer (OpenAI, Anthropic, Google, Vertex AI). One request/response contract across providers.
 - **API auth**: Optional bearer token via `DEATHSTAR_API_TOKEN`. Health endpoint is always public.
 - **No public SSH**: Security group has zero inbound rules by default.
 - **Single instance**: v1 is intentionally single EC2, single AZ. No HA.
 - **Web UI**: Always-on React + Vite frontend. Multi-stage Docker build (Node.js builds frontend, Python builds backend). Static files and `/` bypass auth; `/web/api/*` requires bearer token. WebSocket terminal at `/web/api/terminal`.
-- **Personas**: Frontend-defined system prompts (Frontend, Full-stack, Security, DevOps, Data, Architect) sent with each chat request to shape LLM behavior.
-- **SQLite persistence**: All conversations, memories, feedback, and usage logs stored in a single SQLite database (`/workspace/deathstar/deathstar.db`) with WAL mode. Backed up with the rest of `/workspace`.
+- **shadcn/ui**: All UI primitives use shadcn/ui (base-ui/react). Installed components: Dialog, Button, Input, Popover, Tabs, Badge, Sonner, Accordion, ScrollArea, Separator, Alert, Card, Sheet. New frontend work should use shadcn primitives via `npx shadcn@latest add <component>`.
+- **Personas**: Frontend-defined system prompts (Frontend, Full-stack, Security, DevOps, Data, Architect, Writer, Researcher) sent with each chat request to shape LLM behavior.
+- **SQLite persistence**: All conversations, memories, feedback, message queue, and usage logs stored in a single SQLite database (`/workspace/deathstar/deathstar.db`) with WAL mode. Backed up with the rest of `/workspace`.
+- **Server-side message queue**: Users can queue messages while the agent is busy. A background asyncio worker (`services/queue_worker.py`) processes queued items using the Claude Agent SDK in headless mode. Persisted in SQLite (`web/queue_store.py`).
+- **Event bus**: Real-time pub/sub for repo events (`services/event_bus.py`). GitHub webhooks and a poller feed push, PR update, and CI status events. Local git operations emit checkout, commit, and dirty-state events. Events are forwarded to connected WebSocket clients for live UI updates.
 - **Memory Bank**: Thumbs-up responses are saved as persistent context per repo. Injected into future prompts within a token budget (~4K chars).
 - **Feedback**: Thumbs-up and thumbs-down tracked per message for analytics. Thumbs-up also saves to memory bank.
 - **Repo Context**: CLAUDE.md, branch, recent commits, and file tree are automatically fetched and injected into LLM system prompts when a repo is selected.
@@ -105,8 +114,8 @@ Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "share
 - `deathstar github setup` — GitHub auth (gh CLI, PAT, or OAuth Device Flow) for automated PR access.
 - `deathstar tailscale setup` — Create a Tailscale auth key via the API and store in SSM.
 - `deathstar repos list / clone` — List or clone GitHub repos on the remote instance (proxies to `gh` CLI via SSH/SSM).
-- `deathstar redeploy` — Push code changes to S3 and rebuild Docker without replacing the EC2 instance.
-- `deathstar upgrade` — Pull latest code, reinstall CLI package, backup, and redeploy in one command.
+- `deathstar redeploy` — Build Docker image locally and push to instance via Tailscale SSH. No instance replacement.
+- `deathstar upgrade` — Pull latest code, reinstall CLI package, backup, build and push image in one command.
 
 ## Files You Should Know
 
@@ -126,6 +135,13 @@ Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "share
 - `server/deathstar_server/web/memory_bank.py` — SQLite-backed memory bank (thumbs-up responses per repo).
 - `server/deathstar_server/web/feedback.py` — SQLite-backed feedback store (thumbs up/down per message).
 - `server/deathstar_server/web/terminal.py` — WebSocket PTY terminal endpoint.
+- `server/deathstar_server/web/agent_ws.py` — WebSocket agent session handler. Branch locks, worktree lifecycle, streaming text/tool/thinking blocks.
+- `server/deathstar_server/web/queue_store.py` — SQLite CRUD for the server-side message queue.
+- `server/deathstar_server/services/queue_worker.py` — Background asyncio worker that processes queued messages via Claude SDK.
+- `server/deathstar_server/services/event_bus.py` — Pub/sub event bus for real-time repo events.
+- `server/deathstar_server/services/github_poller.py` — Polls GitHub Events API for push/PR/CI events.
+- `server/deathstar_server/services/worktree.py` — Git worktree creation and cleanup for agent sessions.
+- `server/deathstar_server/web/webhooks.py` — GitHub webhook endpoint (push, PR, status events).
 - `shared/deathstar_shared/version.py` — VERSION constant and `full_version()` (VERSION+git-sha).
 - `web/src/store.ts` — Zustand store (all frontend state).
 - `web/src/personas.ts` — Persona definitions and system prompts.
@@ -136,4 +152,7 @@ Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "share
 - `web/src/components/FileViewer.tsx` — Syntax-highlighted file viewer (highlight.js).
 - `web/src/components/BranchSelector.tsx` — Branch switching and creation dropdown.
 - `web/src/components/ModelSelector.tsx` — Model picker with speed/price badges.
+- `web/src/components/ActionBar.tsx` — Contextual action buttons (Compact, Make PR, Start Review, Nudge, Stop).
+- `web/src/agentSocket.ts` — WebSocket client for agent sessions (text/tool/thinking streaming, permission flow).
+- `web/src/themes.ts` — Theme definitions and `applyTheme()` runtime CSS variable sync (including shadcn variables).
 - `docker/control-api.Dockerfile` — Multi-stage build (Node.js frontend + Python backend).
