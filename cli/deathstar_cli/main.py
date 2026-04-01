@@ -1083,10 +1083,11 @@ def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
         typer.echo("        Timed out waiting for restart.", err=True)
         raise typer.Exit(code=1)
 
-    # Verify health
+    # Verify health — use SSM directly since the container just restarted
+    # and Tailscale health checks will fail with connection refused until
+    # the API port is listening, producing noisy fallback warnings.
     typer.echo("        Waiting for instance to come up...")
-    resolved_transport = _validate_transport(config.remote_transport)
-    health = _wait_for_healthy(config, effective_region, resolved_transport)
+    health = _wait_for_healthy(config, effective_region, "ssm")
     if health:
         typer.echo(f"  Deploy complete. Version: {health.get('version', 'unknown')}")
     else:
