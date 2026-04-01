@@ -4,6 +4,7 @@ FROM node:22-slim AS frontend
 WORKDIR /build
 COPY web/package.json web/package-lock.json* ./
 RUN npm ci --ignore-scripts
+ARG CACHEBUST=0
 COPY web/ ./
 RUN npm run build
 
@@ -49,6 +50,10 @@ COPY plugins/deathstar-review /opt/claude-plugins/deathstar-review
 COPY plugins/deathstar-plan /opt/claude-plugins/deathstar-plan
 COPY plugins/deathstar-docs /opt/claude-plugins/deathstar-docs
 COPY plugins/deathstar-code /opt/claude-plugins/deathstar-code
+
+# Cache-bust arg: pass --build-arg CACHEBUST=$(date +%s) to force
+# re-copy of code layers while keeping heavy dependency layers cached.
+ARG CACHEBUST=0
 
 COPY pyproject.toml README.md /app/
 COPY cli /app/cli

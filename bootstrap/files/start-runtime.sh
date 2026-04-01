@@ -23,7 +23,7 @@ compose() {
 
 # ── Step 1: Build the new image (old container keeps running) ──
 echo "[blue/green] Building new image..."
-compose build "$SERVICE"
+compose build --build-arg "CACHEBUST=$(date +%s)" "$SERVICE"
 
 NEW_IMAGE=$(compose config --images | head -1)
 echo "[blue/green] New image: $NEW_IMAGE"

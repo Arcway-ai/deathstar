@@ -1245,11 +1245,20 @@ def upgrade(
         f"SYNCEOF\n"
         f"chmod +x /opt/deathstar/sync-runtime.sh"
     )
+    # Patch start-runtime.sh to use CACHEBUST arg so Docker re-copies code layers.
+    # Use grep to check if already patched (idempotent).
+    fix_start_script = (
+        "grep -q CACHEBUST /opt/deathstar/start-runtime.sh || "
+        "sed -i 's|compose build \"$SERVICE\"|"
+        "compose build --build-arg \"CACHEBUST=$(date +%s)\" \"$SERVICE\"|' "
+        "/opt/deathstar/start-runtime.sh"
+    )
     response = ssm.send_command(
         InstanceIds=[instance_id],
         DocumentName="AWS-RunShellScript",
         Parameters={"commands": [
             fix_sync_script,
+            fix_start_script,
             "systemctl restart deathstar-runtime.service",
         ]},
         TimeoutSeconds=600,
