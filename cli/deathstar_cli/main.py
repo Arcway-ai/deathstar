@@ -955,7 +955,14 @@ def deploy(
 
 def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
     """Build the Docker image locally and push it to the remote instance."""
+    import shutil
+
     from deathstar_shared.version import VERSION
+
+    if not shutil.which("docker"):
+        typer.echo("Error: Docker is required for redeploy/upgrade.", err=True)
+        typer.echo("Install Docker Desktop: https://docs.docker.com/get-docker/", err=True)
+        raise typer.Exit(code=1)
 
     image_tag = f"deathstar-app:{VERSION}"
 

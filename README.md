@@ -90,6 +90,7 @@ The main tradeoff in v1 is outbound internet access: the instance needs egress f
 |------|---------|----------------|---------------|
 | **Python** | 3.11+ | [python.org](https://www.python.org/downloads/) or `brew install python@3.12` | `python3 --version` |
 | **uv** | any | [docs.astral.sh](https://docs.astral.sh/uv/getting-started/installation/) or `brew install uv` | `uv --version` |
+| **Docker** | 20+ | [docker.com](https://docs.docker.com/get-docker/) or `brew install --cask docker` | `docker --version` |
 | **Terraform** | 1.6+ | [terraform.io](https://developer.hashicorp.com/terraform/install) or `brew install terraform` | `terraform --version` |
 | **AWS CLI** | v2 | [AWS docs](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) or `brew install awscli` | `aws --version` |
 | **Tailscale** | any | [tailscale.com](https://tailscale.com/download) | `tailscale status` |
@@ -380,16 +381,23 @@ deathstar destroy --region us-west-1
 
 ### Redeploy (Code-Only Push)
 
-Push code changes without replacing the EC2 instance. Uses blue/green deployment for zero downtime:
+Build the Docker image locally and push it to the remote instance over Tailscale SSH:
 
 ```bash
 deathstar redeploy
 deathstar redeploy --yes    # auto-approve
 ```
 
-The new Docker image builds while the old container stays live. A canary health check runs on the new container — if healthy, traffic swaps; if unhealthy, the old container stays up and the deploy is rolled back.
+Steps:
+1. Builds the Docker image locally (`docker build --platform linux/amd64`)
+2. Pushes the image to the instance via `docker save | gzip | ssh docker load`
+3. Restarts the container with a blue/green canary health check
+
+The old container stays live until the new one passes health checks. If unhealthy, the old container stays up and the deploy is rolled back.
 
 Use `redeploy` for frontend changes, API route updates, or any code-only change. Use `deploy` for infrastructure changes.
+
+**Requires:** Docker Desktop running locally and Tailscale SSH ACL configured (see Tailscale setup).
 
 ### Upgrade
 
@@ -401,7 +409,7 @@ Automatically detects your install mode:
 - **PyPI install:** upgrades from PyPI (`uv tool upgrade deathstar-ai`)
 - **Source install:** pulls latest code and reinstalls the editable package
 
-Then backs up, uploads code to S3, triggers a Docker rebuild on the instance, and waits for it to come up healthy.
+Then backs up, builds the Docker image locally, pushes it to the instance via Tailscale SSH, and restarts with a health check.
 
 ```bash
 deathstar upgrade --yes           # auto-approve everything
