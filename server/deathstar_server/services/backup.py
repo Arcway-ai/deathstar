@@ -27,8 +27,22 @@ class BackupService:
         backup_id = f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}-{normalized_label}.tar.gz"
         local_path = self.settings.backup_directory / backup_id
 
+        deathstar_dir = self.settings.workspace_root / "deathstar"
+
         with tarfile.open(local_path, "w:gz") as archive:
-            archive.add(self.settings.projects_root, arcname="projects")
+            # Back up the SQLite database (conversations, memories, feedback)
+            db_path = deathstar_dir / "deathstar.db"
+            if db_path.exists():
+                archive.add(db_path, arcname="deathstar/deathstar.db")
+            # Back up WAL/SHM files if present (for consistency)
+            for suffix in ("-wal", "-shm"):
+                wal_path = deathstar_dir / f"deathstar.db{suffix}"
+                if wal_path.exists():
+                    archive.add(wal_path, arcname=f"deathstar/deathstar.db{suffix}")
+            # Back up .claude config if present
+            claude_dir = deathstar_dir / ".claude"
+            if claude_dir.is_dir():
+                archive.add(claude_dir, arcname="deathstar/.claude")
 
         s3_uri = None
         if self.settings.backup_bucket:

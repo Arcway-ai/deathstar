@@ -45,6 +45,16 @@ def _create_project_file(projects_root: Path, name: str = "hello.py", content: s
     return f
 
 
+def _create_deathstar_state(workspace_root: Path, db_content: str = "sqlite-data", claude_config: str = "config") -> None:
+    """Create the deathstar dir with a DB file and .claude config that backups now target."""
+    deathstar_dir = workspace_root / "deathstar"
+    deathstar_dir.mkdir(parents=True, exist_ok=True)
+    (deathstar_dir / "deathstar.db").write_text(db_content)
+    claude_dir = deathstar_dir / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    (claude_dir / "settings.json").write_text(claude_config)
+
+
 # ---------------------------------------------------------------------------
 # create_backup
 # ---------------------------------------------------------------------------
@@ -53,7 +63,7 @@ class TestCreateBackup:
     @patch("deathstar_server.services.backup.boto3")
     def test_creates_tar_gz_locally(self, mock_boto3, tmp_path):
         settings = _make_settings(tmp_path)
-        _create_project_file(settings.projects_root)
+        _create_deathstar_state(settings.workspace_root)
         mock_boto3.client.return_value = MagicMock()
 
         service = BackupService(settings)
@@ -65,11 +75,68 @@ class TestCreateBackup:
         assert result.s3_uri is None
 
     @patch("deathstar_server.services.backup.boto3")
+    def test_backup_contains_db_and_claude_config(self, mock_boto3, tmp_path):
+        settings = _make_settings(tmp_path)
+        _create_deathstar_state(settings.workspace_root)
+        mock_boto3.client.return_value = MagicMock()
+
+        service = BackupService(settings)
+        result = service.create_backup(label="contents-check")
+
+        with tarfile.open(result.local_path, "r:gz") as archive:
+            names = archive.getnames()
+        assert "deathstar/deathstar.db" in names
+        assert "deathstar/.claude/settings.json" in names
+
+    @patch("deathstar_server.services.backup.boto3")
+    def test_backup_excludes_projects(self, mock_boto3, tmp_path):
+        settings = _make_settings(tmp_path)
+        _create_deathstar_state(settings.workspace_root)
+        _create_project_file(settings.projects_root)
+        mock_boto3.client.return_value = MagicMock()
+
+        service = BackupService(settings)
+        result = service.create_backup(label="no-projects")
+
+        with tarfile.open(result.local_path, "r:gz") as archive:
+            names = archive.getnames()
+        assert not any(n.startswith("projects") for n in names)
+
+    @patch("deathstar_server.services.backup.boto3")
+    def test_backup_includes_wal_files(self, mock_boto3, tmp_path):
+        settings = _make_settings(tmp_path)
+        _create_deathstar_state(settings.workspace_root)
+        deathstar_dir = settings.workspace_root / "deathstar"
+        (deathstar_dir / "deathstar.db-wal").write_text("wal-data")
+        (deathstar_dir / "deathstar.db-shm").write_text("shm-data")
+        mock_boto3.client.return_value = MagicMock()
+
+        service = BackupService(settings)
+        result = service.create_backup(label="wal-test")
+
+        with tarfile.open(result.local_path, "r:gz") as archive:
+            names = archive.getnames()
+        assert "deathstar/deathstar.db-wal" in names
+        assert "deathstar/deathstar.db-shm" in names
+
+    @patch("deathstar_server.services.backup.boto3")
+    def test_backup_empty_when_no_deathstar_state(self, mock_boto3, tmp_path):
+        settings = _make_settings(tmp_path)
+        settings.projects_root.mkdir(parents=True, exist_ok=True)
+        mock_boto3.client.return_value = MagicMock()
+
+        service = BackupService(settings)
+        result = service.create_backup(label="empty")
+
+        with tarfile.open(result.local_path, "r:gz") as archive:
+            assert archive.getnames() == []
+
+    @patch("deathstar_server.services.backup.boto3")
     def test_uploads_to_s3_when_bucket_configured(self, mock_boto3, tmp_path):
         settings_dict = _make_settings(tmp_path).__dict__
         settings_dict = {**settings_dict, "backup_bucket": "my-bucket"}
         settings = Settings(**settings_dict)
-        _create_project_file(settings.projects_root)
+        _create_deathstar_state(settings.workspace_root)
 
         mock_s3 = MagicMock()
         mock_boto3.client.return_value = mock_s3
@@ -84,7 +151,7 @@ class TestCreateBackup:
     @patch("deathstar_server.services.backup.boto3")
     def test_backup_without_label(self, mock_boto3, tmp_path):
         settings = _make_settings(tmp_path)
-        _create_project_file(settings.projects_root)
+        _create_deathstar_state(settings.workspace_root)
         mock_boto3.client.return_value = MagicMock()
 
         service = BackupService(settings)
@@ -99,29 +166,29 @@ class TestCreateBackup:
 
 class TestRestore:
     @patch("deathstar_server.services.backup.boto3")
-    def test_restores_from_local_backup(self, mock_boto3, tmp_path):
+    def test_restores_db_from_local_backup(self, mock_boto3, tmp_path):
         settings = _make_settings(tmp_path)
-        _create_project_file(settings.projects_root, "original.py", "original content")
+        _create_deathstar_state(settings.workspace_root, db_content="original-db")
         mock_boto3.client.return_value = MagicMock()
 
         service = BackupService(settings)
-
-        # Create a backup first
         backup_result = service.create_backup(label="restore-test")
 
-        # Modify the project file
-        (settings.projects_root / "original.py").write_text("modified content")
+        # Modify the DB
+        db_path = settings.workspace_root / "deathstar" / "deathstar.db"
+        db_path.write_text("modified-db")
 
         # Restore
         restore_result = service.restore(backup_result.backup_id)
 
         assert restore_result.backup_id == backup_result.backup_id
         assert restore_result.projects_root == str(settings.projects_root)
+        assert db_path.read_text() == "original-db"
 
     @patch("deathstar_server.services.backup.boto3")
     def test_restore_latest_when_no_id(self, mock_boto3, tmp_path):
         settings = _make_settings(tmp_path)
-        _create_project_file(settings.projects_root)
+        _create_deathstar_state(settings.workspace_root)
         mock_boto3.client.return_value = MagicMock()
 
         service = BackupService(settings)
