@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, AlertCircle, Square, ScanSearch, Zap, GitPullRequest, GitBranch } from "lucide-react";
+import { Send, AlertCircle, Square, Zap, GitBranch } from "lucide-react";
 import { useStore } from "../store";
-import { SuperlaserButton } from "./Superlaser";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -24,25 +23,12 @@ export default function InputBar() {
   const agentStream = useStore((s) => s.agentStream);
   const repoContext = useStore((s) => s.repoContext);
   const workflow = useStore((s) => s.workflow);
-  const selectedPR = useStore((s) => s.selectedPR);
   const createAndSwitchBranch = useStore((s) => s.createAndSwitchBranch);
-
-  const serverQueue = useStore((s) => s.serverQueue);
-  const clearQueue = useStore((s) => s.clearQueue);
 
   const hasPendingPermission = agentStream.pendingPermission !== null;
   const isAgentWaitingForInput = sending && !agentStream.isStreaming && !hasPendingPermission;
   const isAgentActive = sending && !hasPendingPermission;
   const isBusy = (sending && !isAgentWaitingForInput) || compacting;
-
-  // Review mode: can start without typing if a PR is selected
-  const isReviewReady = workflow === "review" && selectedPR !== null;
-  const canSend = text.trim() || isReviewReady;
-
-  // Show "Make PR" when on a non-default branch with code workflow
-  const currentBranch = repoContext?.branch;
-  const isOnFeatureBranch = currentBranch && currentBranch !== "main" && currentBranch !== "master";
-  const showMakePR = workflow === "patch" && isOnFeatureBranch && !sending;
 
   // Auto-resize textarea
   useEffect(() => {
@@ -65,7 +51,6 @@ export default function InputBar() {
     try {
       await createAndSwitchBranch(name);
       setBranchModal(false);
-      // Now send the original message on the new branch
       const trimmed = text.trim();
       if (trimmed) {
         sendMessage(trimmed);
@@ -80,9 +65,7 @@ export default function InputBar() {
 
   const handleSubmit = () => {
     const trimmed = text.trim();
-
-    // For review mode, allow empty prompt (auto-generated from PR)
-    if (!trimmed && !isReviewReady) return;
+    if (!trimmed) return;
 
     // Branch guard: block code changes on main/master
     if (repoContext?.branch === "main" || repoContext?.branch === "master") {
@@ -97,7 +80,6 @@ export default function InputBar() {
     if (isAgentWaitingForInput) {
       sendAgentInput(trimmed);
     } else {
-      // sendMessage handles review prompt auto-generation when trimmed is empty
       sendMessage(trimmed);
     }
     setText("");
@@ -114,9 +96,7 @@ export default function InputBar() {
     ? "Claude is waiting for your response..."
     : isBusy
       ? "Type a message to queue for when the agent finishes…"
-      : isReviewReady
-        ? "Optional: add focus areas or just hit Start Review…"
-        : "Ask about this codebase…";
+      : "Ask about this codebase…";
 
   return (
     <div>
@@ -163,8 +143,9 @@ export default function InputBar() {
           {sendError}
         </div>
       )}
+
+      {/* Input + agent controls */}
       <div className="flex items-end gap-2 rounded-xl border border-border-subtle bg-bg-surface p-2 focus-within:border-accent/50 transition-colors">
-        <SuperlaserButton />
         <textarea
           ref={textareaRef}
           value={text}
@@ -175,7 +156,7 @@ export default function InputBar() {
           className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-text-primary placeholder:text-text-muted outline-none"
         />
         {isAgentActive ? (
-          <>
+          <div className="flex items-center gap-1.5">
             <button
               onClick={pokeAgent}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-warning/40 text-warning transition-colors hover:bg-warning/10"
@@ -190,64 +171,22 @@ export default function InputBar() {
             >
               <Square size={12} fill="currentColor" />
             </button>
-          </>
-        ) : showMakePR ? (
-          <>
-            <button
-              onClick={() => {
-                const msg = text.trim()
-                  ? `Open a pull request for the changes on this branch. Additional context: ${text.trim()}`
-                  : "Open a pull request for the changes on this branch. Write a good PR title and description based on the commits and changes.";
-                sendMessage(msg);
-                setText("");
-              }}
-              className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-accent/40 text-accent px-3 transition-colors hover:bg-accent/10 text-xs font-medium"
-              title="Commit, push, and open a pull request"
-            >
-              <GitPullRequest size={14} />
-              Make PR
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={!canSend}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-bg-deep transition-opacity disabled:opacity-30 hover:bg-accent-hover"
-            >
-              <Send size={14} />
-            </button>
-          </>
-        ) : isReviewReady && !text.trim() ? (
-          <button
-            onClick={handleSubmit}
-            disabled={!canSend}
-            className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-accent text-bg-deep px-3 transition-opacity disabled:opacity-30 hover:bg-accent-hover text-xs font-medium"
-          >
-            <ScanSearch size={14} />
-            Start Review
-          </button>
+          </div>
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!canSend}
+            disabled={!text.trim()}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-bg-deep transition-opacity disabled:opacity-30 hover:bg-accent-hover"
           >
             <Send size={14} />
           </button>
         )}
       </div>
-      <div className="mt-1 hidden sm:flex items-center justify-center gap-2">
-        <p className="text-[10px] text-text-muted">
-          Shift+Enter for new line · Enter to {isBusy ? "queue" : "send"}
-          {isAgentActive && " · Esc to stop"}
-        </p>
-        {serverQueue.length > 0 && (
-          <button
-            onClick={clearQueue}
-            className="text-[10px] text-warning hover:text-warning/80 transition-colors"
-          >
-            {serverQueue.length} queued · clear
-          </button>
-        )}
-      </div>
+
+      <p className="mt-1 hidden text-center text-[10px] text-text-muted sm:block">
+        Shift+Enter for new line · Enter to {isBusy ? "queue" : "send"}
+        {isAgentActive && " · Esc to stop"}
+      </p>
     </div>
   );
 }

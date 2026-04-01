@@ -3,6 +3,7 @@ import { useStore } from "../store";
 import { ThinkingDeathStar, DeathStarSpinner } from "./DeathStarLoader";
 import MessageBubble from "./MessageBubble";
 import AgentStreamView from "./AgentStreamView";
+import ActionBar from "./ActionBar";
 import InputBar from "./InputBar";
 import WorkflowPills from "./WorkflowPills";
 import Starfield from "./Starfield";
@@ -147,6 +148,7 @@ export default function ChatView() {
       <div className="border-t border-border-subtle bg-bg-primary px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
         <div className="mx-auto max-w-3xl">
           <WorkflowPills />
+          <ActionBar />
           <InputBar />
         </div>
       </div>
