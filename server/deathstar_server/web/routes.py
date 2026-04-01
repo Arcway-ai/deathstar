@@ -11,7 +11,6 @@ from pydantic import BaseModel
 
 from deathstar_server.app_state import event_bus, git_service, settings
 from deathstar_server.errors import AppError
-from deathstar_server.web.agent_ws import is_branch_active
 from deathstar_server.services.event_bus import (
     EVENT_BRANCH_UPDATE,
     EVENT_LOCAL_CHECKOUT,
@@ -467,17 +466,8 @@ def checkout_branch(name: str, request: CheckoutRequest) -> dict:
         raise AppError(ErrorCode.INVALID_REQUEST, "branch name must not start with '-'", status_code=400)
     repo_root = git_service.resolve_target(name)
 
-    # Block if an agent session is active on the current branch (uses primary checkout)
-    try:
-        current = git_service.current_branch(repo_root)
-    except subprocess.CalledProcessError:
-        current = None  # Detached HEAD — no branch to check
-    if current and is_branch_active(name, current):
-        raise AppError(
-            ErrorCode.INVALID_REQUEST,
-            f"an agent session is active on branch '{current}'; wait for it to finish or stop it first",
-            status_code=409,
-        )
+    # Agent sessions run in isolated worktrees, so switching the primary
+    # checkout is safe and should never be blocked by an active agent.
 
     auto_committed = False
     auto_commit_branch: str | None = None
@@ -585,13 +575,8 @@ def sync_branch(name: str, body: SyncBranchRequest) -> dict:
     repo_root = git_service.resolve_target(name)
     current = git_service.current_branch(repo_root)
 
-    # Block if an agent session is active on the current branch (uses primary checkout)
-    if is_branch_active(name, current):
-        raise AppError(
-            ErrorCode.INVALID_REQUEST,
-            f"an agent session is active on branch '{current}'; wait for it to finish or stop it first",
-            status_code=409,
-        )
+    # Agent sessions run in isolated worktrees, so syncing the primary
+    # checkout is safe and should never be blocked by an active agent.
 
     def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(

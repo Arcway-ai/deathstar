@@ -1146,7 +1146,16 @@ function _ensureAgentSocket(): void {
       if (!s.selectedRepo || event.repo !== s.selectedRepo) return;
 
       const refreshContext = () =>
-        api.fetchRepoContext(event.repo).then((ctx) => useStore.setState({ repoContext: ctx })).catch(() => {});
+        api.fetchRepoContext(event.repo).then((ctx) => {
+          useStore.setState({ repoContext: ctx });
+          if (ctx.branch_switched_from) {
+            toast.info(
+              "Branch cleaned up",
+              `"${ctx.branch_switched_from}" was deleted on remote (PR merged?). Switched to ${ctx.branch}.`,
+            );
+            useStore.getState().loadBranches();
+          }
+        }).catch(() => {});
       const refreshCommits = () =>
         api.fetchCommits(event.repo).then((c) => useStore.setState({ commits: c })).catch(() => {});
       const refreshBranches = () => useStore.getState().loadBranches();
@@ -1184,6 +1193,9 @@ function _ensureAgentSocket(): void {
         case "pr_update":
           toast.info("PR updated", `#${event.data.number} ${event.data.title}`);
           refreshPRs();
+          // A merged PR may delete the branch — refresh context to detect and auto-switch
+          refreshContext();
+          refreshBranches();
           break;
         case "ci_status":
           toast.info("CI status", `${event.data.context}: ${event.data.state}`);
