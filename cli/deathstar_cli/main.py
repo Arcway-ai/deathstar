@@ -1037,10 +1037,12 @@ def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
 
     ssm = boto3.Session(**session_kwargs).client("ssm")
 
+    # Run start-runtime.sh directly (not systemctl restart) to avoid
+    # sync-runtime.sh ExecStartPre which would overwrite our pushed files.
     response = ssm.send_command(
         InstanceIds=[instance_id],
         DocumentName="AWS-RunShellScript",
-        Parameters={"commands": ["systemctl restart deathstar-runtime.service"]},
+        Parameters={"commands": ["/opt/deathstar/start-runtime.sh"]},
         TimeoutSeconds=600,
     )
     command_id = response["Command"]["CommandId"]
