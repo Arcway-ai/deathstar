@@ -1042,10 +1042,9 @@ def upgrade(
       1. Update local CLI (git pull + reinstall, or PyPI upgrade)
       2. Compare local vs remote version
       3. Create a backup on the remote instance (unless --skip-backup)
-      4. Remove stale Tailscale devices (if OAuth credentials are configured)
-      5. Upload code to S3 via terraform apply
-      6. Trigger Docker rebuild on the instance via SSM
-      7. Wait for the instance to become healthy
+      4. Upload code to S3 via terraform apply
+      5. Trigger Docker rebuild on the instance via SSM
+      6. Wait for the instance to become healthy
     """
     import shutil
 
@@ -1058,7 +1057,7 @@ def upgrade(
 
     if is_source_install:
         # Step 1a: Check for uncommitted changes
-        typer.echo("  [1/7] Checking local repo state...")
+        typer.echo("  [1/6] Checking local repo state...")
         try:
             result = subprocess.run(
                 ["git", "status", "--porcelain"],
@@ -1075,7 +1074,7 @@ def upgrade(
             typer.echo("        Warning: could not check git status.", err=True)
 
         # Step 1b: Pull latest
-        typer.echo("  [2/7] Pulling latest changes...")
+        typer.echo("  [2/6] Pulling latest changes...")
         has_upstream = False
         try:
             subprocess.run(
@@ -1112,7 +1111,7 @@ def upgrade(
                 raise typer.Exit(code=1) from exc
 
         # Step 1c: Reinstall editable package
-        typer.echo("  [3/7] Upgrading local CLI package...")
+        typer.echo("  [3/6] Upgrading local CLI package...")
         if installer == "uv":
             install_cmd = ["uv", "pip", "install", "-e", ".[dev]"]
         else:
@@ -1134,8 +1133,8 @@ def upgrade(
                 raise typer.Exit(code=1) from exc
     else:
         # PyPI install — upgrade from the registry
-        typer.echo("  [1/7] PyPI install detected.")
-        typer.echo("  [2/7] Upgrading from PyPI...")
+        typer.echo("  [1/6] PyPI install detected.")
+        typer.echo("  [2/6] Upgrading from PyPI...")
         if installer == "uv":
             upgrade_cmd = ["uv", "tool", "upgrade", "deathstar-ai"]
         else:
@@ -1158,10 +1157,10 @@ def upgrade(
             typer.echo(f"        Warning: upgrade failed: {stderr[:200]}", err=True)
             if not yes and not typer.confirm("        Continue with deploy anyway?"):
                 raise typer.Exit(code=1) from exc
-        typer.echo("  [3/7] Skipping (PyPI install).")
+        typer.echo("  [3/6] Skipping (PyPI install).")
 
-    # Step 4: Version comparison
-    typer.echo("  [4/7] Checking versions...")
+    # Version comparison
+    typer.echo("  Checking versions...")
     local_ver = full_version()
     typer.echo(f"        Local:  {local_ver}")
 
@@ -1183,9 +1182,9 @@ def upgrade(
         if not yes and not typer.confirm("        Redeploy anyway?"):
             raise typer.Exit(0)
 
-    # Step 3: Backup
+    # Backup
     if not skip_backup and remote_ver:
-        typer.echo("  [3/7] Creating pre-upgrade backup...")
+        typer.echo("  [4/6] Creating pre-upgrade backup...")
         try:
             client = RemoteAPIClient(
                 config,
@@ -1199,23 +1198,10 @@ def upgrade(
             if not yes and not typer.confirm("        Continue without backup?"):
                 raise typer.Exit(code=1) from exc
     else:
-        typer.echo("  [3/7] Skipping backup.")
+        typer.echo("  [4/6] Skipping backup.")
 
-    # Step 4: Tailscale cleanup
-    if config.enable_tailscale:
-        typer.echo("  [4/7] Cleaning up Tailscale devices...")
-        try:
-            result = _tailscale_cleanup(yes=yes)
-            if not result["deleted"] and not result["renamed"]:
-                typer.echo("        Nothing to clean up.")
-        except (typer.BadParameter, httpx.HTTPError) as exc:
-            typer.echo(f"        Warning: Tailscale cleanup failed: {exc}", err=True)
-            typer.echo("        The new instance may get a suffixed hostname (e.g. deathstar-1).", err=True)
-    else:
-        typer.echo("  [4/7] Tailscale not enabled — skipping cleanup.")
-
-    # Step 7: Upload code to S3 and trigger Docker rebuild
-    typer.echo("  [5/7] Uploading code to S3...")
+    # Upload code to S3
+    typer.echo("  [5/6] Uploading code to S3...")
     terraform_init(config, effective_region)
     terraform_apply(config, effective_region, auto_approve=yes)
 
@@ -1223,7 +1209,7 @@ def upgrade(
     _display_terraform_summary(effective_region)
 
     typer.echo("")
-    typer.echo("  [6/7] Triggering Docker rebuild on instance...")
+    typer.echo("        Triggering Docker rebuild...")
     outputs = terraform_outputs(config, effective_region)
     instance_id = str(outputs["instance_id"])
 
@@ -1259,9 +1245,9 @@ def upgrade(
         typer.echo("        Timed out waiting for restart.", err=True)
         raise typer.Exit(code=1)
 
-    # Step 8: Wait for the instance to become healthy
+    # Step 6: Wait for the instance to become healthy
     typer.echo("")
-    typer.echo("  [7/7] Waiting for instance to come up...")
+    typer.echo("  [6/6] Waiting for instance to come up...")
     resolved_transport = _validate_transport(transport if transport != "auto" else config.remote_transport)
     health = _wait_for_healthy(config, effective_region, resolved_transport)
     if health:
