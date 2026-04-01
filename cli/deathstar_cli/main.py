@@ -1015,9 +1015,11 @@ def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
                 check=True,
                 capture_output=True,
             )
-        # Ensure start-runtime.sh is executable
+        # Ensure start-runtime.sh is executable and retag image as latest
         subprocess.run(
-            ["ssh", *ssh_opts, ssh_target, "sudo chmod +x /opt/deathstar/start-runtime.sh"],
+            ["ssh", *ssh_opts, ssh_target,
+             f"sudo chmod +x /opt/deathstar/start-runtime.sh && "
+             f"docker tag {image_tag} deathstar-app:latest"],
             check=True,
             capture_output=True,
         )
