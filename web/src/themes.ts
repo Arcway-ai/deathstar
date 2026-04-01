@@ -17,7 +17,7 @@ export const themes: Theme[] = [
     vars: {
       "--color-accent": "#4a9eff",
       "--color-accent-hover": "#6cb4ff",
-      "--color-accent-muted": "#4a9eff26",
+      "--color-accent-muted": "#4a9eff40",
       "--color-bg-deep": "#06080c",
       "--color-bg-primary": "#0c1018",
       "--color-bg-surface": "#141a24",
@@ -36,7 +36,7 @@ export const themes: Theme[] = [
     vars: {
       "--color-accent": "#34d399",
       "--color-accent-hover": "#6ee7b7",
-      "--color-accent-muted": "#34d39926",
+      "--color-accent-muted": "#34d39940",
       "--color-bg-deep": "#040a06",
       "--color-bg-primary": "#08120c",
       "--color-bg-surface": "#101c14",
@@ -55,7 +55,7 @@ export const themes: Theme[] = [
     vars: {
       "--color-accent": "#c084fc",
       "--color-accent-hover": "#d8b4fe",
-      "--color-accent-muted": "#c084fc26",
+      "--color-accent-muted": "#c084fc40",
       "--color-bg-deep": "#08060e",
       "--color-bg-primary": "#100c18",
       "--color-bg-surface": "#1a1426",
@@ -74,7 +74,7 @@ export const themes: Theme[] = [
     vars: {
       "--color-accent": "#fbbf24",
       "--color-accent-hover": "#fcd34d",
-      "--color-accent-muted": "#fbbf2426",
+      "--color-accent-muted": "#fbbf2440",
       "--color-bg-deep": "#0a0804",
       "--color-bg-primary": "#12100a",
       "--color-bg-surface": "#1c1912",
@@ -93,7 +93,7 @@ export const themes: Theme[] = [
     vars: {
       "--color-accent": "#8896a4",
       "--color-accent-hover": "#a8b4c0",
-      "--color-accent-muted": "#8896a420",
+      "--color-accent-muted": "#8896a438",
       "--color-bg-deep": "#020202",
       "--color-bg-primary": "#060606",
       "--color-bg-surface": "#0c0c0e",
@@ -113,7 +113,7 @@ export const themes: Theme[] = [
     vars: {
       "--color-accent": "#ef4444",
       "--color-accent-hover": "#f87171",
-      "--color-accent-muted": "#ef444426",
+      "--color-accent-muted": "#ef444440",
       "--color-bg-deep": "#0a0404",
       "--color-bg-primary": "#120808",
       "--color-bg-surface": "#1c1010",
@@ -132,7 +132,7 @@ export const themes: Theme[] = [
     vars: {
       "--color-accent": "#a5b4fc",
       "--color-accent-hover": "#c7d2fe",
-      "--color-accent-muted": "#a5b4fc22",
+      "--color-accent-muted": "#a5b4fc38",
       "--color-bg-deep": "#04040c",
       "--color-bg-primary": "#0a0a16",
       "--color-bg-surface": "#121220",
@@ -155,6 +155,41 @@ export function getThemeById(id: string): Theme | undefined {
 export function applyTheme(theme: Theme): void {
   const root = document.documentElement;
   for (const [prop, value] of Object.entries(theme.vars)) {
+    root.style.setProperty(prop, value);
+  }
+
+  // Sync shadcn CSS variables with the active theme so shadcn components
+  // (Dialog, Button, Input) respect theme switches.
+  const v = theme.vars;
+  const shadcnMap: Record<string, string> = {
+    "--background": v["--color-bg-primary"] ?? "#0c1018",
+    "--foreground": "#e2e8f0",
+    "--card": v["--color-bg-surface"] ?? "#141a24",
+    "--card-foreground": "#e2e8f0",
+    "--popover": v["--color-bg-surface"] ?? "#141a24",
+    "--popover-foreground": "#e2e8f0",
+    "--primary": v["--color-accent"] ?? "#4a9eff",
+    "--primary-foreground": v["--color-bg-deep"] ?? "#06080c",
+    "--secondary": v["--color-bg-elevated"] ?? "#1c2333",
+    "--secondary-foreground": "#e2e8f0",
+    "--muted": v["--color-bg-elevated"] ?? "#1c2333",
+    "--muted-foreground": "#64748b",
+    "--accent": v["--color-bg-hover"] ?? "#232d3f",
+    "--accent-foreground": "#e2e8f0",
+    "--destructive": v["--color-error"] ?? "#f87171",
+    "--border": v["--color-border-subtle"] ?? "#1e2736",
+    "--input": v["--color-border-subtle"] ?? "#1e2736",
+    "--ring": v["--color-accent"] ?? "#4a9eff",
+    "--sidebar": v["--color-bg-primary"] ?? "#0c1018",
+    "--sidebar-foreground": "#e2e8f0",
+    "--sidebar-primary": v["--color-accent"] ?? "#4a9eff",
+    "--sidebar-primary-foreground": v["--color-bg-deep"] ?? "#06080c",
+    "--sidebar-accent": v["--color-bg-hover"] ?? "#232d3f",
+    "--sidebar-accent-foreground": "#e2e8f0",
+    "--sidebar-border": v["--color-border-subtle"] ?? "#1e2736",
+    "--sidebar-ring": v["--color-accent"] ?? "#4a9eff",
+  };
+  for (const [prop, value] of Object.entries(shadcnMap)) {
     root.style.setProperty(prop, value);
   }
 }
