@@ -1161,7 +1161,7 @@ def upgrade(
         typer.echo("  [3/6] Skipping (PyPI install).")
 
     # Version comparison
-    typer.echo("  Checking versions...")
+    typer.echo("        Checking versions...")
     local_ver = full_version()
     typer.echo(f"        Local:  {local_ver}")
 
@@ -1219,10 +1219,23 @@ def upgrade(
 
     ssm = boto3.Session(**session_kwargs).client("ssm")
 
+    # Build the S3 sync + restart command inline so we don't depend on
+    # the instance's sync-runtime.sh (which may be stale from cloud-init).
+    bucket = str(outputs.get("artifact_bucket_name", ""))
+    sync_and_restart = (
+        f'LATEST=$(aws s3api list-objects-v2 --bucket "{bucket}" --prefix "runtime/"'
+        f' --query \'sort_by(Contents, &LastModified)[-1].Key\''
+        f' --output text --region {effective_region}'
+        " | sed 's|^runtime/||' | cut -d'/' -f1) && "
+        f'echo "Syncing revision: $LATEST" && '
+        f'aws s3 sync "s3://{bucket}/runtime/$LATEST/" /opt/deathstar/repo'
+        f' --delete --region {effective_region} && '
+        "systemctl restart deathstar-runtime.service"
+    )
     response = ssm.send_command(
         InstanceIds=[instance_id],
         DocumentName="AWS-RunShellScript",
-        Parameters={"commands": ["systemctl restart deathstar-runtime.service"]},
+        Parameters={"commands": [sync_and_restart]},
         TimeoutSeconds=600,
     )
     command_id = response["Command"]["CommandId"]
