@@ -11,6 +11,7 @@ import { ArrowDown, AlertTriangle, GitMerge } from "lucide-react";
 export default function ChatView() {
   const activeConversation = useStore((s) => s.activeConversation);
   const sending = useStore((s) => s.sending);
+  const compacting = useStore((s) => s.compacting);
   const agentStream = useStore((s) => s.agentStream);
   const streamingProgress = useStore((s) => s.streamingProgress);
   const selectedRepo = useStore((s) => s.selectedRepo);
@@ -48,7 +49,7 @@ export default function ChatView() {
     if (isNearBottom && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length, sending, agentStream.blocks.length, isNearBottom]);
+  }, [messages.length, sending, compacting, agentStream.blocks.length, isNearBottom]);
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
@@ -84,6 +85,14 @@ export default function ChatView() {
                   </p>
                 )}
                 <ThinkingDeathStar />
+              </div>
+            )}
+            {compacting && !isWaiting && (
+              <div className="flex items-center gap-2 rounded-lg bg-bg-surface px-4 py-3 animate-fade-in">
+                <DeathStarSpinner />
+                <p className="text-xs text-text-muted animate-pulse">
+                  Compacting conversation context...
+                </p>
               </div>
             )}
           </div>

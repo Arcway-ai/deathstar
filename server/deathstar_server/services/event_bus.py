@@ -17,6 +17,10 @@ EVENT_LOCAL_CHECKOUT = "local_checkout"
 EVENT_REPO_DIRTY = "repo_dirty"
 EVENT_BRANCH_UPDATE = "branch_update"
 
+# Event types — queue
+EVENT_QUEUE_COMPLETED = "queue_completed"
+EVENT_QUEUE_FAILED = "queue_failed"
+
 # Event types — GitHub
 EVENT_PUSH = "push"
 EVENT_PR_UPDATE = "pr_update"

@@ -29,7 +29,11 @@ class RemoteAPIClient:
         self.tailscale_hostname = str(
             outputs.get("tailscale_hostname") or config.tailscale_hostname
         ).strip()
-        self.transport = self._resolve_transport(transport or config.remote_transport)
+        requested = transport or config.remote_transport
+        self.transport = self._resolve_transport(requested)
+        self._can_fallback_to_ssm = (
+            requested.strip().lower() == "auto" and self.transport == "tailscale"
+        )
 
     def _resolve_transport(self, requested_transport: str) -> str:
         normalized = requested_transport.strip().lower()
@@ -54,6 +58,12 @@ class RemoteAPIClient:
                     timeout=300.0,
                 )
             except httpx.HTTPError as exc:
+                if self._can_fallback_to_ssm:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "Tailscale transport failed (%s), falling back to SSM", exc,
+                    )
+                    return self._request_via_ssm(method, path, payload)
                 raise RuntimeError(
                     "tailscale transport failed; confirm your local device is on the tailnet and use --transport ssm for break-glass access"
                 ) from exc
@@ -61,6 +71,9 @@ class RemoteAPIClient:
             response.raise_for_status()
             return response.json()
 
+        return self._request_via_ssm(method, path, payload)
+
+    def _request_via_ssm(self, method: str, path: str, payload: dict | None = None) -> dict:
         with SSMPortForward(
             config=self.config,
             region=self.region,

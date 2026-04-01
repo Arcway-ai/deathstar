@@ -68,13 +68,14 @@ export default function Superlaser() {
 export function SuperlaserButton() {
   const fireSuperlaser = useStore((s) => s.fireSuperlaser);
   const firing = useStore((s) => s.superlaserFiring);
+  const compacting = useStore((s) => s.compacting);
   const conversationId = useStore((s) => s.conversationId);
   const sending = useStore((s) => s.sending);
 
   return (
     <button
       onClick={fireSuperlaser}
-      disabled={firing || sending || !conversationId}
+      disabled={firing || compacting || sending || !conversationId}
       className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-bg-hover hover:text-success transition-colors disabled:opacity-30"
       title="Compact conversation context"
     >

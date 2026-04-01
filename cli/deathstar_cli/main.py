@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
 from typing import Literal
 
 import boto3
@@ -76,6 +77,35 @@ def _validate_transport(transport: str) -> str:
     if normalized not in {"auto", "tailscale", "ssm"}:
         raise typer.BadParameter("transport must be auto, tailscale, or ssm")
     return normalized
+
+
+def _wait_for_healthy(
+    config: CLIConfig,
+    region: str,
+    transport: str,
+    timeout_seconds: int = 300,
+    poll_interval: int = 10,
+) -> dict | None:
+    """Poll the remote health endpoint until it responds or timeout is reached."""
+    deadline = time.monotonic() + timeout_seconds
+    last_err = ""
+    try:
+        client = RemoteAPIClient(config, region, transport=transport)
+    except (RuntimeError, httpx.HTTPError) as exc:
+        typer.echo(f"        Could not create API client: {exc}", err=True)
+        return None
+    while time.monotonic() < deadline:
+        try:
+            return client._request("GET", "/v1/health")
+        except (RuntimeError, httpx.HTTPError) as exc:
+            last_err = str(exc)
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            typer.echo(f"        Waiting for instance to become healthy... ({remaining}s remaining)")
+            time.sleep(min(poll_interval, remaining))
+    typer.echo(f"        Timed out after {timeout_seconds}s. Last error: {last_err[:200]}", err=True)
+    return None
 
 
 @app.command()
@@ -751,7 +781,6 @@ def tailscale_fix(
 
     # Step 3 — verify connectivity
     typer.echo("  [3/3] Verifying Tailscale connectivity...")
-    import time
     hostname = config.tailscale_hostname
 
     for attempt in range(6):
@@ -966,8 +995,6 @@ def redeploy(
     )
     command_id = response["Command"]["CommandId"]
 
-    import time  # noqa: E402 — late import is fine for a CLI command
-
     for _ in range(120):
         time.sleep(2)
         try:
@@ -987,17 +1014,15 @@ def redeploy(
         raise typer.Exit(code=1)
 
     # Verify health
-    time.sleep(5)
-    try:
-        client = RemoteAPIClient(
-            config,
-            effective_region,
-            transport=_validate_transport(config.remote_transport),
-        )
-        health = client._request("GET", "/v1/health")
+    typer.echo("  Waiting for instance to come up...")
+    resolved_transport = _validate_transport(config.remote_transport)
+    health = _wait_for_healthy(config, effective_region, resolved_transport, timeout_seconds=90)
+    if health:
         typer.echo(f"  Redeploy complete. Version: {health.get('version', 'unknown')}")
-    except (RuntimeError, httpx.HTTPError):
-        typer.echo("  Redeploy complete. Instance may still be starting — run `deathstar status` in a moment.")
+    else:
+        typer.echo("  Instance did not become healthy within the timeout.", err=True)
+        typer.echo("  Run `deathstar status` to check manually.", err=True)
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -1165,19 +1190,17 @@ def upgrade(
     typer.echo("")
     _display_terraform_summary(effective_region)
 
-    # Post-deploy version check
+    # Post-deploy: wait for the new instance to become healthy
     typer.echo("")
-    try:
-        client = RemoteAPIClient(
-            config,
-            effective_region,
-            transport=_validate_transport(transport if transport != "auto" else config.remote_transport),
-        )
-        health = client._request("GET", "/v1/health")
+    typer.echo("  Waiting for instance to come up...")
+    resolved_transport = _validate_transport(transport if transport != "auto" else config.remote_transport)
+    health = _wait_for_healthy(config, effective_region, resolved_transport)
+    if health:
         typer.echo(f"  Upgrade complete. Remote version: {health.get('version', 'unknown')}")
-    except (RuntimeError, httpx.HTTPError):
-        typer.echo("  Deploy complete. Remote instance may still be starting up.")
-        typer.echo("  Run `deathstar status` in a minute to verify.")
+    else:
+        typer.echo("  Instance did not become healthy within the timeout.", err=True)
+        typer.echo("  Run `deathstar status` to check manually.", err=True)
+        raise typer.Exit(code=1)
 
 
 @app.command()

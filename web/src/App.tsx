@@ -72,6 +72,11 @@ export default function App() {
       }
     }
     initialSync.current = true;
+
+    // Load server-side message queue
+    if (urlRepo) {
+      setTimeout(() => useStore.getState().loadQueue(), 500);
+    }
   }, [urlRepo, urlConversationId]);
 
   // Store → URL: when the store changes, update the URL to match

@@ -9,7 +9,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -85,6 +85,26 @@ CREATE TABLE IF NOT EXISTS usage_log (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_usage_repo ON usage_log(repo, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS message_queue (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    branch TEXT,
+    message TEXT NOT NULL,
+    workflow TEXT NOT NULL DEFAULT 'prompt',
+    model TEXT,
+    system_prompt TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')),
+    result_message_id TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_queue_status ON message_queue(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_queue_conversation ON message_queue(conversation_id, status);
 """
 
 
@@ -146,6 +166,32 @@ class Database:
                 "ON conversations(repo, branch)"
             )
             logger.info("migration v4: added branch column to conversations")
+
+        if from_version < 5:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS message_queue (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    repo TEXT NOT NULL,
+                    branch TEXT,
+                    message TEXT NOT NULL,
+                    workflow TEXT NOT NULL DEFAULT 'prompt',
+                    model TEXT,
+                    system_prompt TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')),
+                    result_message_id TEXT,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_queue_status
+                    ON message_queue(status, created_at);
+                CREATE INDEX IF NOT EXISTS idx_queue_conversation
+                    ON message_queue(conversation_id, status);
+            """)
+            logger.info("migration v5: added message_queue table")
 
         conn.execute(
             "UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,)

@@ -12,6 +12,7 @@ import type {
   RepoInfo,
   ReviewFinding,
   ReviewVerdict,
+  ServerQueueItem,
 } from "./types";
 
 const BASE = "/web/api";
@@ -277,4 +278,38 @@ export async function applySuggestions(params: {
     method: "POST",
     body: JSON.stringify(params),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Message Queue
+// ---------------------------------------------------------------------------
+
+export async function enqueueMessage(req: {
+  conversation_id?: string | null;
+  repo: string;
+  branch?: string | null;
+  message: string;
+  workflow: string;
+  model?: string | null;
+  system_prompt?: string | null;
+}): Promise<ServerQueueItem> {
+  return request<ServerQueueItem>("/queue", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function fetchQueue(params?: {
+  conversation_id?: string;
+  repo?: string;
+}): Promise<ServerQueueItem[]> {
+  const parts: string[] = [];
+  if (params?.conversation_id) parts.push(`conversation_id=${encodeURIComponent(params.conversation_id)}`);
+  if (params?.repo) parts.push(`repo=${encodeURIComponent(params.repo)}`);
+  const qs = parts.length ? `?${parts.join("&")}` : "";
+  return request<ServerQueueItem[]>(`/queue${qs}`);
+}
+
+export async function cancelQueueItem(id: string): Promise<void> {
+  await request(`/queue/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

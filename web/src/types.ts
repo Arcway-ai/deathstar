@@ -244,6 +244,17 @@ export interface AgentStreamState {
   statusMessage: string | null;
 }
 
+export interface ServerQueueItem {
+  id: string;
+  conversation_id: string;
+  repo: string;
+  branch: string | null;
+  message: string;
+  workflow: WorkflowKind;
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
+  created_at: string;
+}
+
 /* ── View state ────────────────────────────────────────────────── */
 
 export type SidebarView = "conversations" | "memory";

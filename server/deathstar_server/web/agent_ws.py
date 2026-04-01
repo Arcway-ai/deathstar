@@ -95,6 +95,12 @@ def get_active_branches() -> dict[tuple[str, str], str]:
     """Return a snapshot of active branch locks for external consumers (e.g. reaper)."""
     return dict(_branch_locks)
 
+
+def is_branch_active(repo: str, branch: str) -> bool:
+    """Check if a branch has an active agent session."""
+    lock_holder = _branch_locks.get((repo, branch))
+    return lock_holder is not None and lock_holder in _sessions
+
 _AUTH_ERROR_HINTS = (
     "auth", "unauthorized", "unauthenticated", "token", "credential",
     "login", "expired", "403", "401", "permission denied", "not logged in",

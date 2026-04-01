@@ -40,7 +40,6 @@ export default function BranchSelector() {
 
   const currentRepo = repos.find((r) => r.name === selectedRepo);
   const currentBranch = repoContext?.branch ?? currentRepo?.branch ?? "unknown";
-  const isDirty = currentRepo?.dirty ?? false;
 
   // Close on outside click
   useEffect(() => {
@@ -75,7 +74,7 @@ export default function BranchSelector() {
   };
 
   const handleSwitch = async (branch: string) => {
-    if (branch === currentBranch || isDirty) return;
+    if (branch === currentBranch) return;
     setSwitching(branch);
     setError(null);
     try {
@@ -107,7 +106,6 @@ export default function BranchSelector() {
   };
 
   const handleDelete = async (branch: string) => {
-    if (isDirty) return;
     if (!confirm(`Delete branch "${branch}"? This cannot be undone.`)) return;
     setDeleting(branch);
     setError(null);
@@ -121,7 +119,6 @@ export default function BranchSelector() {
   };
 
   const handleSync = async () => {
-    if (isDirty) return;
     setSyncing(true);
     setError(null);
     try {
@@ -155,9 +152,6 @@ export default function BranchSelector() {
           <span className="font-mono text-text-secondary max-w-[100px] truncate">
             {currentBranch}
           </span>
-          {isDirty && (
-            <span className="h-1.5 w-1.5 rounded-full bg-warning" title="Uncommitted changes" />
-          )}
           {branchPRMap.has(currentBranch) && (
             <a
               href={branchPRMap.get(currentBranch)!.url}
@@ -179,7 +173,7 @@ export default function BranchSelector() {
         >
           <Plus size={12} />
         </button>
-        {onDefaultBranch && !isDirty && (
+        {onDefaultBranch && (
           <button
             onClick={handleSync}
             disabled={syncing}
@@ -234,13 +228,9 @@ export default function BranchSelector() {
             <div className="flex items-center gap-1">
               <button
                 onClick={handleSync}
-                disabled={syncing || isDirty}
-                className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs transition-colors ${
-                  isDirty
-                    ? "text-text-muted opacity-40 cursor-not-allowed"
-                    : "text-text-secondary hover:text-accent hover:bg-bg-hover disabled:opacity-50"
-                }`}
-                title={isDirty ? "Save changes before syncing" : onDefaultBranch ? "Pull latest from origin" : "Rebase onto origin/main"}
+                disabled={syncing}
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-text-secondary hover:text-accent hover:bg-bg-hover disabled:opacity-50 transition-colors"
+                title={onDefaultBranch ? "Pull latest from origin" : "Rebase onto origin/main"}
               >
                 <RefreshCw size={12} className={syncing ? "animate-spin" : ""} />
                 {onDefaultBranch ? "Pull" : "Sync"}
@@ -286,15 +276,6 @@ export default function BranchSelector() {
             </div>
           )}
 
-          {/* Dirty warning */}
-          {isDirty && !creating && (
-            <div className="border-b border-border-subtle px-3 py-1.5">
-              <p className="text-[10px] text-warning">
-                Save your changes before switching branches, syncing, or deleting.
-              </p>
-            </div>
-          )}
-
           {/* Error */}
           {error && (
             <div className="border-b border-border-subtle px-3 py-1.5">
@@ -317,14 +298,12 @@ export default function BranchSelector() {
                   className={`group flex items-center rounded-md transition-colors ${
                     branch === currentBranch
                       ? "bg-accent-muted text-accent"
-                      : isDirty
-                        ? "text-text-muted"
-                        : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                   }`}
                 >
                   <button
                     onClick={() => handleSwitch(branch)}
-                    disabled={switching !== null || deleting !== null || (isDirty && branch !== currentBranch)}
+                    disabled={switching !== null || deleting !== null}
                     className="flex flex-1 items-center gap-2 px-3 py-1.5 text-left text-xs min-w-0 disabled:cursor-not-allowed"
                   >
                     {switching === branch ? (
@@ -358,13 +337,9 @@ export default function BranchSelector() {
                   {!isDefault(branch) && branch !== currentBranch && (
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDelete(branch); }}
-                      disabled={deleting !== null || switching !== null || isDirty}
-                      className={`shrink-0 px-2 py-1.5 transition-all ${
-                        isDirty
-                          ? "text-text-muted opacity-0"
-                          : "text-text-muted opacity-0 group-hover:opacity-100 hover:text-error"
-                      }`}
-                      title={isDirty ? "Save changes first" : `Delete ${branch}`}
+                      disabled={deleting !== null || switching !== null}
+                      className="shrink-0 px-2 py-1.5 text-text-muted opacity-0 group-hover:opacity-100 hover:text-error transition-all"
+                      title={`Delete ${branch}`}
                     >
                       {deleting === branch ? (
                         <Loader2 size={11} className="animate-spin" />

@@ -7,6 +7,7 @@ export default function InputBar() {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sending = useStore((s) => s.sending);
+  const compacting = useStore((s) => s.compacting);
   const sendError = useStore((s) => s.sendError);
   const sendMessage = useStore((s) => s.sendMessage);
   const sendAgentInput = useStore((s) => s.sendAgentInput);
@@ -17,9 +18,13 @@ export default function InputBar() {
   const workflow = useStore((s) => s.workflow);
   const selectedPR = useStore((s) => s.selectedPR);
 
+  const serverQueue = useStore((s) => s.serverQueue);
+  const clearQueue = useStore((s) => s.clearQueue);
+
   const hasPendingPermission = agentStream.pendingPermission !== null;
   const isAgentWaitingForInput = sending && !agentStream.isStreaming && !hasPendingPermission;
   const isAgentActive = sending && !hasPendingPermission;
+  const isBusy = (sending && !isAgentWaitingForInput) || compacting;
 
   // Review mode: can start without typing if a PR is selected
   const isReviewReady = workflow === "review" && selectedPR !== null;
@@ -39,7 +44,6 @@ export default function InputBar() {
   }, [text]);
 
   const handleSubmit = () => {
-    if (sending && !isAgentWaitingForInput) return;
     const trimmed = text.trim();
 
     // For review mode, allow empty prompt (auto-generated from PR)
@@ -73,9 +77,11 @@ export default function InputBar() {
 
   const placeholder = isAgentWaitingForInput
     ? "Claude is waiting for your response..."
-    : isReviewReady
-      ? "Optional: add focus areas or just hit Start Review…"
-      : "Ask about this codebase…";
+    : isBusy
+      ? "Type a message to queue for when the agent finishes…"
+      : isReviewReady
+        ? "Optional: add focus areas or just hit Start Review…"
+        : "Ask about this codebase…";
 
   return (
     <div>
@@ -94,7 +100,6 @@ export default function InputBar() {
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           rows={1}
-          disabled={sending && !isAgentWaitingForInput}
           className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-text-primary placeholder:text-text-muted outline-none"
         />
         {isAgentActive ? (
@@ -141,7 +146,7 @@ export default function InputBar() {
         ) : isReviewReady && !text.trim() ? (
           <button
             onClick={handleSubmit}
-            disabled={sending && !isAgentWaitingForInput}
+            disabled={!canSend}
             className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-accent text-bg-deep px-3 transition-opacity disabled:opacity-30 hover:bg-accent-hover text-xs font-medium"
           >
             <ScanSearch size={14} />
@@ -150,17 +155,27 @@ export default function InputBar() {
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!canSend || (sending && !isAgentWaitingForInput)}
+            disabled={!canSend}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-bg-deep transition-opacity disabled:opacity-30 hover:bg-accent-hover"
           >
             <Send size={14} />
           </button>
         )}
       </div>
-      <p className="mt-1 hidden text-center text-[10px] text-text-muted sm:block">
-        Shift+Enter for new line · Enter to send
-        {isAgentActive && " · Esc to stop"}
-      </p>
+      <div className="mt-1 hidden sm:flex items-center justify-center gap-2">
+        <p className="text-[10px] text-text-muted">
+          Shift+Enter for new line · Enter to {isBusy ? "queue" : "send"}
+          {isAgentActive && " · Esc to stop"}
+        </p>
+        {serverQueue.length > 0 && (
+          <button
+            onClick={clearQueue}
+            className="text-[10px] text-warning hover:text-warning/80 transition-colors"
+          >
+            {serverQueue.length} queued · clear
+          </button>
+        )}
+      </div>
     </div>
   );
 }

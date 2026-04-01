@@ -103,7 +103,7 @@ class TestMigrationV4:
 
         # Verify schema version
         row = conn.execute("SELECT version FROM schema_version").fetchone()
-        assert row[0] == 4
+        assert row[0] >= 4
 
         # Verify branch column exists
         conv = conn.execute("SELECT id, branch FROM conversations WHERE id = 'conv-1'").fetchone()

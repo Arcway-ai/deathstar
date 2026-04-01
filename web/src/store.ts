@@ -18,6 +18,7 @@ import type {
   MemoryEntry,
   Persona,
   ProviderName,
+  ServerQueueItem,
   ProviderStatus,
   PullRequestSummary,
   RepoContext,
@@ -85,6 +86,10 @@ interface Store {
   streamingText: string;
   streamingProgress: string | null;
   agentStream: AgentStreamState;
+  serverQueue: ServerQueueItem[];
+  loadQueue: () => Promise<void>;
+  cancelQueueItem: (id: string) => Promise<void>;
+  clearQueue: () => Promise<void>;
   sendMessage: (message: string) => Promise<void>;
   sendAgentInput: (text: string) => void;
   pokeAgent: () => void;
@@ -142,6 +147,7 @@ interface Store {
 
   /* ── Superlaser ──────────────────────────────────────────────── */
   superlaserFiring: boolean;
+  compacting: boolean;
   fireSuperlaser: () => void;
   stopSuperlaser: () => void;
 
@@ -462,11 +468,75 @@ export const useStore = create<Store>()(persist((set, get) => ({
   streamingText: "",
   streamingProgress: null,
   agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
+  serverQueue: [],
   abortStream: null,
+  loadQueue: async () => {
+    const { selectedRepo } = get();
+    if (!selectedRepo) return;
+    try {
+      const items = await api.fetchQueue({ repo: selectedRepo });
+      set({ serverQueue: items });
+    } catch (err) {
+      console.warn("Failed to load message queue:", err);
+    }
+  },
+  cancelQueueItem: async (id) => {
+    try {
+      await api.cancelQueueItem(id);
+      set((s) => ({ serverQueue: s.serverQueue.filter((q) => q.id !== id) }));
+    } catch {
+      toast.error("Failed to cancel", "Queue item may have already been processed");
+    }
+  },
+  clearQueue: async () => {
+    const { serverQueue } = get();
+    const pending = serverQueue.filter((q) => q.status === "pending");
+    const results = await Promise.allSettled(pending.map((q) => api.cancelQueueItem(q.id)));
+    const failures = results.filter((r) => r.status === "rejected");
+    if (failures.length > 0) {
+      toast.warning("Some items could not be cancelled", `${failures.length} may have already started processing`);
+    }
+    await get().loadQueue();
+  },
 
   sendMessage: async (message) => {
-    const { selectedRepo, workflow, persona, conversationId, selectedModel, repoContext, memories, selectedPR } = get();
+    const { selectedRepo, sending, compacting, workflow, persona, conversationId, selectedModel, repoContext, memories, selectedPR } = get();
     if (!selectedRepo) return;
+
+    // Queue the message server-side if the agent is busy
+    if (sending || compacting) {
+      try {
+        // Build system prompt snapshot (same as below)
+        let system = persona.systemPrompt;
+        if (repoContext?.claude_md) {
+          system += `\n\n## Repository Guidelines (from CLAUDE.md)\n${repoContext.claude_md}`;
+        }
+        if (repoContext) {
+          system += `\n\n## Current Repository State\nRepo: ${selectedRepo}\nBranch: ${repoContext.branch}`;
+          if (repoContext.recent_commits.length > 0) {
+            system += `\nRecent commits:\n${repoContext.recent_commits.slice(0, 5).join("\n")}`;
+          }
+        }
+        if (memories.length > 0) {
+          system += `\n\n## Memory Bank (approved learnings for this repo)\n${memories.slice(0, 5).map((m) => `- ${m.content.slice(0, 300)}`).join("\n")}`;
+        }
+
+        const item = await api.enqueueMessage({
+          conversation_id: conversationId,
+          repo: selectedRepo,
+          branch: repoContext?.branch,
+          message,
+          workflow,
+          model: selectedModel,
+          system_prompt: system,
+        });
+        set((s) => ({ serverQueue: [...s.serverQueue, item] }));
+        toast.info("Message queued", `Will process when the agent is ready (${get().serverQueue.length} in queue)`);
+      } catch {
+        toast.error("Failed to queue", "Could not send message to server queue");
+      }
+      return;
+    }
 
     // Auto-generate review prompt when no text is provided
     let effectiveMessage = message;
@@ -564,6 +634,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
     _agentSocket?.interrupt();
     set({
       sending: false,
+      compacting: false,
       agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
     });
   },
@@ -817,17 +888,18 @@ export const useStore = create<Store>()(persist((set, get) => ({
 
   /* ── Superlaser ───────────────────────────────────────────────── */
   superlaserFiring: false,
+  compacting: false,
   fireSuperlaser: () => {
-    const { conversationId, sending } = get();
+    const { conversationId, sending, compacting } = get();
     if (!conversationId) {
       toast.warning("No conversation", "Start a conversation first to compact context");
       return;
     }
-    if (sending) {
+    if (sending || compacting) {
       toast.warning("Agent busy", "Wait for the current response to finish");
       return;
     }
-    set({ superlaserFiring: true });
+    set({ superlaserFiring: true, compacting: true });
     _ensureAgentSocket();
     _agentSocket!.compact();
   },
@@ -997,6 +1069,9 @@ function _ensureAgentSocket(): void {
           }
         }).catch(() => { /* ignore */ });
       }
+
+      // Refresh server queue
+      setTimeout(() => useStore.getState().loadQueue(), 100);
     },
 
     onError: (code, message) => {
@@ -1053,6 +1128,7 @@ function _ensureAgentSocket(): void {
       };
 
       useStore.setState((prev) => ({
+        compacting: false,
         activeConversation: prev.activeConversation
           ? {
               ...prev.activeConversation,
@@ -1060,6 +1136,9 @@ function _ensureAgentSocket(): void {
             }
           : null,
       }));
+
+      // Refresh server queue
+      setTimeout(() => useStore.getState().loadQueue(), 100);
     },
 
     onRepoEvent: (event: RepoEventData) => {
@@ -1122,6 +1201,26 @@ function _ensureAgentSocket(): void {
         case "branch_update":
           refreshBranches();
           break;
+        case "queue_completed": {
+          const convId = event.data.conversation_id as string;
+          const preview = (event.data.message_preview as string) || "Queued message";
+          toast.success("Queued message completed", preview);
+          useStore.getState().loadQueue();
+          // Refresh conversation if it matches the active one
+          if (s.conversationId === convId) {
+            api.fetchConversation(convId).then((c) => useStore.setState({ activeConversation: c })).catch(() => {});
+          }
+          refreshContext();
+          refreshRepos();
+          refreshCommits();
+          break;
+        }
+        case "queue_failed": {
+          const errorMsg = (event.data.error as string) || "Unknown error";
+          toast.error("Queued message failed", errorMsg);
+          useStore.getState().loadQueue();
+          break;
+        }
       }
     },
 

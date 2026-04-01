@@ -374,6 +374,42 @@ class FeedbackResponse(DeathStarModel):
 
 
 # ---------------------------------------------------------------------------
+# Message Queue
+# ---------------------------------------------------------------------------
+
+
+QueueStatus = Literal["pending", "processing", "completed", "failed", "cancelled"]
+
+
+class EnqueueRequest(DeathStarModel):
+    conversation_id: str | None = Field(default=None, max_length=200)
+    repo: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9_./ -]+$")
+    branch: str | None = Field(default=None, max_length=256, pattern=r"^[a-zA-Z0-9_./-]+$")
+    message: str = Field(min_length=1, max_length=100_000)
+    workflow: WorkflowKind = WorkflowKind.PROMPT
+    model: str | None = Field(default=None, max_length=200)
+    system_prompt: str | None = Field(default=None, max_length=200_000)
+
+    @field_validator("repo")
+    @classmethod
+    def _reject_repo_traversal(cls, v: str) -> str:
+        if ".." in v:
+            raise ValueError("repo must not contain '..'")
+        return v
+
+
+class QueueItemResponse(DeathStarModel):
+    id: str
+    conversation_id: str
+    repo: str
+    branch: str | None = None
+    message: str
+    workflow: WorkflowKind
+    status: QueueStatus
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
 # Repo Context
 # ---------------------------------------------------------------------------
 

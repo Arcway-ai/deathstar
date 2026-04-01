@@ -70,10 +70,14 @@ async def _worktree_reaper() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start/stop background services."""
+    from deathstar_server.app_state import queue_worker
+
     await _github_poller.start()
+    await queue_worker.start()
     reaper_task = asyncio.create_task(_worktree_reaper(), name="worktree-reaper")
     yield
     reaper_task.cancel()
+    await queue_worker.stop()
     await _github_poller.stop()
 
 

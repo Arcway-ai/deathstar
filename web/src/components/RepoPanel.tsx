@@ -80,27 +80,17 @@ export default function RepoPanel() {
               </button>
               {repoDropdownOpen && (
                 <div className="absolute left-0 top-full z-50 mt-1 min-w-[200px] rounded-lg border border-border-subtle bg-bg-surface p-1 shadow-xl animate-fade-in">
-                  {isDirty && (
-                    <div className="px-3 py-1.5 border-b border-border-subtle">
-                      <p className="text-[10px] text-warning">Save changes before switching repos.</p>
-                    </div>
-                  )}
                   {repos.map((r) => (
                     <button
                       key={r.name}
                       onClick={() => {
-                        if (!isDirty || r.name === selectedRepo) {
-                          navigate(`/${encodeURIComponent(r.name)}`);
-                          setRepoDropdownOpen(false);
-                        }
+                        navigate(`/${encodeURIComponent(r.name)}`);
+                        setRepoDropdownOpen(false);
                       }}
-                      disabled={isDirty && r.name !== selectedRepo}
                       className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors ${
                         r.name === selectedRepo
                           ? "bg-accent-muted text-accent"
-                          : isDirty
-                            ? "text-text-muted cursor-not-allowed"
-                            : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                          : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                       }`}
                     >
                       <span className="truncate">{r.name}</span>

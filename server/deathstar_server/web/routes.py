@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from deathstar_server.app_state import event_bus, git_service, settings
 from deathstar_server.errors import AppError
+from deathstar_server.web.agent_ws import is_branch_active
 from deathstar_server.services.event_bus import (
     EVENT_BRANCH_UPDATE,
     EVENT_LOCAL_CHECKOUT,
@@ -34,6 +35,8 @@ from deathstar_shared.models import (
     MemoryEntryResponse,
     PostReviewRequest,
     RepoContextResponse,
+    EnqueueRequest,
+    QueueItemResponse,
     RepoInfo,
     SaveMemoryRequest,
 )
@@ -464,6 +467,18 @@ def checkout_branch(name: str, request: CheckoutRequest) -> dict:
         raise AppError(ErrorCode.INVALID_REQUEST, "branch name must not start with '-'", status_code=400)
     repo_root = git_service.resolve_target(name)
 
+    # Block if an agent session is active on the current branch (uses primary checkout)
+    try:
+        current = git_service.current_branch(repo_root)
+    except subprocess.CalledProcessError:
+        current = None  # Detached HEAD — no branch to check
+    if current and is_branch_active(name, current):
+        raise AppError(
+            ErrorCode.INVALID_REQUEST,
+            f"an agent session is active on branch '{current}'; wait for it to finish or stop it first",
+            status_code=409,
+        )
+
     auto_committed = False
     auto_commit_branch: str | None = None
 
@@ -569,6 +584,14 @@ def sync_branch(name: str, body: SyncBranchRequest) -> dict:
         raise AppError(ErrorCode.INVALID_REQUEST, "base_branch must not start with '-'", status_code=400)
     repo_root = git_service.resolve_target(name)
     current = git_service.current_branch(repo_root)
+
+    # Block if an agent session is active on the current branch (uses primary checkout)
+    if is_branch_active(name, current):
+        raise AppError(
+            ErrorCode.INVALID_REQUEST,
+            f"an agent session is active on branch '{current}'; wait for it to finish or stop it first",
+            status_code=409,
+        )
 
     def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -1147,3 +1170,65 @@ def list_feedback(
     kind: str | None = Query(default=None, pattern="^(thumbs_up|thumbs_down)$"),
 ) -> list[dict[str, object]]:
     return _get_feedback_store().list_feedback(repo=repo, kind=kind)
+
+
+# ---------------------------------------------------------------------------
+# Message Queue
+# ---------------------------------------------------------------------------
+
+
+@web_router.post("/queue")
+def enqueue_message(request: EnqueueRequest) -> QueueItemResponse:
+    """Add a message to the async processing queue."""
+    from deathstar_server.app_state import conversation_store, queue_store, queue_worker
+
+    # Validate repo exists
+    try:
+        git_service.resolve_target(request.repo)
+    except AppError:
+        raise AppError(ErrorCode.INVALID_REQUEST, f"repo '{request.repo}' not found", status_code=404)
+
+    conversation_id = conversation_store.get_or_create(
+        request.conversation_id, request.repo, request.branch,
+    )
+    item = queue_store.enqueue(
+        conversation_id=conversation_id,
+        repo=request.repo,
+        branch=request.branch,
+        message=request.message,
+        workflow=request.workflow,
+        model=request.model,
+        system_prompt=request.system_prompt,
+    )
+    queue_worker.notify()
+    return QueueItemResponse(**{k: item[k] for k in QueueItemResponse.model_fields})
+
+
+@web_router.get("/queue")
+def list_queue(
+    conversation_id: str | None = Query(default=None),
+    repo: str | None = Query(default=None),
+) -> list[QueueItemResponse]:
+    """List pending and processing queue items."""
+    from deathstar_server.app_state import queue_store
+
+    items = queue_store.list_pending(conversation_id=conversation_id, repo=repo)
+    return [
+        QueueItemResponse(**{k: item[k] for k in QueueItemResponse.model_fields})
+        for item in items
+    ]
+
+
+@web_router.delete("/queue/{item_id}")
+def cancel_queue_item(item_id: str) -> dict[str, bool]:
+    """Cancel a pending queue item."""
+    from deathstar_server.app_state import queue_store
+
+    cancelled = queue_store.cancel(item_id)
+    if not cancelled:
+        raise AppError(
+            ErrorCode.INVALID_REQUEST,
+            "queue item not found or already processed",
+            status_code=404,
+        )
+    return {"cancelled": True}

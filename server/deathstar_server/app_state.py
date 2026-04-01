@@ -12,6 +12,8 @@ from deathstar_server.web.conversations import ConversationStore
 from deathstar_server.services.event_bus import EventBus
 from deathstar_server.web.feedback import FeedbackStore
 from deathstar_server.web.memory_bank import MemoryBank
+from deathstar_server.web.queue_store import QueueStore
+from deathstar_server.services.queue_worker import QueueWorker
 
 settings = load_settings()
 configure_logging(settings.log_path, settings.log_level)
@@ -35,3 +37,5 @@ conversation_store = ConversationStore(db)
 memory_bank = MemoryBank(db)
 feedback_store = FeedbackStore(db)
 event_bus = EventBus()
+queue_store = QueueStore(db)
+queue_worker = QueueWorker(queue_store, conversation_store, worktree_manager, event_bus)
