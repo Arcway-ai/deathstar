@@ -72,9 +72,16 @@ body {
 }
 
 /* ── Safe-area helpers (notch / home indicator on iOS/iPadOS) ─── */
-/* Used on the input bar so it's never hidden behind the home indicator. */
+/* Used on the input bar so it's never hidden behind the home indicator.
+   The sm: variant matches the sm:pb-4 breakpoint so safe-area is preserved
+   on tablet-sized screens (landscape iPad, large phones). */
 .pb-safe {
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+@media (min-width: 640px) {
+  .pb-safe {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
 }
 
 /* ── Scrollbar ─────────────────────────────────────────────────── */

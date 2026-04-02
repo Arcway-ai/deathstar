@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { Archive, GitMerge, GitPullRequest, Loader2, RefreshCw, ScanSearch, Square, X, Zap } from "lucide-react";
 import { useStore } from "../store";
+import type { ServerQueueItem } from "../types";
 
 /**
  * Contextual action bar above the input.
@@ -141,9 +143,6 @@ export default function ActionBar() {
 // ---------------------------------------------------------------------------
 // Queue badge — shows pending/processing items with per-item cancel
 // ---------------------------------------------------------------------------
-
-import type { ServerQueueItem } from "../types";
-import { useState } from "react";
 
 function QueueBadge({
   items,

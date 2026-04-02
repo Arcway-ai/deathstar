@@ -23,8 +23,10 @@
         }
         setAppHeight();
         if (window.visualViewport) {
+          // 'resize' fires when the visible height changes (keyboard open/close).
+          // 'scroll' is intentionally omitted — it fires on every scroll frame
+          // and has nothing to do with keyboard geometry.
           window.visualViewport.addEventListener('resize', setAppHeight);
-          window.visualViewport.addEventListener('scroll', setAppHeight);
         }
         window.addEventListener('resize', setAppHeight);
         window.addEventListener('orientationchange', function () {

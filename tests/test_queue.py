@@ -182,6 +182,51 @@ class TestRecoverStale:
         assert recovered == 0
 
 
+class TestForceCancel:
+    def test_force_cancels_pending_item(self, tmp_path):
+        store = _make_queue_store(tmp_path)
+        item = store.enqueue(conversation_id="c1", repo="r1", message="a")
+        assert store.force_cancel(str(item["id"])) is True
+        assert store.list_pending() == []
+
+    def test_force_cancels_processing_item(self, tmp_path):
+        store = _make_queue_store(tmp_path)
+        store.enqueue(conversation_id="c1", repo="r1", message="a")
+        claimed = store.claim_next()
+        assert claimed is not None
+        # Unlike cancel(), force_cancel() succeeds on processing items
+        assert store.force_cancel(str(claimed["id"])) is True
+        assert store.list_pending() == []
+
+    def test_force_cancel_nonexistent_returns_false(self, tmp_path):
+        store = _make_queue_store(tmp_path)
+        assert store.force_cancel("nonexistent") is False
+
+    def test_force_cancel_completed_returns_false(self, tmp_path):
+        store = _make_queue_store(tmp_path)
+        store.enqueue(conversation_id="c1", repo="r1", message="a")
+        claimed = store.claim_next()
+        assert claimed is not None
+        store.mark_completed(str(claimed["id"]), "msg-1")
+        # Already completed — force_cancel should not match
+        assert store.force_cancel(str(claimed["id"])) is False
+
+    def test_mark_completed_noop_after_force_cancel(self, tmp_path):
+        """Worker finishing after a force_cancel must not revert status to completed."""
+        store = _make_queue_store(tmp_path)
+        store.enqueue(conversation_id="c1", repo="r1", message="a")
+        claimed = store.claim_next()
+        assert claimed is not None
+        store.force_cancel(str(claimed["id"]))
+        # Worker tries to mark_completed (WHERE status = 'processing' — no match)
+        store.mark_completed(str(claimed["id"]), "late-msg")
+        conn = store._db.get_conn()
+        row = conn.execute(
+            "SELECT status FROM message_queue WHERE id = ?", (claimed["id"],)
+        ).fetchone()
+        assert row["status"] == "cancelled"
+
+
 class TestHasPending:
     def test_true_when_pending(self, tmp_path):
         store = _make_queue_store(tmp_path)

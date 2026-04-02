@@ -34,6 +34,7 @@ from deathstar_shared.models import (
     MemoryEntryResponse,
     PostReviewRequest,
     RepoContextResponse,
+    AgentSessionResponse,
     EnqueueRequest,
     QueueItemResponse,
     RepoInfo,
@@ -1289,23 +1290,25 @@ def cancel_queue_item(item_id: str) -> dict[str, bool]:
 
 
 @web_router.get("/agent/sessions")
-def list_agent_sessions() -> list[dict]:
+def list_agent_sessions() -> list[AgentSessionResponse]:
     """Return a snapshot of active interactive agent sessions.
 
     Used by the frontend to reconcile UI state on reconnect or page refresh.
     Only sessions that currently hold an open WebSocket connection are returned.
+    list() snapshots the dict before iterating to avoid RuntimeError if the
+    event loop adds/removes sessions concurrently from another thread.
     """
     from deathstar_server.web.agent_ws import _sessions
 
-    result = []
-    for s in _sessions.values():
-        if s.websocket is not None:
-            result.append({
-                "conversation_id": s.conversation_id,
-                "repo": s.repo,
-                "branch": s.branch,
-                "workflow": s.workflow.value,
-                "started_at": s.created_at,
-                "last_active": s.last_active,
-            })
-    return result
+    return [
+        AgentSessionResponse(
+            conversation_id=s.conversation_id,
+            repo=s.repo,
+            branch=s.branch,
+            workflow=s.workflow,
+            started_at=s.created_at,
+            last_active=s.last_active,
+        )
+        for s in list(_sessions.values())
+        if s.websocket is not None
+    ]

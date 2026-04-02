@@ -63,14 +63,19 @@ class QueueWorker:
         self._running = False
         self._wake_event = asyncio.Event()
         self._poll_interval = 3
-        # Interrupt support: track the item currently being executed
+        # Interrupt support: track the item currently being executed.
+        # _loop is captured in start() so interrupt_if_current() — which is
+        # called from a sync FastAPI threadpool handler — can schedule the
+        # coroutine onto the correct event loop via run_coroutine_threadsafe.
         self._current_item_id: str | None = None
         self._current_client: ClaudeSDKClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
         if self._running:
             return
         self._running = True
+        self._loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._process_loop(), name="queue-worker")
         logger.info("queue worker started")
 
@@ -92,20 +97,22 @@ class QueueWorker:
     def interrupt_if_current(self, item_id: str) -> None:
         """Interrupt the SDK client if item_id is the one currently executing.
 
-        Called synchronously from the HTTP cancel route.  The interrupt is
-        fire-and-forget: the asyncio task running _execute_item will receive
-        the cancellation signal and exit the receive_messages loop.
+        Called synchronously from the HTTP cancel route (which runs in a
+        ThreadPoolExecutor, not the event loop thread).  We use
+        run_coroutine_threadsafe so the interrupt coroutine is scheduled onto
+        the correct event loop rather than the calling thread's loop (which
+        does not exist in Python 3.12).
         """
         if self._current_item_id == item_id and self._current_client is not None:
-            logger.info("interrupting queue item %s on cancel request", item_id)
-            try:
-                asyncio.get_event_loop().create_task(
-                    self._current_client.interrupt(),
-                    name=f"queue-interrupt-{item_id}",
+            if self._loop is None or not self._loop.is_running():
+                logger.warning(
+                    "cannot interrupt queue item %s: event loop not available", item_id
                 )
-            except RuntimeError:
-                # No running event loop in this thread — best-effort only
-                pass
+                return
+            logger.info("interrupting queue item %s on cancel request", item_id)
+            asyncio.run_coroutine_threadsafe(
+                self._current_client.interrupt(), self._loop
+            )
 
     async def _process_loop(self) -> None:
         recovered = self._queue_store.recover_stale()

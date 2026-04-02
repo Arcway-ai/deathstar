@@ -409,6 +409,17 @@ class QueueItemResponse(DeathStarModel):
     created_at: datetime
 
 
+class AgentSessionResponse(DeathStarModel):
+    """Active interactive agent session (WebSocket-connected)."""
+
+    conversation_id: str
+    repo: str
+    branch: str | None = None
+    workflow: WorkflowKind
+    started_at: float
+    last_active: float
+
+
 # ---------------------------------------------------------------------------
 # Repo Context
 # ---------------------------------------------------------------------------
