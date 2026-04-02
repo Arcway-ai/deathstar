@@ -1,7 +1,9 @@
 import { useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useStore } from "./store";
+import * as api from "./api";
 import { initSession } from "./api";
+import { toast } from "./components/Toast";
 import { applyTheme } from "./themes";
 import AuthGate from "./components/AuthGate";
 import TopBar from "./components/TopBar";
@@ -53,11 +55,23 @@ export default function App() {
       useStore.getState();
 
     if (urlRepo) {
-      // URL has a repo — make sure the store matches
+      // URL has a repo — always refresh context on load (detects merged PRs,
+      // deleted branches, etc). Only do the full selectRepo if repo changed.
       if (currentRepo !== urlRepo) {
         selectRepo(urlRepo);
-        loadBranches();
+      } else {
+        // Same repo but page refreshed — refresh context to detect branch changes
+        api.fetchRepoContext(urlRepo).then((ctx) => {
+          useStore.setState({ repoContext: ctx });
+          if (ctx.branch_switched_from) {
+            toast.info(
+              "Branch cleaned up",
+              `"${ctx.branch_switched_from}" was deleted on remote (PR merged?). Switched to ${ctx.branch}.`,
+            );
+          }
+        }).catch(() => {});
       }
+      loadBranches();
       // URL has a conversation — load it
       if (urlConversationId && currentConv !== urlConversationId) {
         selectConversation(urlConversationId);
