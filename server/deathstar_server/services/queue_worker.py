@@ -103,7 +103,12 @@ class QueueWorker:
         the correct event loop rather than the calling thread's loop (which
         does not exist in Python 3.12).
         """
-        if self._current_item_id == item_id and self._current_client is not None:
+        # Snapshot the client reference in one GIL-atomic read so the asyncio
+        # event loop thread can't set _current_client = None (in the finally
+        # block of _process_loop) between our None check and the .interrupt()
+        # call — avoiding a TOCTOU race that would raise AttributeError.
+        client = self._current_client
+        if self._current_item_id == item_id and client is not None:
             if self._loop is None or not self._loop.is_running():
                 logger.warning(
                     "cannot interrupt queue item %s: event loop not available", item_id
@@ -111,7 +116,7 @@ class QueueWorker:
                 return
             logger.info("interrupting queue item %s on cancel request", item_id)
             asyncio.run_coroutine_threadsafe(
-                self._current_client.interrupt(), self._loop
+                client.interrupt(), self._loop
             )
 
     async def _process_loop(self) -> None:
