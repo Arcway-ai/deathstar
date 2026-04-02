@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { X, Copy, Check, FileCode, ChevronRight } from "lucide-react";
+import { X, Copy, Check, FileCode, ChevronRight, Pin } from "lucide-react";
 import hljs from "highlight.js/lib/core";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useStore } from "../store";
 import { detectLanguage } from "../fileTree";
 
@@ -43,11 +45,17 @@ export default function FileViewer() {
   const [copied, setCopied] = useState(false);
   const codeRef = useRef<HTMLDivElement>(null);
 
+  const pinFile = useStore((s) => s.pinFile);
+  const unpinFile = useStore((s) => s.unpinFile);
+  const contextFiles = useStore((s) => s.contextFiles);
+
   const path = fileContent?.path ?? "";
   const content = fileContent?.content ?? "";
   const lang = detectLanguage(path);
   const lines = content.split("\n");
   const lineCount = lines.length;
+  const isMarkdown = /\.mdx?$/i.test(path);
+  const isPinned = contextFiles.includes(path);
 
   // Highlight code
   const highlighted = useHighlight(content, lang);
@@ -105,6 +113,17 @@ export default function FileViewer() {
           {lineCount} {lineCount === 1 ? "line" : "lines"}
         </span>
 
+        {/* Pin */}
+        <button
+          onClick={() => isPinned ? unpinFile(path) : pinFile(path)}
+          className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
+            isPinned ? "text-accent" : "text-text-muted hover:bg-bg-hover hover:text-accent"
+          }`}
+          title={isPinned ? "Unpin from context" : "Pin as context"}
+        >
+          <Pin size={12} className={isPinned ? "fill-current" : ""} />
+        </button>
+
         {/* Copy */}
         <button
           onClick={handleCopy}
@@ -128,31 +147,37 @@ export default function FileViewer() {
         </button>
       </div>
 
-      {/* Code area */}
-      <div ref={codeRef} className="flex-1 overflow-auto bg-bg-deep">
-        <div className="min-w-fit">
-          <table className="w-full border-collapse">
-            <tbody>
-              {highlighted.map((lineHtml, i) => (
-                <tr
-                  key={i}
-                  className="group hover:bg-bg-surface/40 transition-colors duration-75"
-                >
-                  {/* Line number gutter */}
-                  <td className="sticky left-0 w-[1px] select-none whitespace-nowrap bg-bg-deep pr-4 pl-3 text-right align-top font-mono text-[11px] leading-[1.65] text-text-muted/50 group-hover:text-text-muted">
-                    {i + 1}
-                  </td>
-                  {/* Code line */}
-                  <td
-                    className="whitespace-pre px-4 align-top font-mono text-[12px] leading-[1.65] text-text-primary"
-                    dangerouslySetInnerHTML={{ __html: lineHtml }}
-                  />
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Content area */}
+      {isMarkdown ? (
+        <div ref={codeRef} className="flex-1 overflow-auto bg-bg-deep px-6 py-4">
+          <div className="prose prose-invert max-w-none text-sm text-text-primary prose-headings:text-text-primary prose-a:text-accent prose-code:text-accent prose-strong:text-text-primary prose-pre:bg-bg-surface prose-pre:border prose-pre:border-border-subtle">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div ref={codeRef} className="flex-1 overflow-auto bg-bg-deep">
+          <div className="min-w-fit">
+            <table className="w-full border-collapse">
+              <tbody>
+                {highlighted.map((lineHtml, i) => (
+                  <tr
+                    key={i}
+                    className="group hover:bg-bg-surface/40 transition-colors duration-75"
+                  >
+                    <td className="sticky left-0 w-[1px] select-none whitespace-nowrap bg-bg-deep pr-4 pl-3 text-right align-top font-mono text-[11px] leading-[1.65] text-text-muted/50 group-hover:text-text-muted">
+                      {i + 1}
+                    </td>
+                    <td
+                      className="whitespace-pre px-4 align-top font-mono text-[12px] leading-[1.65] text-text-primary"
+                      dangerouslySetInnerHTML={{ __html: lineHtml }}
+                    />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Footer status */}
       <div className="flex items-center gap-3 border-t border-border-subtle bg-bg-primary px-3 py-1">

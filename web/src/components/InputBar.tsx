@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, AlertCircle, GitBranch } from "lucide-react";
+import { Send, AlertCircle, GitBranch, Pin, X } from "lucide-react";
 import { useStore } from "../store";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 export default function InputBar() {
-  const [text, setText] = useState("");
+  const text = useStore((s) => s.draftInput);
+  const setText = useStore((s) => s.setDraftInput);
   const [branchModal, setBranchModal] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
   const [creatingBranch, setCreatingBranch] = useState(false);
@@ -22,7 +23,11 @@ export default function InputBar() {
   const agentStream = useStore((s) => s.agentStream);
   const repoContext = useStore((s) => s.repoContext);
   const workflow = useStore((s) => s.workflow);
+  const contextFiles = useStore((s) => s.contextFiles);
+  const unpinFile = useStore((s) => s.unpinFile);
+  const pinFile = useStore((s) => s.pinFile);
   const createAndSwitchBranch = useStore((s) => s.createAndSwitchBranch);
+  const [dragOver, setDragOver] = useState(false);
 
   const hasPendingPermission = agentStream.pendingPermission !== null;
   const isAgentWaitingForInput = sending && !agentStream.isStreaming && !hasPendingPermission;
@@ -142,14 +147,60 @@ export default function InputBar() {
         </Alert>
       )}
 
+      {/* Pinned context files */}
+      {contextFiles.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-1">
+          <Pin size={10} className="text-accent shrink-0" />
+          {contextFiles.map((path) => {
+            const fileName = path.split("/").pop() ?? path;
+            return (
+              <span
+                key={path}
+                className="inline-flex items-center gap-1 rounded-md bg-accent/10 px-1.5 py-0.5 text-[10px] font-mono text-accent"
+                title={path}
+              >
+                {fileName}
+                <button
+                  onClick={() => unpinFile(path)}
+                  className="text-accent/60 hover:text-accent transition-colors"
+                >
+                  <X size={8} />
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {/* Input + agent controls */}
-      <div className="flex items-end gap-2 rounded-xl border border-border-subtle bg-bg-surface p-2 focus-within:border-accent/50 transition-colors">
+      <div
+        className={`flex items-end gap-2 rounded-xl border bg-bg-surface p-2 transition-colors ${
+          dragOver
+            ? "border-accent bg-accent/5"
+            : "border-border-subtle focus-within:border-accent/50"
+        }`}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("text/plain")) {
+            e.preventDefault();
+            setDragOver(true);
+          }
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const filePath = e.dataTransfer.getData("text/plain");
+          if (filePath && !filePath.includes("\n")) {
+            pinFile(filePath);
+          }
+        }}
+      >
         <textarea
           ref={textareaRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
+          placeholder={dragOver ? "Drop file to pin as context…" : placeholder}
           rows={1}
           className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-text-primary placeholder:text-text-muted outline-none"
         />

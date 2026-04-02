@@ -14,6 +14,7 @@ import {
   Save,
   ChevronDown,
   Search,
+  Pin,
 } from "lucide-react";
 import { useStore } from "../store";
 import { buildTree } from "../fileTree";
@@ -340,9 +341,13 @@ function TreeNodeRow({
   repo: string;
 }) {
   const openFile = useStore((s) => s.openFile);
+  const pinFile = useStore((s) => s.pinFile);
+  const unpinFile = useStore((s) => s.unpinFile);
+  const contextFiles = useStore((s) => s.contextFiles);
   const [expanded, setExpanded] = useState(depth < 1);
 
   const isActive = activePath === node.path;
+  const isPinned = !node.isDir && contextFiles.includes(node.path);
   const paddingLeft = 4 + depth * 14;
 
   if (node.isDir) {
@@ -385,21 +390,43 @@ function TreeNodeRow({
   }
 
   return (
-    <button
-      onClick={() => openFile(repo, node.path)}
-      className={`flex w-full items-center gap-1 rounded py-[3px] text-left font-mono text-[11px] transition-colors ${
+    <div
+      className={`group/file flex items-center rounded py-[3px] transition-colors ${
         isActive
           ? "bg-accent-muted text-accent"
-          : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+          : isPinned
+            ? "bg-accent/5 text-accent"
+            : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
       }`}
       style={{ paddingLeft: paddingLeft + 10 }}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/plain", node.path);
+        e.dataTransfer.effectAllowed = "copy";
+      }}
     >
-      <FileText
-        size={11}
-        className={`shrink-0 ${isActive ? "text-accent" : "text-text-muted"}`}
-      />
-      <span className="truncate">{node.name}</span>
-    </button>
+      <button
+        onClick={() => openFile(repo, node.path)}
+        className="flex flex-1 items-center gap-1 min-w-0 text-left font-mono text-[11px]"
+      >
+        <FileText
+          size={11}
+          className={`shrink-0 ${isActive || isPinned ? "text-accent" : "text-text-muted"}`}
+        />
+        <span className="truncate">{node.name}</span>
+      </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); isPinned ? unpinFile(node.path) : pinFile(node.path); }}
+        className={`shrink-0 mr-1 rounded p-0.5 transition-all ${
+          isPinned
+            ? "text-accent opacity-100"
+            : "text-text-muted opacity-0 group-hover/file:opacity-100 hover:text-accent"
+        }`}
+        title={isPinned ? "Unpin from context" : "Pin as context"}
+      >
+        <Pin size={9} className={isPinned ? "fill-current" : ""} />
+      </button>
+    </div>
   );
 }
 

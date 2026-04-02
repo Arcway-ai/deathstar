@@ -141,6 +141,16 @@ interface Store {
   postReviewToGitHub: () => Promise<void>;
   applySuggestions: () => Promise<ApplySuggestionsResponse | null>;
 
+  /* ── Context Files ─────────────────────────────────────────── */
+  contextFiles: string[];
+  pinFile: (path: string) => void;
+  unpinFile: (path: string) => void;
+  clearContextFiles: () => void;
+
+  /* ── Draft Input ──────────────────────────────────────────── */
+  draftInput: string;
+  setDraftInput: (text: string) => void;
+
   /* ── Theme ─────────────────────────────────────────────────── */
   theme: Theme;
   setTheme: (t: Theme) => void;
@@ -598,6 +608,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
 
     // Use the singleton agent socket
     _ensureAgentSocket();
+    const { contextFiles } = get();
     _agentSocket!.start({
       repo: selectedRepo,
       branch: repoContext?.branch ?? undefined,
@@ -607,6 +618,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
       model: selectedModel ?? undefined,
       system,
       auto_accept: get().autoAccept,
+      context_files: contextFiles.length > 0 ? contextFiles : undefined,
     });
   },
 
@@ -904,6 +916,20 @@ export const useStore = create<Store>()(persist((set, get) => ({
     _agentSocket!.compact();
   },
   stopSuperlaser: () => set({ superlaserFiring: false }),
+
+  /* ── Context Files ────────────────────────────────────────────── */
+  contextFiles: [],
+  pinFile: (path) => set((s) => ({
+    contextFiles: s.contextFiles.includes(path) ? s.contextFiles : [...s.contextFiles, path],
+  })),
+  unpinFile: (path) => set((s) => ({
+    contextFiles: s.contextFiles.filter((f) => f !== path),
+  })),
+  clearContextFiles: () => set({ contextFiles: [] }),
+
+  /* ── Draft Input ─────────────────────────────────────────────── */
+  draftInput: "",
+  setDraftInput: (text) => set({ draftInput: text }),
 
   /* ── UI State ────────────────────────────────────────────────── */
   sidebarOpen: false,

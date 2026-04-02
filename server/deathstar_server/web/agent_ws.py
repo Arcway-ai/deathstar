@@ -530,6 +530,7 @@ async def _handle_start(
     system_prompt = msg.get("system")
     auto_accept = msg.get("auto_accept", False)
     branch = msg.get("branch") or None  # Normalize empty string to None
+    context_files: list[str] = msg.get("context_files") or []
 
     try:
         workflow = WorkflowKind(workflow_str)
@@ -579,6 +580,27 @@ async def _handle_start(
         return existing_session
 
     logger.info("resolved working dir: %s (branch=%s)", cwd, branch)
+
+    # Read pinned context files and inject into system prompt
+    if context_files and system_prompt:
+        file_sections: list[str] = []
+        for rel_path in context_files[:20]:  # Cap at 20 files
+            # Validate path (no traversal)
+            if ".." in rel_path or rel_path.startswith("/"):
+                continue
+            file_path = cwd / rel_path
+            if file_path.is_file():
+                try:
+                    content = file_path.read_text(errors="replace")[:50_000]  # Cap per file
+                    file_sections.append(f"### {rel_path}\n```\n{content}\n```")
+                except OSError:
+                    continue
+        if file_sections:
+            system_prompt += (
+                "\n\n## Pinned Reference Files\n"
+                "The user has pinned these files as context for this conversation:\n\n"
+                + "\n\n".join(file_sections)
+            )
 
     # Ensure .claudeignore exists in the working directory
     _ensure_claudeignore(cwd)

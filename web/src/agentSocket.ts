@@ -16,6 +16,7 @@ export interface AgentStartConfig {
   model?: string;
   system?: string;
   auto_accept?: boolean;
+  context_files?: string[];
 }
 
 export interface AgentStatusEvent {
