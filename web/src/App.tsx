@@ -40,7 +40,9 @@ export default function App() {
     applyTheme(theme);
   }, [theme]);
 
-  // Boot: ensure session cookie, then fetch repos, providers, auth status
+  // Boot: ensure session cookie, then fetch repos, providers, auth status.
+  // Agent state sync happens via onStateChange('connected') in the WS socket
+  // singleton, so there's no need to call syncAgentState() here separately.
   useEffect(() => {
     initSession().then(() => {
       loadRepos();

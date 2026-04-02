@@ -22,6 +22,9 @@ DeathStar is a Terraform-built remote AI coding workstation on AWS. A local Pyth
 # Install in development mode (editable)
 uv tool install -e . --force
 
+# Install pre-commit hooks (run once after cloning)
+uv run pre-commit install
+
 # Run tests
 uv run pytest tests/ -v
 

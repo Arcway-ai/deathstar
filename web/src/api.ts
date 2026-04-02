@@ -313,3 +313,18 @@ export async function fetchQueue(params?: {
 export async function cancelQueueItem(id: string): Promise<void> {
   await request(`/queue/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
+
+/* ── Agent Sessions ────────────────────────────────────────────── */
+
+export interface AgentSessionInfo {
+  conversation_id: string;
+  repo: string;
+  branch: string | null;
+  workflow: string;
+  started_at: number;
+  last_active: number;
+}
+
+export async function fetchAgentSessions(): Promise<AgentSessionInfo[]> {
+  return request<AgentSessionInfo[]>("/agent/sessions");
+}

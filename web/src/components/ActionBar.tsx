@@ -1,5 +1,7 @@
-import { Archive, GitMerge, GitPullRequest, RefreshCw, ScanSearch, Square, X, Zap } from "lucide-react";
+import { useState } from "react";
+import { Archive, GitMerge, GitPullRequest, Loader2, RefreshCw, ScanSearch, Square, X, Zap } from "lucide-react";
 import { useStore } from "../store";
+import type { ServerQueueItem } from "../types";
 
 /**
  * Contextual action bar above the input.
@@ -14,6 +16,7 @@ export default function ActionBar() {
   const sendMessage = useStore((s) => s.sendMessage);
   const serverQueue = useStore((s) => s.serverQueue);
   const clearQueue = useStore((s) => s.clearQueue);
+  const cancelQueueItem = useStore((s) => s.cancelQueueItem);
   const agentStream = useStore((s) => s.agentStream);
   const fireSuperlaser = useStore((s) => s.fireSuperlaser);
   const conversationId = useStore((s) => s.conversationId);
@@ -125,18 +128,7 @@ export default function ActionBar() {
       {/* Right: queue + status — ml-auto pushes to end of whatever row it lands on */}
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {serverQueue.length > 0 && (
-          <div className="flex items-center gap-1 text-[10px]">
-            <span className="text-warning">
-              {serverQueue.length} queued
-            </span>
-            <button
-              onClick={clearQueue}
-              className="text-text-muted hover:text-warning transition-colors"
-              title="Clear queue"
-            >
-              <X size={10} />
-            </button>
-          </div>
+          <QueueBadge items={serverQueue} onCancel={cancelQueueItem} onClearAll={clearQueue} />
         )}
         {isBusy && (
           <span className="text-[10px] text-text-muted animate-pulse">
@@ -144,6 +136,96 @@ export default function ActionBar() {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Queue badge — shows pending/processing items with per-item cancel
+// ---------------------------------------------------------------------------
+
+function QueueBadge({
+  items,
+  onCancel,
+  onClearAll,
+}: {
+  items: ServerQueueItem[];
+  onCancel: (id: string) => Promise<void>;
+  onClearAll: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const processing = items.filter((i) => i.status === "processing");
+  const pending = items.filter((i) => i.status === "pending");
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-[10px] text-warning hover:text-warning/80 transition-colors"
+        title="View queued messages"
+      >
+        {processing.length > 0 && (
+          <Loader2 size={10} className="animate-spin" />
+        )}
+        {items.length} queued
+      </button>
+
+      {open && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setOpen(false)}
+          />
+          {/* Popover */}
+          <div className="absolute bottom-full right-0 z-50 mb-2 w-72 rounded-lg border border-border-subtle bg-bg-surface shadow-xl">
+            <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2">
+              <span className="text-[11px] font-medium text-text-secondary">
+                Message Queue
+              </span>
+              {pending.length > 0 && (
+                <button
+                  onClick={() => { onClearAll(); setOpen(false); }}
+                  className="text-[10px] text-text-muted hover:text-error transition-colors"
+                >
+                  Clear pending
+                </button>
+              )}
+            </div>
+            <div className="max-h-52 overflow-y-auto divide-y divide-border-subtle/50">
+              {items.map((item) => (
+                <div key={item.id} className="flex items-start gap-2 px-3 py-2">
+                  <div className="mt-0.5 shrink-0">
+                    {item.status === "processing" ? (
+                      <Loader2 size={10} className="animate-spin text-accent" />
+                    ) : (
+                      <div className="h-2 w-2 rounded-full bg-warning/60 mt-0.5" />
+                    )}
+                  </div>
+                  <p className="flex-1 truncate text-[11px] text-text-secondary" title={item.message}>
+                    {item.message}
+                  </p>
+                  <button
+                    onClick={() => { onCancel(item.id); setOpen(false); }}
+                    className="shrink-0 text-text-muted hover:text-error transition-colors"
+                    title={item.status === "processing" ? "Interrupt and cancel" : "Cancel"}
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            {processing.length > 0 && (
+              <div className="border-t border-border-subtle/50 px-3 py-1.5">
+                <p className="text-[10px] text-text-muted">
+                  <span className="text-accent">{processing.length} running</span>
+                  {pending.length > 0 && ` · ${pending.length} waiting`}
+                </p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

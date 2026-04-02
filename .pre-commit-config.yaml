@@ -1,0 +1,26 @@
+repos:
+  # Ruff: lint + auto-fix, then format check
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+        # Match the directories from CLAUDE.md dev commands
+        files: ^(cli|server|shared|tests)/
+      - id: ruff-format
+        files: ^(cli|server|shared|tests)/
+
+  # Pytest: run the full test suite before allowing a commit.
+  # Use -x (fail fast) and -q (quiet) to keep hook output short.
+  # Skip if no Python files in the changeset (e.g. docs-only changes).
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: uv run pytest tests/ -x -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        # Runs when any staged file matches types: [python].
+        # Skipped for non-Python-only commits (e.g. docs, CSS).
+        always_run: false

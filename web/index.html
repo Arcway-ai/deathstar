@@ -9,6 +9,33 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
     <title>DeathStar</title>
+    <script>
+      // iOS/iPadOS: when the virtual keyboard opens the browser scrolls the
+      // layout viewport rather than resizing it, so `100dvh` is larger than
+      // the visible area and a blank gap appears at the bottom.
+      // Fix: track the real visible height via the Visual Viewport API and
+      // write it into --app-height so the app container is always exactly as
+      // tall as the area above the keyboard.
+      (function () {
+        function setAppHeight() {
+          var h = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+          document.documentElement.style.setProperty('--app-height', h + 'px');
+        }
+        setAppHeight();
+        if (window.visualViewport) {
+          // 'resize' fires when the visible height changes (keyboard open/close).
+          // 'scroll' is intentionally omitted — it fires on every scroll frame
+          // and has nothing to do with keyboard geometry.
+          window.visualViewport.addEventListener('resize', setAppHeight);
+        }
+        window.addEventListener('resize', setAppHeight);
+        window.addEventListener('orientationchange', function () {
+          // orientationchange fires before innerHeight updates on iOS
+          setTimeout(setAppHeight, 100);
+          setTimeout(setAppHeight, 300);
+        });
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

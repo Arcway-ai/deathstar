@@ -34,6 +34,7 @@ from deathstar_shared.models import (
     MemoryEntryResponse,
     PostReviewRequest,
     RepoContextResponse,
+    AgentSessionResponse,
     EnqueueRequest,
     QueueItemResponse,
     RepoInfo,
@@ -1268,10 +1269,17 @@ def list_queue(
 
 @web_router.delete("/queue/{item_id}")
 def cancel_queue_item(item_id: str) -> dict[str, bool]:
-    """Cancel a pending queue item."""
-    from deathstar_server.app_state import queue_store
+    """Cancel a pending or processing queue item.
 
-    cancelled = queue_store.cancel(item_id)
+    For processing items the worker's SDK client is interrupted first so the
+    in-flight agent call is stopped immediately before the DB record is updated.
+    """
+    from deathstar_server.app_state import queue_store, queue_worker
+
+    # Try to interrupt if this is the item currently being processed
+    queue_worker.interrupt_if_current(item_id)
+
+    cancelled = queue_store.force_cancel(item_id)
     if not cancelled:
         raise AppError(
             ErrorCode.INVALID_REQUEST,
@@ -1279,3 +1287,28 @@ def cancel_queue_item(item_id: str) -> dict[str, bool]:
             status_code=404,
         )
     return {"cancelled": True}
+
+
+@web_router.get("/agent/sessions")
+def list_agent_sessions() -> list[AgentSessionResponse]:
+    """Return a snapshot of active interactive agent sessions.
+
+    Used by the frontend to reconcile UI state on reconnect or page refresh.
+    Only sessions that currently hold an open WebSocket connection are returned.
+    list() snapshots the dict before iterating to avoid RuntimeError if the
+    event loop adds/removes sessions concurrently from another thread.
+    """
+    from deathstar_server.web.agent_ws import _sessions
+
+    return [
+        AgentSessionResponse(
+            conversation_id=s.conversation_id,
+            repo=s.repo,
+            branch=s.branch,
+            workflow=s.workflow,
+            started_at=s.created_at,
+            last_active=s.last_active,
+        )
+        for s in list(_sessions.values())
+        if s.websocket is not None
+    ]

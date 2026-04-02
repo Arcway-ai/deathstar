@@ -144,8 +144,10 @@ export default function ChatView() {
         </div>
       )}
 
-      {/* Input area */}
-      <div className="border-t border-border-subtle bg-bg-primary px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
+      {/* Input area — pb-safe provides env(safe-area-inset-bottom) clearance
+           for the home indicator on iPad/iPhone, with a responsive floor
+           (0.75 rem mobile, 1 rem sm+) so desktop spacing is unchanged. */}
+      <div className="border-t border-border-subtle bg-bg-primary px-3 pt-2 pb-safe sm:px-4">
         <div className="mx-auto max-w-3xl">
           <WorkflowPills />
           <ActionBar />
