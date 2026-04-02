@@ -34,9 +34,10 @@ export default function ModelSelector() {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         className="flex items-center gap-1.5 rounded-md bg-bg-surface px-2 py-1 text-xs hover:bg-bg-hover transition-colors"
+        title={displayName}
       >
         <Zap size={12} className="text-text-muted" />
-        <span className="font-mono text-text-secondary max-w-[120px] truncate">
+        <span className="hidden sm:inline font-mono text-text-secondary max-w-[120px] truncate">
           {displayName}
         </span>
         <ChevronDown size={10} className="text-text-muted" />

@@ -41,92 +41,89 @@ export default function ActionBar() {
   const btnBase = "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
 
   return (
-    <div className="flex items-center gap-1.5 mb-1.5 px-0.5">
-      {/* Left: actions */}
-      <div className="flex items-center gap-1.5">
-        <button
-          onClick={fireSuperlaser}
-          disabled={!canCompact}
-          className={`${btnBase} border border-border-subtle text-text-secondary hover:border-accent/30 hover:text-accent hover:bg-accent/10`}
-          title="Compact conversation context"
-        >
-          <Archive size={12} />
-          Compact
-        </button>
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mb-1.5 px-0.5">
+      <button
+        onClick={fireSuperlaser}
+        disabled={!canCompact}
+        className={`${btnBase} border border-border-subtle text-text-secondary hover:border-accent/30 hover:text-accent hover:bg-accent/10`}
+        title="Compact conversation context"
+      >
+        <Archive size={12} />
+        Compact
+      </button>
 
-        <button
-          onClick={() => {
-            if (canMakePR) {
-              if (branchPR) {
-                sendMessage(
-                  `Update the PR description and title for PR #${branchPR.number} based on the latest commits and changes on this branch.`,
-                );
-              } else {
-                sendMessage(
-                  "Open a pull request for the changes on this branch. Write a good PR title and description based on the commits and changes.",
-                );
-              }
-            }
-          }}
-          disabled={!canMakePR}
-          className={`${btnBase} border border-accent/30 text-accent hover:bg-accent/10`}
-          title={!isOnFeatureBranch ? "Switch to a feature branch first" : !conversationId ? "Start a conversation first" : branchPR ? `Update PR #${branchPR.number}` : "Create a pull request"}
-        >
-          {branchPR ? <RefreshCw size={12} /> : <GitPullRequest size={12} />}
-          {branchPR ? `Update PR #${branchPR.number}` : "Make PR"}
-        </button>
-
-        <button
-          onClick={() => {
-            if (canMerge && branchPR) {
+      <button
+        onClick={() => {
+          if (canMakePR) {
+            if (branchPR) {
               sendMessage(
-                `Merge PR #${branchPR.number} on branch "${currentBranch}". Use a squash merge if possible. After merging, confirm it was successful.`,
+                `Update the PR description and title for PR #${branchPR.number} based on the latest commits and changes on this branch.`,
+              );
+            } else {
+              sendMessage(
+                "Open a pull request for the changes on this branch. Write a good PR title and description based on the commits and changes.",
               );
             }
-          }}
-          disabled={!canMerge}
-          className={`${btnBase} border border-success/30 text-success hover:bg-success/10`}
-          title={branchPR ? `Merge PR #${branchPR.number}` : "No open PR on this branch"}
-        >
-          <GitMerge size={12} />
-          Merge
-        </button>
+          }
+        }}
+        disabled={!canMakePR}
+        className={`${btnBase} border border-accent/30 text-accent hover:bg-accent/10`}
+        title={!isOnFeatureBranch ? "Switch to a feature branch first" : !conversationId ? "Start a conversation first" : branchPR ? `Update PR #${branchPR.number}` : "Create a pull request"}
+      >
+        {branchPR ? <RefreshCw size={12} /> : <GitPullRequest size={12} />}
+        {branchPR ? `Update PR #${branchPR.number}` : "Make PR"}
+      </button>
 
-        {workflow === "review" && (
-          <button
-            onClick={() => { if (canStartReview) sendMessage(""); }}
-            disabled={!canStartReview}
-            className={`${btnBase} bg-accent text-bg-deep hover:bg-accent-hover`}
-            title={!selectedPR ? "Select a PR first" : "Start code review"}
-          >
-            <ScanSearch size={12} />
-            Start Review
-          </button>
-        )}
+      <button
+        onClick={() => {
+          if (canMerge && branchPR) {
+            sendMessage(
+              `Merge PR #${branchPR.number} on branch "${currentBranch}". Use a squash merge if possible. After merging, confirm it was successful.`,
+            );
+          }
+        }}
+        disabled={!canMerge}
+        className={`${btnBase} border border-success/30 text-success hover:bg-success/10`}
+        title={branchPR ? `Merge PR #${branchPR.number}` : "No open PR on this branch"}
+      >
+        <GitMerge size={12} />
+        Merge
+      </button>
 
+      {workflow === "review" && (
         <button
-          onClick={pokeAgent}
-          disabled={!canNudge}
-          className={`${btnBase} border border-warning/30 text-warning hover:bg-warning/10`}
-          title="Nudge the agent to continue"
+          onClick={() => { if (canStartReview) sendMessage(""); }}
+          disabled={!canStartReview}
+          className={`${btnBase} bg-accent text-bg-deep hover:bg-accent-hover`}
+          title={!selectedPR ? "Select a PR first" : "Start code review"}
         >
-          <Zap size={12} />
-          Nudge
+          <ScanSearch size={12} />
+          Start Review
         </button>
+      )}
 
-        <button
-          onClick={interruptAgent}
-          disabled={!canStop}
-          className={`${btnBase} border border-error/30 text-error hover:bg-error/10`}
-          title="Stop the agent"
-        >
-          <Square size={10} fill="currentColor" />
-          Stop
-        </button>
-      </div>
+      <button
+        onClick={pokeAgent}
+        disabled={!canNudge}
+        className={`${btnBase} border border-warning/30 text-warning hover:bg-warning/10`}
+        title="Nudge the agent to continue"
+      >
+        <Zap size={12} />
+        Nudge
+      </button>
 
-      {/* Right: queue + status */}
-      <div className="ml-auto flex items-center gap-1.5">
+      <button
+        onClick={interruptAgent}
+        disabled={!canStop}
+        className={`${btnBase} border border-error/30 text-error hover:bg-error/10`}
+        title="Stop the agent"
+      >
+        <Square size={10} fill="currentColor" />
+        Stop
+      </button>
+
+      {/* Right: queue + status — ml-auto pushes to end of whatever row it lands on */}
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {serverQueue.length > 0 && (
           <div className="flex items-center gap-1 text-[10px]">
             <span className="text-warning">
