@@ -90,6 +90,7 @@ interface Store {
   loadQueue: () => Promise<void>;
   cancelQueueItem: (id: string) => Promise<void>;
   clearQueue: () => Promise<void>;
+  syncAgentState: () => Promise<void>;
   sendMessage: (message: string) => Promise<void>;
   sendAgentInput: (text: string) => void;
   pokeAgent: () => void;
@@ -198,7 +199,21 @@ export const useStore = create<Store>()(persist((set, get) => ({
   },
 
   selectRepo: async (name) => {
-    set({ selectedRepo: name, repoContext: null, fileTree: [], fileContent: null, conversationId: null, activeConversation: null, branches: [], commits: [] });
+    set({
+      selectedRepo: name,
+      repoContext: null,
+      fileTree: [],
+      fileContent: null,
+      conversationId: null,
+      activeConversation: null,
+      branches: [],
+      commits: [],
+      // Reset streaming state when jumping to a different repo so the input
+      // is immediately usable (the server agent keeps running in its worktree).
+      sending: false,
+      compacting: false,
+      agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
+    });
 
     // Subscribe to real-time events for this repo
     if (_agentSocket) {
@@ -206,12 +221,15 @@ export const useStore = create<Store>()(persist((set, get) => ({
     }
 
     try {
-      const [context, conversations, commits] = await Promise.all([
+      const [context, commits] = await Promise.all([
         api.fetchRepoContext(name),
-        api.fetchConversations(name),
         api.fetchCommits(name),
       ]);
-      set({ repoContext: context, conversations, commits });
+      set({ repoContext: context, commits });
+      // Load conversations filtered by the repo's current branch so the
+      // sidebar only shows conversations that belong to this branch.
+      const conversations = await api.fetchConversations(name, context.branch ?? undefined);
+      set({ conversations });
       if (context.branch_switched_from) {
         toast.info(
           "Branch cleaned up",
@@ -220,7 +238,8 @@ export const useStore = create<Store>()(persist((set, get) => ({
         await get().loadBranches();
       }
     } catch {
-      // context fetch may fail if endpoint not yet available
+      // context fetch may fail if endpoint not yet available — fall back to
+      // unfiltered conversations so the sidebar isn't completely empty.
       try {
         const conversations = await api.fetchConversations(name);
         set({ conversations });
@@ -293,6 +312,16 @@ export const useStore = create<Store>()(persist((set, get) => ({
       toast.error("Failed to switch branch", e instanceof Error ? e.message : undefined);
       return;
     }
+    // Clear the active conversation — it belongs to the previous branch.
+    // Also reset any in-progress streaming state so the input is usable on
+    // the new branch (the server-side agent keeps running in its worktree).
+    set({
+      conversationId: null,
+      activeConversation: null,
+      sending: false,
+      compacting: false,
+      agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
+    });
     try {
       const [context, repos, commits] = await Promise.all([
         api.fetchRepoContext(selectedRepo),
@@ -507,6 +536,48 @@ export const useStore = create<Store>()(persist((set, get) => ({
       toast.warning("Some items could not be cancelled", `${failures.length} may have already started processing`);
     }
     await get().loadQueue();
+  },
+
+  syncAgentState: async () => {
+    // Compare the server's live session list against the local `sending` flag.
+    // Called on boot and after a WS reconnect to detect desync (e.g. a page
+    // reload while the agent was mid-run, or a stale `sending=true` left over
+    // from a crashed session).
+    try {
+      const sessions = await api.fetchAgentSessions();
+      const { conversationId, sending } = get();
+
+      // If we think we're sending but the server has no session for this
+      // conversation, the agent has already finished (result was never
+      // delivered because the WS was down) — clear the stuck state so the
+      // user isn't locked out of the input.
+      const serverHasOurSession = sessions.some(
+        (s) => s.conversation_id === conversationId,
+      );
+      if (sending && !serverHasOurSession) {
+        useStore.setState({
+          sending: false,
+          agentStream: {
+            blocks: [],
+            pendingPermission: null,
+            isStreaming: false,
+            startedAt: null,
+            statusMessage: null,
+          },
+        });
+        // Reload the conversation so any result that was persisted while we
+        // were disconnected becomes visible.
+        if (conversationId) {
+          try {
+            const detail = await api.fetchConversation(conversationId);
+            useStore.setState({ activeConversation: detail });
+          } catch { /* ignore */ }
+        }
+      }
+
+      // Also refresh the queue so the badge count is accurate.
+      await get().loadQueue();
+    } catch { /* network unavailable — skip */ }
   },
 
   sendMessage: async (message) => {
@@ -1280,8 +1351,34 @@ function _ensureAgentSocket(): void {
       }
     },
 
-    onStateChange: () => {
-      // Connection state changes — could expose to UI if needed
+    onStateChange: (state) => {
+      if (state === "disconnected") {
+        // If the socket drops while the agent is streaming, clear the busy
+        // state after a short grace period so the UI doesn't get stuck.
+        // We wait 4 s to tolerate a quick reconnect without flashing.
+        setTimeout(() => {
+          if (_agentSocket?.state !== "connected") {
+            const { sending, compacting } = useStore.getState();
+            if (sending || compacting) {
+              useStore.setState({
+                sending: false,
+                compacting: false,
+                agentStream: {
+                  blocks: [],
+                  pendingPermission: null,
+                  isStreaming: false,
+                  startedAt: null,
+                  statusMessage: "Connection lost — agent may still be running",
+                },
+              });
+            }
+          }
+        }, 4000);
+      } else if (state === "connected") {
+        // On every (re)connect reconcile UI state against the server's live
+        // session list — catches desync from page reloads or brief drops.
+        useStore.getState().syncAgentState();
+      }
     },
   });
 

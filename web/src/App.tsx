@@ -28,6 +28,7 @@ export default function App() {
   const loadRepos = useStore((s) => s.loadRepos);
   const loadProviders = useStore((s) => s.loadProviders);
   const checkClaudeAuth = useStore((s) => s.checkClaudeAuth);
+  const syncAgentState = useStore((s) => s.syncAgentState);
 
   const isAuthed = claudeAuth.authenticated;
   const theme = useStore((s) => s.theme);
@@ -40,14 +41,16 @@ export default function App() {
     applyTheme(theme);
   }, [theme]);
 
-  // Boot: ensure session cookie, then fetch repos, providers, auth status
+  // Boot: ensure session cookie, then fetch repos, providers, auth status,
+  // and reconcile any in-progress agent state from before the last page load.
   useEffect(() => {
     initSession().then(() => {
       loadRepos();
       loadProviders();
       checkClaudeAuth();
+      syncAgentState();
     });
-  }, [loadRepos, loadProviders, checkClaudeAuth]);
+  }, [loadRepos, loadProviders, checkClaudeAuth, syncAgentState]);
 
   // URL → Store: sync URL params into the store on mount and URL changes
   useEffect(() => {
