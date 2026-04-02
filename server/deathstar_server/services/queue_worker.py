@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import time
 
@@ -115,9 +116,16 @@ class QueueWorker:
                 )
                 return
             logger.info("interrupting queue item %s on cancel request", item_id)
-            asyncio.run_coroutine_threadsafe(
+            fut = asyncio.run_coroutine_threadsafe(
                 client.interrupt(), self._loop
             )
+
+            def _log_interrupt_failure(f: concurrent.futures.Future[None]) -> None:
+                exc = f.exception()
+                if exc:
+                    logger.warning("interrupt for queue item %s raised: %s", item_id, exc)
+
+            fut.add_done_callback(_log_interrupt_failure)
 
     async def _process_loop(self) -> None:
         recovered = self._queue_store.recover_stale()

@@ -21,5 +21,6 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
-        # Always run — any Python change could affect any test
+        # Runs when any staged file matches types: [python].
+        # Skipped for non-Python-only commits (e.g. docs, CSS).
         always_run: false

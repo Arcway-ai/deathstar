@@ -206,7 +206,7 @@ function QueueBadge({
                     {item.message}
                   </p>
                   <button
-                    onClick={() => onCancel(item.id)}
+                    onClick={() => { onCancel(item.id); setOpen(false); }}
                     className="shrink-0 text-text-muted hover:text-error transition-colors"
                     title={item.status === "processing" ? "Interrupt and cancel" : "Cancel"}
                   >
