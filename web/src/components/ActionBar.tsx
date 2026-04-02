@@ -1,4 +1,4 @@
-import { Archive, GitPullRequest, RefreshCw, ScanSearch, Square, X, Zap } from "lucide-react";
+import { Archive, GitMerge, GitPullRequest, RefreshCw, ScanSearch, Square, X, Zap } from "lucide-react";
 import { useStore } from "../store";
 
 /**
@@ -33,6 +33,7 @@ export default function ActionBar() {
 
   const canCompact = !!conversationId && !sending && !compacting;
   const canMakePR = !!(workflow === "patch" && isOnFeatureBranch && conversationId && !sending);
+  const canMerge = !!(branchPR && conversationId && !sending);
   const canStartReview = !!(workflow === "review" && selectedPR !== null && !sending);
   const canNudge = isAgentActive;
   const canStop = isAgentActive;
@@ -73,6 +74,22 @@ export default function ActionBar() {
         >
           {branchPR ? <RefreshCw size={12} /> : <GitPullRequest size={12} />}
           {branchPR ? `Update PR #${branchPR.number}` : "Make PR"}
+        </button>
+
+        <button
+          onClick={() => {
+            if (canMerge && branchPR) {
+              sendMessage(
+                `Merge PR #${branchPR.number} on branch "${currentBranch}". Use a squash merge if possible. After merging, confirm it was successful.`,
+              );
+            }
+          }}
+          disabled={!canMerge}
+          className={`${btnBase} border border-success/30 text-success hover:bg-success/10`}
+          title={branchPR ? `Merge PR #${branchPR.number}` : "No open PR on this branch"}
+        >
+          <GitMerge size={12} />
+          Merge
         </button>
 
         {workflow === "review" && (

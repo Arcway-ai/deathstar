@@ -9,7 +9,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -105,6 +105,24 @@ CREATE TABLE IF NOT EXISTS message_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_queue_status ON message_queue(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_queue_conversation ON message_queue(conversation_id, status);
+
+CREATE TABLE IF NOT EXISTS branch_prs (
+    repo TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    pr_number INTEGER NOT NULL,
+    pr_url TEXT NOT NULL,
+    pr_title TEXT NOT NULL,
+    pr_state TEXT NOT NULL DEFAULT 'open',
+    draft INTEGER NOT NULL DEFAULT 0,
+    user TEXT NOT NULL DEFAULT '',
+    base_branch TEXT NOT NULL DEFAULT 'main',
+    additions INTEGER,
+    deletions INTEGER,
+    changed_files INTEGER,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (repo, branch)
+);
+CREATE INDEX IF NOT EXISTS idx_branch_prs_repo ON branch_prs(repo);
 """
 
 
@@ -192,6 +210,29 @@ class Database:
                     ON message_queue(conversation_id, status);
             """)
             logger.info("migration v5: added message_queue table")
+
+        if from_version < 6:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS branch_prs (
+                    repo TEXT NOT NULL,
+                    branch TEXT NOT NULL,
+                    pr_number INTEGER NOT NULL,
+                    pr_url TEXT NOT NULL,
+                    pr_title TEXT NOT NULL,
+                    pr_state TEXT NOT NULL DEFAULT 'open',
+                    draft INTEGER NOT NULL DEFAULT 0,
+                    user TEXT NOT NULL DEFAULT '',
+                    base_branch TEXT NOT NULL DEFAULT 'main',
+                    additions INTEGER,
+                    deletions INTEGER,
+                    changed_files INTEGER,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (repo, branch)
+                );
+                CREATE INDEX IF NOT EXISTS idx_branch_prs_repo
+                    ON branch_prs(repo);
+            """)
+            logger.info("migration v6: added branch_prs table")
 
         conn.execute(
             "UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,)

@@ -1011,10 +1011,72 @@ async def list_pull_requests(
     name: str,
     state: str = Query(default="open", pattern="^(open|closed|all)$"),
 ) -> list[dict]:
-    """List pull requests for a repo from GitHub."""
+    """List pull requests for a repo from GitHub and cache the branch→PR mapping."""
     from deathstar_server.app_state import github_service
     repo_root = git_service.resolve_target(name)
-    return await github_service.list_pull_requests(repo_root=repo_root, state=state)
+    prs = await github_service.list_pull_requests(repo_root=repo_root, state=state)
+
+    # Cache branch→PR mapping in SQLite
+    try:
+        from deathstar_server.app_state import db
+        conn = db.get_conn()
+        # Clear stale entries for this repo, then upsert current PRs
+        conn.execute("DELETE FROM branch_prs WHERE repo = ?", (name,))
+        for pr in prs:
+            conn.execute(
+                """INSERT OR REPLACE INTO branch_prs
+                   (repo, branch, pr_number, pr_url, pr_title, pr_state,
+                    draft, user, base_branch, additions, deletions, changed_files, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    name,
+                    pr["head_branch"],
+                    pr["number"],
+                    pr["url"],
+                    pr["title"],
+                    pr["state"],
+                    1 if pr.get("draft") else 0,
+                    pr.get("user", ""),
+                    pr.get("base_branch", "main"),
+                    pr.get("additions"),
+                    pr.get("deletions"),
+                    pr.get("changed_files"),
+                    pr.get("updated_at", ""),
+                ),
+            )
+        conn.commit()
+    except Exception:
+        logger.warning("failed to cache branch PRs", exc_info=True)
+
+    return prs
+
+
+@web_router.get("/repos/{name}/branch-pr")
+def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
+    """Get the cached PR for a specific branch (if any)."""
+    from deathstar_server.app_state import db
+    conn = db.get_conn()
+    row = conn.execute(
+        "SELECT * FROM branch_prs WHERE repo = ? AND branch = ? AND pr_state = 'open'",
+        (name, branch),
+    ).fetchone()
+    if not row:
+        return {"pr": None}
+    return {
+        "pr": {
+            "number": row["pr_number"],
+            "url": row["pr_url"],
+            "title": row["pr_title"],
+            "state": row["pr_state"],
+            "draft": bool(row["draft"]),
+            "user": row["user"],
+            "base_branch": row["base_branch"],
+            "additions": row["additions"],
+            "deletions": row["deletions"],
+            "changed_files": row["changed_files"],
+            "updated_at": row["updated_at"],
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
