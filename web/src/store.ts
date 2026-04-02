@@ -1353,31 +1353,36 @@ function _ensureAgentSocket(): void {
 
     onStateChange: (state) => {
       if (state === "disconnected") {
-        // If the socket drops while the agent is streaming, clear the busy
-        // state after a short grace period so the UI doesn't get stuck.
-        // We wait 4 s to tolerate a quick reconnect without flashing.
+        // If the socket drops while the agent is streaming, mark the stream as
+        // paused after a short grace period so the UI doesn't stay permanently
+        // locked.  We wait 4 s to let the auto-reconnect succeed first — if it
+        // does, `syncAgentState` on the reconnect will reconcile everything.
+        // Critically we DO NOT clear agentStream.blocks so the partial output
+        // the user was watching remains visible rather than vanishing.
         setTimeout(() => {
           if (_agentSocket?.state !== "connected") {
             const { sending, compacting } = useStore.getState();
             if (sending || compacting) {
-              useStore.setState({
+              useStore.setState((s) => ({
                 sending: false,
                 compacting: false,
                 agentStream: {
-                  blocks: [],
-                  pendingPermission: null,
+                  ...s.agentStream,
                   isStreaming: false,
-                  startedAt: null,
-                  statusMessage: "Connection lost — agent may still be running",
+                  statusMessage: "Connection lost — reconnecting…",
                 },
-              });
+              }));
             }
           }
         }, 4000);
       } else if (state === "connected") {
-        // On every (re)connect reconcile UI state against the server's live
-        // session list — catches desync from page reloads or brief drops.
+        // On every (re)connect: reconcile UI state and re-subscribe to repo
+        // events (subscriptions are per-connection and don't survive a close).
+        const { selectedRepo } = useStore.getState();
         useStore.getState().syncAgentState();
+        if (selectedRepo && _agentSocket) {
+          _agentSocket.subscribeEvents(selectedRepo);
+        }
       }
     },
   });

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import importlib
 import sys
+import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+from deathstar_server.errors import AppError
+from deathstar_shared.models import ErrorCode
 
 def _build_web_app(tmp_path: Path, api_token: str | None = None):
     """Build a FastAPI app with web UI enabled and mocked dependencies."""
@@ -66,8 +71,6 @@ def _build_web_app(tmp_path: Path, api_token: str | None = None):
             sys.modules.pop(mod_name, None)
 
     sys.modules["deathstar_server.app_state"] = mock_app_state
-
-    import importlib
 
     if "deathstar_server.web.routes" in sys.modules:
         importlib.reload(sys.modules["deathstar_server.web.routes"])
@@ -284,8 +287,6 @@ class TestWebAuthBypass:
 def _build_web_app_with_queue(tmp_path: Path, api_token: str | None = None):
     """Like _build_web_app but wires a real QueueStore into mock_app_state
     and returns (client, mock_app_state, queue_store) for queue-specific tests."""
-    from pathlib import Path as _Path
-
     projects_root = tmp_path / "projects"
     projects_root.mkdir()
 
@@ -342,8 +343,6 @@ def _build_web_app_with_queue(tmp_path: Path, api_token: str | None = None):
 
     sys.modules["deathstar_server.app_state"] = mock_app_state
 
-    import importlib
-
     if "deathstar_server.web.routes" in sys.modules:
         importlib.reload(sys.modules["deathstar_server.web.routes"])
     if "deathstar_server.routes" in sys.modules:
@@ -385,7 +384,6 @@ class TestQueueEndpoints:
 
     def test_enqueue_unknown_repo_returns_404(self, queue_client):
         client, mock_app_state, _ = queue_client
-        from deathstar_server.services.errors import AppError, ErrorCode
         mock_app_state.git_service.resolve_target.side_effect = AppError(
             ErrorCode.INVALID_REQUEST, "not found", status_code=404
         )
@@ -462,8 +460,9 @@ class TestQueueEndpoints:
 class TestAgentSessionsEndpoint:
     def test_returns_empty_when_no_sessions(self, queue_client):
         client, _, _ = queue_client
-        # Patch _sessions to empty dict
-        import deathstar_server.web.agent_ws as agent_ws_mod
+        # agent_ws is loaded as a side-effect of building the test app; import
+        # inline here so we get the module instance that the live app is using.
+        import deathstar_server.web.agent_ws as agent_ws_mod  # noqa: PLC0415
         original = agent_ws_mod._sessions.copy()
         try:
             agent_ws_mod._sessions.clear()
@@ -475,13 +474,11 @@ class TestAgentSessionsEndpoint:
 
     def test_returns_active_sessions(self, queue_client):
         client, _, _ = queue_client
-        import time
-        from unittest.mock import MagicMock as MM
-        import deathstar_server.web.agent_ws as agent_ws_mod
+        import deathstar_server.web.agent_ws as agent_ws_mod  # noqa: PLC0415
 
         # Build a fake session with a non-None websocket
-        fake_ws = MM()
-        fake_session = MM()
+        fake_ws = MagicMock()
+        fake_session = MagicMock()
         fake_session.conversation_id = "conv-test"
         fake_session.repo = "my-project"
         fake_session.branch = "main"
@@ -507,11 +504,9 @@ class TestAgentSessionsEndpoint:
     def test_excludes_sessions_without_websocket(self, queue_client):
         """Sessions where websocket is None must not appear in the response."""
         client, _, _ = queue_client
-        import time
-        from unittest.mock import MagicMock as MM
-        import deathstar_server.web.agent_ws as agent_ws_mod
+        import deathstar_server.web.agent_ws as agent_ws_mod  # noqa: PLC0415
 
-        disconnected = MM()
+        disconnected = MagicMock()
         disconnected.conversation_id = "conv-gone"
         disconnected.repo = "my-project"
         disconnected.branch = "main"
