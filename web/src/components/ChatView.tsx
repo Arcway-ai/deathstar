@@ -144,8 +144,9 @@ export default function ChatView() {
         </div>
       )}
 
-      {/* Input area */}
-      <div className="border-t border-border-subtle bg-bg-primary px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
+      {/* Input area — pb-safe adds env(safe-area-inset-bottom) on devices with
+           a home indicator (iPad/iPhone) so the bar is never obscured. */}
+      <div className="border-t border-border-subtle bg-bg-primary px-3 pb-3 pt-2 pb-safe sm:px-4 sm:pb-4">
         <div className="mx-auto max-w-3xl">
           <WorkflowPills />
           <ActionBar />
