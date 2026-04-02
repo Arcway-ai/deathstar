@@ -34,7 +34,6 @@ _MODE_CONFIGS: dict[WorkflowKind, dict] = {
     WorkflowKind.PROMPT: {
         "allowed_tools": ["Read", "Glob", "Grep", "WebSearch", "WebFetch"],
         "permission_mode": "default",
-        "max_turns": 30,
     },
     WorkflowKind.PATCH: {
         "allowed_tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
@@ -50,25 +49,21 @@ _MODE_CONFIGS: dict[WorkflowKind, dict] = {
         "allowed_tools": ["Read", "Glob", "Grep", "Bash", "Agent"],
         "permission_mode": "default",
         "plugins": ["deathstar-review", "code-review", "pr-review-toolkit"],
-        "max_turns": 50,
     },
     WorkflowKind.DOCS: {
         "allowed_tools": ["Read", "Write", "Edit", "Glob", "Grep"],
         "permission_mode": "acceptEdits",
         "plugins": ["deathstar-docs", "frontend-design"],
-        "max_turns": 50,
     },
     WorkflowKind.AUDIT: {
         "allowed_tools": ["Read", "Glob", "Grep", "Bash"],
         "permission_mode": "default",
         "plugins": ["deathstar-audit"],
-        "max_turns": 50,
     },
     WorkflowKind.PLAN: {
         "allowed_tools": ["Read", "Glob", "Grep"],
         "permission_mode": "default",
         "plugins": ["deathstar-plan"],
-        "max_turns": 30,
     },
 }
 
