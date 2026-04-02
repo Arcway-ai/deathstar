@@ -83,6 +83,20 @@ class QueueStore:
         conn.commit()
         return cur.rowcount > 0
 
+    def force_cancel(self, item_id: str) -> bool:
+        """Cancel a pending or processing item.  Used when the worker is
+        interrupted mid-flight and the caller has already stopped the SDK
+        client externally."""
+        conn = self._db.get_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "UPDATE message_queue SET status = 'cancelled', completed_at = ? "
+            "WHERE id = ? AND status IN ('pending', 'processing')",
+            (now, item_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
     def claim_next(self, skip_repos_branches: set[tuple[str, str | None]] | None = None) -> dict[str, object] | None:
         """Atomically claim the oldest pending item for processing.
 

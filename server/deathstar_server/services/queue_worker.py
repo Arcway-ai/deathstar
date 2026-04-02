@@ -42,6 +42,9 @@ from deathstar_shared.models import WorkflowKind
 logger = logging.getLogger(__name__)
 
 
+_STALE_RECOVERY_INTERVAL = 300  # seconds between periodic stale-item sweeps
+
+
 class QueueWorker:
     """Background asyncio task that processes queued agent messages."""
 
@@ -60,6 +63,9 @@ class QueueWorker:
         self._running = False
         self._wake_event = asyncio.Event()
         self._poll_interval = 3
+        # Interrupt support: track the item currently being executed
+        self._current_item_id: str | None = None
+        self._current_client: ClaudeSDKClient | None = None
 
     async def start(self) -> None:
         if self._running:
@@ -83,13 +89,41 @@ class QueueWorker:
         """Wake the worker immediately (call after enqueue)."""
         self._wake_event.set()
 
+    def interrupt_if_current(self, item_id: str) -> None:
+        """Interrupt the SDK client if item_id is the one currently executing.
+
+        Called synchronously from the HTTP cancel route.  The interrupt is
+        fire-and-forget: the asyncio task running _execute_item will receive
+        the cancellation signal and exit the receive_messages loop.
+        """
+        if self._current_item_id == item_id and self._current_client is not None:
+            logger.info("interrupting queue item %s on cancel request", item_id)
+            try:
+                asyncio.get_event_loop().create_task(
+                    self._current_client.interrupt(),
+                    name=f"queue-interrupt-{item_id}",
+                )
+            except RuntimeError:
+                # No running event loop in this thread — best-effort only
+                pass
+
     async def _process_loop(self) -> None:
         recovered = self._queue_store.recover_stale()
         if recovered:
-            logger.info("recovered %d stale queue items", recovered)
+            logger.info("recovered %d stale queue items on startup", recovered)
+
+        last_recovery = time.time()
 
         while self._running:
             try:
+                # Periodic stale-item recovery (catches items stuck in
+                # 'processing' after a crash or unclean shutdown).
+                if time.time() - last_recovery >= _STALE_RECOVERY_INTERVAL:
+                    recovered = self._queue_store.recover_stale()
+                    if recovered:
+                        logger.info("periodic recovery: reset %d stale items", recovered)
+                    last_recovery = time.time()
+
                 processed = await self._process_one()
                 if not processed:
                     try:
@@ -194,6 +228,8 @@ class QueueWorker:
         )
 
         client = ClaudeSDKClient(options=options)
+        self._current_item_id = item_id
+        self._current_client = client
         try:
             await client.connect()
             await client.query(message)
@@ -318,6 +354,11 @@ class QueueWorker:
                 raise RuntimeError("SDK stream ended without producing a ResultMessage")
 
         finally:
+            # Clear current-item tracking so interrupt_if_current is a no-op
+            # once this item has finished (success, failure, or cancel).
+            if self._current_item_id == item_id:
+                self._current_item_id = None
+                self._current_client = None
             try:
                 await client.disconnect()
             except Exception:
