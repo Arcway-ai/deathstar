@@ -34,7 +34,7 @@ export default function TopBar() {
   const isDirty = currentRepo?.dirty ?? false;
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border-subtle bg-bg-primary px-2 sm:gap-2 sm:px-3">
+    <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border-subtle bg-bg-primary px-2 sm:gap-2 sm:px-3">
       {/* Mobile sidebar toggle */}
       {isAuthed && selectedRepo && (
         <button
@@ -54,9 +54,12 @@ export default function TopBar() {
         <span className="sm:hidden">DS</span>
       </span>
 
-      <ThemeSelector />
+      {/* Theme + separator: hidden on mobile to reclaim ~58px */}
+      <div className="hidden sm:flex">
+        <ThemeSelector />
+      </div>
 
-      <Separator orientation="vertical" className="mx-1 h-4 bg-border-subtle" />
+      <Separator orientation="vertical" className="mx-1 hidden h-4 bg-border-subtle sm:block" />
 
       {/* LLM / chat controls — left side */}
       <ClaudeAuth />
@@ -92,12 +95,12 @@ export default function TopBar() {
             {selectedRepo}
           </span>
           {repoContext?.branch && (
-            <>
+            <span className="hidden sm:contents">
               <GitBranch size={10} className="text-text-muted" />
               <span className="hidden md:inline max-w-[80px] truncate font-mono text-text-muted">
                 {repoContext.branch}
               </span>
-            </>
+            </span>
           )}
           {isDirty && (
             <span className="h-1.5 w-1.5 rounded-full bg-warning" title="Uncommitted changes" />
