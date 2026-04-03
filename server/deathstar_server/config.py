@@ -48,6 +48,7 @@ class Settings:
     github_poll_interval_seconds: int
     max_worktrees_per_repo: int
     max_total_worktrees: int
+    database_url: str
 
 
 def load_settings() -> Settings:
@@ -82,4 +83,8 @@ def load_settings() -> Settings:
         github_poll_interval_seconds=_int_env("GITHUB_POLL_INTERVAL", 10),
         max_worktrees_per_repo=_int_env("DEATHSTAR_MAX_WORKTREES_PER_REPO", 6),
         max_total_worktrees=_int_env("DEATHSTAR_MAX_TOTAL_WORKTREES", 16),
+        database_url=os.getenv(
+            "DEATHSTAR_DATABASE_URL",
+            "postgresql://deathstar:deathstar@localhost:5432/deathstar",
+        ),
     )

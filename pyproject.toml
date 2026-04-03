@@ -11,13 +11,16 @@ requires-python = ">=3.11"
 license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "DeathStar contributors" }]
 dependencies = [
+  "alembic>=1.15.0",
   "boto3>=1.34.0",
   "claude-agent-sdk>=0.1.0",
   "fastapi>=0.115.0",
   "githubkit>=0.15.0",
   "google-auth>=2.29.0",
   "httpx>=0.27.0",
+  "psycopg2-binary>=2.9.10",
   "pydantic>=2.8.0",
+  "sqlmodel>=0.0.24",
   "typer>=0.12.0",
   "unidiff>=0.7.0",
   "uvicorn[standard]>=0.30.0",
