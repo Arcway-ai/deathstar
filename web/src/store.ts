@@ -228,9 +228,9 @@ export const useStore = create<Store>()(persist((set, get) => ({
         api.fetchCommits(name),
       ]);
       set({ repoContext: context, commits });
-      // Load conversations filtered by the repo's current branch so the
-      // sidebar only shows conversations that belong to this branch.
-      const conversations = await api.fetchConversations(name, context.branch ?? undefined);
+      // Load all conversations for this repo (no branch filter) so the
+      // sidebar shows conversations from all branches.
+      const conversations = await api.fetchConversations(name);
       set({ conversations });
       if (context.branch_switched_from) {
         toast.info(
