@@ -178,11 +178,11 @@ class GitHubService:
                 "user": pr.user.login if pr.user else "unknown",
                 "head_branch": pr.head.ref,
                 "base_branch": pr.base.ref,
-                "updated_at": pr.updated_at.isoformat() if pr.updated_at else None,
-                "additions": pr.additions,
-                "deletions": pr.deletions,
-                "changed_files": pr.changed_files,
-                "draft": pr.draft or False,
+                "updated_at": pr.updated_at.isoformat() if pr.updated_at else "",
+                "additions": getattr(pr, "additions", None),
+                "deletions": getattr(pr, "deletions", None),
+                "changed_files": getattr(pr, "changed_files", None),
+                "draft": getattr(pr, "draft", False) or False,
                 "url": str(pr.html_url),
             })
         return results
