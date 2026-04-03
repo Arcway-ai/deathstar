@@ -190,8 +190,9 @@ class GitHubService:
     async def fetch_pr_diff(self, *, owner: str, repo: str, pr_number: int) -> str:
         gh = self._client()
         try:
-            resp = await gh.rest.pulls.async_get(
-                owner, repo, pr_number,
+            resp = await gh.arequest(
+                "GET",
+                f"/repos/{owner}/{repo}/pulls/{pr_number}",
                 headers={"Accept": "application/vnd.github.v3.diff"},
             )
         except RequestFailed as exc:
@@ -214,7 +215,8 @@ class GitHubService:
             files_resp = await gh.rest.pulls.async_list_files(
                 owner, repo, pr_number, per_page=100,
             )
-        except RequestFailed:
+        except RequestFailed as exc:
+            logger.warning("failed to list PR files for %s#%d: %s", repo, pr_number, exc)
             return {}
 
         changed_files = sorted(
@@ -264,10 +266,10 @@ class GitHubService:
         gh = self._client()
         try:
             resp = await gh.rest.pulls.async_get(owner, repo, pr_number)
+            # Return as dict for backward compat with callers that access via ["key"]
+            return resp.json()
         except RequestFailed as exc:
             _raise_for_github_error(exc, "fetching PR info")
-        # Return as dict for backward compat with callers that access via ["key"]
-        return resp.json()
 
     @staticmethod
     def parse_pr_url(url: str) -> tuple[str, str, int]:
@@ -364,16 +366,16 @@ class GitHubService:
         # 1. Get HEAD ref
         try:
             ref_resp = await gh.rest.git.async_get_ref(owner, repo, f"heads/{branch}")
+            head_sha = ref_resp.parsed_data.object.sha
         except RequestFailed as exc:
             _raise_for_github_error(exc, "getting branch ref")
-        head_sha = ref_resp.parsed_data.object.sha
 
         # 2. Get the commit to find the tree
         try:
             commit_resp = await gh.rest.git.async_get_commit(owner, repo, head_sha)
+            base_tree_sha = commit_resp.parsed_data.tree.sha
         except RequestFailed as exc:
             _raise_for_github_error(exc, "getting commit")
-        base_tree_sha = commit_resp.parsed_data.tree.sha
 
         # 3. Group findings by file and apply changes
         file_changes: dict[str, list[ReviewFinding]] = {}
@@ -445,6 +447,7 @@ class GitHubService:
                     content=base64.b64encode(file_content.encode("utf-8")).decode("ascii"),
                     encoding="base64",
                 )
+                blob_sha = blob_resp.parsed_data.sha
             except RequestFailed as exc:
                 _raise_for_github_error(exc, f"creating blob for {file_path}")
 
@@ -452,7 +455,7 @@ class GitHubService:
                 "path": file_path,
                 "mode": "100644",
                 "type": "blob",
-                "sha": blob_resp.parsed_data.sha,
+                "sha": blob_sha,
             })
 
         if not tree_entries:
@@ -482,9 +485,9 @@ class GitHubService:
                 base_tree=base_tree_sha,
                 tree=tree_entries,
             )
+            new_tree_sha = tree_resp.parsed_data.sha
         except RequestFailed as exc:
             _raise_for_github_error(exc, "creating tree")
-        new_tree_sha = tree_resp.parsed_data.sha
 
         # 5. Create a new commit
         try:
@@ -494,9 +497,9 @@ class GitHubService:
                 tree=new_tree_sha,
                 parents=[head_sha],
             )
+            new_commit_sha = new_commit_resp.parsed_data.sha
         except RequestFailed as exc:
             _raise_for_github_error(exc, "creating commit")
-        new_commit_sha = new_commit_resp.parsed_data.sha
 
         # 6. Update the branch ref
         try:

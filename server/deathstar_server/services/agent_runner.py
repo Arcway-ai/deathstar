@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 import time
@@ -36,11 +37,15 @@ from claude_agent_sdk.types import (
     ThinkingBlock,
 )
 
+from deathstar_server.config import Settings
 from deathstar_server.errors import AppError
+from deathstar_server.services.agent import _MODE_CONFIGS
 from deathstar_server.services.event_bus import EventBus
+from deathstar_server.services.github import GitHubService
+from deathstar_server.services.gitops import GitService, _random_star_wars_character
 from deathstar_server.services.worktree import WorktreeManager
 from deathstar_server.web.conversations import ConversationStore
-from deathstar_shared.models import WorkflowKind
+from deathstar_shared.models import ErrorCode, WorkflowKind
 
 logger = logging.getLogger(__name__)
 
@@ -180,12 +185,9 @@ def _ensure_claudeignore(repo_root: Path) -> None:
             pass
 
 
-def _claude_agent_env() -> dict:
-    import os as _os
-    from deathstar_server.app_state import settings as _settings
-    from deathstar_server.services.gitops import _random_star_wars_character
-    env = _os.environ.copy()
-    config_dir = _settings.workspace_root / "deathstar" / ".claude"
+def _claude_agent_env(settings: Settings) -> dict:
+    env = os.environ.copy()
+    config_dir = settings.workspace_root / "deathstar" / ".claude"
     env["CLAUDE_CONFIG_DIR"] = str(config_dir)
     token_path = config_dir / "oauth_token"
     if token_path.is_file():
@@ -200,9 +202,9 @@ def _claude_agent_env() -> dict:
     return env
 
 
-def _check_claude_auth() -> bool:
+def _check_claude_auth(settings: Settings) -> bool:
     try:
-        env = _claude_agent_env()
+        env = _claude_agent_env(settings)
         result = subprocess.run(
             ["claude", "auth", "status"],
             capture_output=True, text=True, timeout=5, env=env,
@@ -220,19 +222,19 @@ def _build_options(
     *,
     workflow: WorkflowKind,
     cwd: str,
+    env: dict | None = None,
     system_prompt: str | None = None,
     model: str | None = None,
     session_id: str | None = None,
     can_use_tool=None,
 ) -> ClaudeAgentOptions:
-    from deathstar_server.services.agent import _MODE_CONFIGS
     cfg = _MODE_CONFIGS.get(workflow, _MODE_CONFIGS[WorkflowKind.PROMPT])
     kwargs: dict = {
         "allowed_tools": cfg["allowed_tools"],
         "permission_mode": cfg["permission_mode"],
         "cwd": cwd,
         "include_partial_messages": True,
-        "env": _claude_agent_env(),
+        "env": env if env is not None else os.environ.copy(),
         "settings": _AGENT_SETTINGS_JSON,
         "debug_stderr": True,
     }
@@ -304,6 +306,8 @@ class RunningAgent:
     last_active: float = field(default_factory=time.time)
     completed_at: float | None = None
     prompt: str = ""
+    # Tracked asyncio task for _execute_agent (allows cancellation on reuse)
+    _execute_task: asyncio.Task | None = field(default=None, repr=False)
     # Per-subscriber anyio memory object streams (send side kept for fan-out)
     _subscribers: dict[str, MemoryObjectSendStream[AgentEvent]] = field(default_factory=dict)
 
@@ -355,10 +359,16 @@ class AgentRunner:
         conversation_store: ConversationStore,
         worktree_manager: WorktreeManager,
         event_bus: EventBus,
+        settings: Settings,
+        git_service: GitService,
+        github_service: GitHubService,
     ) -> None:
         self._conversation_store = conversation_store
         self._worktree_manager = worktree_manager
         self._event_bus = event_bus
+        self._settings = settings
+        self._git_service = git_service
+        self._github_service = github_service
         self._agents: dict[str, RunningAgent] = {}
         self._branch_locks: dict[tuple[str, str], str] = {}
         self._exit_stack: AsyncExitStack | None = None
@@ -419,7 +429,7 @@ class AgentRunner:
         """
         # Validate branch
         if branch and not _validate_branch_name(branch):
-            raise AppError(f"Invalid branch name: '{branch}'")
+            raise AppError(ErrorCode.INVALID_REQUEST, f"Invalid branch name: '{branch}'")
 
         # Check branch lock
         if branch:
@@ -428,7 +438,7 @@ class AgentRunner:
             if holder and holder != conversation_id and holder in self._agents:
                 existing = self._agents[holder]
                 if existing.status in (AgentStatus.RUNNING, AgentStatus.WAITING_PERMISSION, AgentStatus.STARTING):
-                    raise AppError(f"Branch '{branch}' is already in use by another session.")
+                    raise AppError(ErrorCode.INVALID_REQUEST, f"Branch '{branch}' is already in use by another session.")
 
         # Check max agents
         active_count = sum(
@@ -436,7 +446,7 @@ class AgentRunner:
             if a.status in (AgentStatus.RUNNING, AgentStatus.WAITING_PERMISSION, AgentStatus.STARTING)
         )
         if active_count >= _MAX_AGENTS:
-            raise AppError("Too many concurrent agent sessions.")
+            raise AppError(ErrorCode.INVALID_REQUEST, "Too many concurrent agent sessions.")
 
         # Resolve working directory
         cwd = self._worktree_manager.resolve_working_dir(repo, branch)
@@ -462,23 +472,39 @@ class AgentRunner:
                     + "\n\n".join(file_sections)
                 )
 
+        # Set a placeholder lock immediately to prevent concurrent starts on same branch.
+        # The real conversation_id will overwrite this once get_or_create() resolves.
+        if branch:
+            lock_key = (repo, branch)
+            self._branch_locks.setdefault(lock_key, "__pending__")
+
         # Get or create conversation
         conversation_id = self._conversation_store.get_or_create(conversation_id, repo, branch)
         self._conversation_store.add_user_message(conversation_id, message)
 
-        # Register branch lock
+        # Register branch lock (overwrites the placeholder)
         if branch:
             self._branch_locks[(repo, branch)] = conversation_id
 
         # Check if we can reuse an existing agent
         existing = self._agents.get(conversation_id)
         if existing and existing.status in (AgentStatus.RUNNING, AgentStatus.WAITING_PERMISSION):
-            # Agent still running — send follow-up (task group manages old task)
+            # Agent still running — send follow-up, cancel any in-flight reader first
+            if existing._execute_task and not existing._execute_task.done():
+                existing._execute_task.cancel()
+                try:
+                    await existing._execute_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            existing._execute_task = None
             existing.last_active = time.time()
             existing.workflow = workflow
             existing.prompt = message
             await existing.client.query(message)
-            self._task_group.start_soon(self._execute_agent, existing)
+            existing._execute_task = asyncio.get_running_loop().create_task(
+                self._execute_agent(existing),
+                name=f"agent-{existing.conversation_id[:8]}",
+            )
             return existing
 
         # Tear down any completed/failed agent for this conversation
@@ -486,10 +512,10 @@ class AgentRunner:
             self._cleanup_agent(existing)
 
         # Pre-flight auth check
-        if not _check_claude_auth():
+        if not _check_claude_auth(self._settings):
             if branch:
                 self._branch_locks.pop((repo, branch), None)
-            raise AppError("Claude is not authenticated. Open the Claude menu to connect your account.", code="AUTH_REQUIRED")
+            raise AppError(ErrorCode.AUTH_ERROR, "Claude is not authenticated. Open the Claude menu to connect your account.")
 
         # Look up SDK session ID for multi-turn continuity
         sdk_session_id = self._conversation_store.get_session_id(conversation_id)
@@ -539,6 +565,7 @@ class AgentRunner:
         options = _build_options(
             workflow=workflow,
             cwd=str(cwd),
+            env=_claude_agent_env(self._settings),
             system_prompt=system_prompt,
             model=model,
             session_id=sdk_session_id,
@@ -551,11 +578,11 @@ class AgentRunner:
             await client.connect()
         except Exception as exc:
             self._cleanup_agent(agent)
-            error_code = "AUTH_EXPIRED" if _is_auth_error(exc) else "SDK_ERROR"
+            is_auth = _is_auth_error(exc)
             raise AppError(
-                "Claude authentication has expired." if _is_auth_error(exc)
+                ErrorCode.AUTH_ERROR if is_auth else ErrorCode.INTERNAL_ERROR,
+                "Claude authentication has expired." if is_auth
                 else f"Failed to start Claude agent: {exc}",
-                code=error_code,
             ) from exc
 
         agent.client = client
@@ -564,13 +591,17 @@ class AgentRunner:
         try:
             await client.query(message)
         except Exception as exc:
-            error_code = "AUTH_EXPIRED" if _is_auth_error(exc) else "SDK_ERROR"
+            is_auth = _is_auth_error(exc)
+            err_code_str = "AUTH_EXPIRED" if is_auth else "SDK_ERROR"
             agent.publish(AgentEvent(
                 type=AgentEventType.ERROR,
-                data={"code": error_code, "message": str(exc)},
+                data={"code": err_code_str, "message": str(exc)},
             ))
             agent.status = AgentStatus.FAILED
-            raise AppError(str(exc), code=error_code) from exc
+            raise AppError(
+                ErrorCode.AUTH_ERROR if is_auth else ErrorCode.INTERNAL_ERROR,
+                str(exc),
+            ) from exc
 
         # Notify subscribers
         agent.publish(AgentEvent(
@@ -578,8 +609,11 @@ class AgentRunner:
             data={"conversation_id": conversation_id},
         ))
 
-        # Spawn execution task — task group owns the lifecycle
-        self._task_group.start_soon(self._execute_agent, agent)
+        # Spawn execution task — tracked for cancellation on reuse
+        agent._execute_task = asyncio.get_running_loop().create_task(
+            self._execute_agent(agent),
+            name=f"agent-{conversation_id[:8]}",
+        )
         return agent
 
     def subscribe(self, conversation_id: str) -> tuple[str, MemoryObjectReceiveStream[AgentEvent]] | None:
@@ -623,16 +657,38 @@ class AgentRunner:
     async def send_followup(self, conversation_id: str, message: str) -> None:
         agent = self._agents.get(conversation_id)
         if not agent or agent.status not in (AgentStatus.RUNNING, AgentStatus.COMPLETED):
-            raise AppError("No active agent for this conversation")
+            raise AppError(ErrorCode.INVALID_REQUEST, "No active agent for this conversation")
         agent.last_active = time.time()
         self._conversation_store.add_user_message(conversation_id, message)
+        # Cancel any in-flight reader task before starting a new one
+        if agent._execute_task and not agent._execute_task.done():
+            agent._execute_task.cancel()
+            try:
+                await agent._execute_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        agent._execute_task = None
+        # Reconnect the SDK client for multi-turn continuity if agent has completed
+        if agent.status == AgentStatus.COMPLETED:
+            try:
+                await agent.client.connect()
+            except Exception as exc:
+                is_auth = _is_auth_error(exc)
+                raise AppError(
+                    ErrorCode.AUTH_ERROR if is_auth else ErrorCode.INTERNAL_ERROR,
+                    "Claude authentication has expired." if is_auth
+                    else f"Failed to reconnect agent: {exc}",
+                ) from exc
         await agent.client.query(message)
         # Reset state for new turn
         agent.accumulated_text = ""
         agent.accumulated_blocks = []
         agent.status = AgentStatus.RUNNING
-        # Task group manages the new reader alongside any finishing old one
-        self._task_group.start_soon(self._execute_agent, agent)
+        # Spawn tracked execution task
+        agent._execute_task = asyncio.get_running_loop().create_task(
+            self._execute_agent(agent),
+            name=f"agent-{conversation_id[:8]}",
+        )
 
     async def compact(self, conversation_id: str) -> None:
         agent = self._agents.get(conversation_id)
@@ -898,6 +954,14 @@ class AgentRunner:
                 data={"code": error_code, "message": error_msg},
             ))
 
+        finally:
+            # Always release branch lock on completion/failure and clear tracked task
+            if agent.branch:
+                lock_key = (agent.repo, agent.branch)
+                if self._branch_locks.get(lock_key) == agent.conversation_id:
+                    self._branch_locks.pop(lock_key, None)
+            agent._execute_task = None
+
     async def _read_compact(self, agent: RunningAgent) -> None:
         try:
             async for message in agent.client.receive_messages():
@@ -922,17 +986,26 @@ class AgentRunner:
 
     async def _post_agent_open_pr(self, agent: RunningAgent, prompt: str) -> None:
         """After a PR-workflow agent run, commit changes and open a GitHub PR."""
-        from deathstar_server.app_state import git_service, github_service
-
         repo_root = agent.working_dir
-        current = git_service.current_branch(repo_root)
-        has_uncommitted = git_service.has_uncommitted_changes(repo_root)
+        current = self._git_service.current_branch(repo_root)
+        has_uncommitted = self._git_service.has_uncommitted_changes(repo_root)
+
+        # Detect the default remote branch once; reuse throughout this method
+        default_branch = "main"
+        try:
+            sym_result = subprocess.run(
+                ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+                cwd=str(repo_root), capture_output=True, text=True, check=True,
+            )
+            default_branch = sym_result.stdout.strip().rsplit("/", 1)[-1]
+        except subprocess.CalledProcessError:
+            pass
 
         agent_committed = False
         if not has_uncommitted:
             try:
                 result = subprocess.run(
-                    ["git", "log", "origin/main..HEAD", "--oneline"],
+                    ["git", "log", f"origin/{default_branch}..HEAD", "--oneline"],
                     cwd=str(repo_root), capture_output=True, text=True, check=True,
                 )
                 agent_committed = bool(result.stdout.strip())
@@ -952,18 +1025,18 @@ class AgentRunner:
         ))
 
         try:
-            github_service.ensure_remote_origin(repo_root)
+            self._github_service.ensure_remote_origin(repo_root)
 
             if has_uncommitted:
                 branch_name = _generate_branch_name(prompt)
-                git_service.ensure_branch(repo_root, branch_name)
+                self._git_service.ensure_branch(repo_root, branch_name)
                 commit_msg = f"deathstar: {prompt[:80]}"
-                git_service.commit_all(repo_root, commit_msg)
+                self._git_service.commit_all(repo_root, commit_msg)
                 agent.publish(AgentEvent(
                     type=AgentEventType.TEXT_DELTA,
                     data={"text": f"Committed to `{branch_name}`. Pushing..."},
                 ))
-                github_service.push_branch(repo_root, branch_name)
+                self._github_service.push_branch(repo_root, branch_name)
             else:
                 branch_name = current
                 try:
@@ -976,7 +1049,7 @@ class AgentRunner:
                             type=AgentEventType.TEXT_DELTA,
                             data={"text": f"Pushing `{branch_name}`..."},
                         ))
-                        github_service.push_branch(repo_root, branch_name)
+                        self._github_service.push_branch(repo_root, branch_name)
                     else:
                         agent.publish(AgentEvent(
                             type=AgentEventType.TEXT_DELTA,
@@ -987,24 +1060,17 @@ class AgentRunner:
                         type=AgentEventType.TEXT_DELTA,
                         data={"text": f"Pushing `{branch_name}`..."},
                     ))
-                    github_service.push_branch(repo_root, branch_name)
+                    self._github_service.push_branch(repo_root, branch_name)
 
             agent.publish(AgentEvent(
                 type=AgentEventType.TEXT_DELTA,
                 data={"text": " Opening PR..."},
             ))
 
-            base_branch = "main"
-            try:
-                result = subprocess.run(
-                    ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-                    cwd=str(repo_root), capture_output=True, text=True, check=True,
-                )
-                base_branch = result.stdout.strip().rsplit("/", 1)[-1]
-            except subprocess.CalledProcessError:
-                pass
+            # Reuse the default_branch already detected above (no second git symbolic-ref call)
+            base_branch = default_branch
 
-            pr_url = await github_service.create_pull_request(
+            pr_url = await self._github_service.create_pull_request(
                 repo_root=repo_root,
                 title=prompt[:120],
                 body=f"Generated by DeathStar agent.\n\n**Prompt:** {prompt}",
@@ -1051,6 +1117,10 @@ class AgentRunner:
                     elif now - agent.last_active > _AGENT_TTL_SECONDS:
                         # Stale running agent — evict
                         logger.info("evicting stale agent: conv=%s branch=%s", conv_id, agent.branch)
+                        try:
+                            await agent.client.interrupt()
+                        except Exception:
+                            pass
                         try:
                             await agent.client.disconnect()
                         except Exception:

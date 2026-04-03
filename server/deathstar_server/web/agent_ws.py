@@ -11,8 +11,10 @@ from anyio import ClosedResourceError
 from anyio.streams.memory import MemoryObjectReceiveStream
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from deathstar_server.app_state import agent_runner, event_bus, settings
 from deathstar_server.errors import AppError
 from deathstar_server.services.agent_runner import AgentEvent, AgentEventType, AgentRunner
+from deathstar_server.session import SESSION_COOKIE_NAME, validate_session_token
 from deathstar_shared.models import WorkflowKind
 
 logger = logging.getLogger(__name__)
@@ -26,16 +28,14 @@ agent_ws_router = APIRouter(prefix="/web/api")
 
 
 def _authenticate(websocket: WebSocket) -> bool:
-    from deathstar_server.app_state import settings as _settings
-    if not _settings.api_token:
+    if not settings.api_token:
         return True
-    from deathstar_server.session import SESSION_COOKIE_NAME, validate_session_token
     cookie = websocket.cookies.get(SESSION_COOKIE_NAME)
-    if cookie and validate_session_token(cookie, _settings.api_token):
+    if cookie and validate_session_token(cookie, settings.api_token):
         return True
     token = websocket.query_params.get("token")
     if token:
-        return hmac.compare_digest(token, _settings.api_token)
+        return hmac.compare_digest(token, settings.api_token)
     return False
 
 
@@ -53,8 +53,6 @@ async def _send(ws: WebSocket, msg_type: str, **data) -> None:
 
 async def _forward_events(ws: WebSocket, repo: str | None) -> None:
     """Subscribe to the event bus and forward repo events to a WebSocket client."""
-    from deathstar_server.app_state import event_bus
-
     try:
         async with event_bus.subscribe(repo) as events:
             async for event in events:
@@ -152,8 +150,6 @@ async def agent_ws(websocket: WebSocket) -> None:
         await websocket.close(code=4001, reason="unauthorized")
         return
 
-    from deathstar_server.app_state import agent_runner
-
     await websocket.accept()
 
     current_conv_id: str | None = None
@@ -163,13 +159,14 @@ async def agent_ws(websocket: WebSocket) -> None:
 
     def _unsubscribe_agent() -> None:
         """Clean up agent subscription without stopping the agent."""
-        nonlocal current_sub_id, agent_forward_task
+        nonlocal current_sub_id, agent_forward_task, current_conv_id
         if agent_forward_task:
             agent_forward_task.cancel()
             agent_forward_task = None
         if current_conv_id and current_sub_id:
             agent_runner.unsubscribe(current_conv_id, current_sub_id)
             current_sub_id = None
+            current_conv_id = None
 
     async def _subscribe_to_agent(conversation_id: str) -> None:
         """Subscribe to an agent's event stream and start forwarding."""

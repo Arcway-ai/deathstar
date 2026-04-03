@@ -337,7 +337,12 @@ def _build_web_app_with_queue(tmp_path: Path, api_token: str | None = None):
     # Set up a real AgentRunner so list_active() works correctly in tests
     from deathstar_server.services.agent_runner import AgentRunner
     mock_worktree = MagicMock()
-    mock_app_state.agent_runner = AgentRunner(convo_store, mock_worktree, mock_event_bus)
+    mock_git_service = MagicMock()
+    mock_github_service = MagicMock()
+    mock_app_state.agent_runner = AgentRunner(
+        convo_store, mock_worktree, mock_event_bus,
+        mock_settings, mock_git_service, mock_github_service,
+    )
 
     for mod_name in list(sys.modules):
         if mod_name.startswith("deathstar_server.app") or \

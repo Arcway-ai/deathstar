@@ -416,7 +416,7 @@ class AgentSessionResponse(DeathStarModel):
     repo: str
     branch: str | None = None
     workflow: WorkflowKind
-    status: str = "running"
+    status: Literal["starting", "running", "waiting_permission", "completed", "failed"] = "running"
     started_at: float
     last_active: float
 

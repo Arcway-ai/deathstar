@@ -6,11 +6,10 @@ import asyncio
 import logging
 import time
 
-import anyio
-
 from deathstar_server.services.agent_runner import (
     AgentEvent,
     AgentEventType,
+    AgentRunner,
 )
 from deathstar_server.services.event_bus import (
     EVENT_QUEUE_COMPLETED,
@@ -39,14 +38,16 @@ class QueueWorker:
         conversation_store: ConversationStore,
         worktree_manager: WorktreeManager,
         event_bus: EventBus,
+        agent_runner: AgentRunner,
     ) -> None:
         self._queue_store = queue_store
         self._conversation_store = conversation_store
         self._worktree_manager = worktree_manager
         self._event_bus = event_bus
+        self._agent_runner = agent_runner
         self._task: asyncio.Task | None = None
         self._running = False
-        self._wake_event = anyio.Event()
+        self._wake_event: asyncio.Event = asyncio.Event()
         self._poll_interval = 3
         # Track the conversation_id of the currently executing queue item
         # so we can interrupt it via the AgentRunner.
@@ -84,8 +85,7 @@ class QueueWorker:
         conv_id = self._current_conversation_id
         if not conv_id:
             return
-        from deathstar_server.app_state import agent_runner
-        agent_runner.interrupt_threadsafe(conv_id)
+        self._agent_runner.interrupt_threadsafe(conv_id)
 
     async def _process_loop(self) -> None:
         recovered = self._queue_store.recover_stale()
@@ -104,27 +104,26 @@ class QueueWorker:
 
                 processed = await self._process_one()
                 if not processed:
-                    # anyio.Event doesn't support clear/re-wait, so we use a
-                    # simple sleep-based poll with the event as an early wake.
+                    # Swap the event before waiting so any notify() call during
+                    # the wait goes to the new event — no race window where a
+                    # notification can be lost between clear and wait.
+                    current_event = self._wake_event
+                    self._wake_event = asyncio.Event()
                     try:
-                        with anyio.fail_after(self._poll_interval):
-                            await self._wake_event.wait()
-                    except TimeoutError:
+                        await asyncio.wait_for(current_event.wait(), timeout=float(self._poll_interval))
+                    except asyncio.TimeoutError:
                         pass
-                    # Reset the event for the next cycle
-                    self._wake_event = anyio.Event()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("queue worker error")
-                await anyio.sleep(5)
+                await asyncio.sleep(5)
 
     def _active_branches(self) -> set[tuple[str, str | None]]:
         """Return the set of (repo, branch) pairs with active agent sessions."""
-        from deathstar_server.app_state import agent_runner
         return {
             (repo, branch)
-            for (repo, branch) in agent_runner.get_active_branches()
+            for (repo, branch) in self._agent_runner.get_active_branches()
         }
 
     async def _process_one(self) -> bool:
@@ -154,8 +153,6 @@ class QueueWorker:
 
     async def _execute_item(self, item: dict) -> None:
         """Execute a queue item by delegating to AgentRunner."""
-        from deathstar_server.app_state import agent_runner
-
         item_id = str(item["id"])
         conversation_id = str(item["conversation_id"])
         repo = str(item["repo"])
@@ -183,7 +180,7 @@ class QueueWorker:
 
         try:
             # Start agent with auto_accept=True (queue items don't have interactive permission flow)
-            await agent_runner.start_agent(
+            await self._agent_runner.start_agent(
                 conversation_id=conversation_id,
                 repo=repo,
                 branch=branch_str,
@@ -194,15 +191,17 @@ class QueueWorker:
                 auto_accept=True,
             )
 
-            # Subscribe and wait for the agent to complete via anyio stream
-            result = agent_runner.subscribe(conversation_id)
+            # Subscribe immediately after start_agent. The execution task was spawned via
+            # asyncio.create_task() and won't run until we yield, so no RESULT event can
+            # be published before we subscribe.
+            result = self._agent_runner.subscribe(conversation_id)
             if not result:
                 raise RuntimeError("Failed to subscribe to agent")
             sub_id, recv_stream = result
 
             result_event: AgentEvent | None = None
             try:
-                with anyio.fail_after(600):
+                async with asyncio.timeout(600):
                     async for event in recv_stream:
                         if event.type == AgentEventType.RESULT:
                             result_event = event
@@ -212,7 +211,7 @@ class QueueWorker:
             except TimeoutError:
                 raise RuntimeError("Agent execution timed out (600s)")
             finally:
-                agent_runner.unsubscribe(conversation_id, sub_id)
+                self._agent_runner.unsubscribe(conversation_id, sub_id)
 
             if not result_event:
                 raise RuntimeError("Agent completed without producing a result")

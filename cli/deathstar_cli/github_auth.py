@@ -87,7 +87,7 @@ def run_device_flow(client_id: str) -> str:
     handling internally via OAuthDeviceAuthStrategy.
     """
 
-    def on_verification(data) -> None:
+    def on_verification(data: object) -> None:
         user_code = data.user_code
         verification_uri = data.verification_uri
 

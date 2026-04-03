@@ -179,7 +179,7 @@ class GitHubPoller:
             seen.update(recent_ids)
 
     @staticmethod
-    def _translate_event(repo_name: str, gh_event) -> RepoEvent | None:
+    def _translate_event(repo_name: str, gh_event: object) -> RepoEvent | None:
         """Translate a GitHub API event into a RepoEvent."""
         event_type = gh_event.type
         payload = gh_event.payload

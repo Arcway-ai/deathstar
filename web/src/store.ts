@@ -1384,15 +1384,32 @@ function _ensureAgentSocket(): void {
         }
       });
       const isRunning = snapshot.status === "running" || snapshot.status === "waiting_permission" || snapshot.status === "starting";
+
+      // Restore pending permission if the agent is waiting for one.
+      // Look for the last permission_request block in the snapshot.
+      let pendingPermission: { tool: string; input: Record<string, unknown> } | null = null;
+      if (snapshot.status === "waiting_permission") {
+        const permBlocks = (snapshot.blocks || []).filter(
+          (b: Record<string, unknown>) => b.type === "permission_request"
+        );
+        if (permBlocks.length > 0) {
+          const last = permBlocks[permBlocks.length - 1] as Record<string, unknown>;
+          pendingPermission = {
+            tool: last.tool as string,
+            input: (last.input ?? {}) as Record<string, unknown>,
+          };
+        }
+      }
+
       useStore.setState({
         sending: isRunning,
         streamingText: snapshot.text || "",
         agentStream: {
           blocks,
-          pendingPermission: null,
+          pendingPermission,
           isStreaming: isRunning,
           startedAt: isRunning ? Date.now() : null,
-          statusMessage: null,
+          statusMessage: snapshot.status === "waiting_permission" ? "Waiting for permission…" : null,
         },
       });
     },

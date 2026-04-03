@@ -40,10 +40,16 @@ def _mock_app_state():
 
 
 def _import_agent_ws():
-    # Force re-import with mocked app_state
+    # Force re-import with mocked app_state.
+    # We must also clear the parent package's cached attribute reference —
+    # Python's `from pkg import submod` returns the package-level attribute
+    # if present, bypassing sys.modules, so stale module objects linger.
     sys.modules.pop("deathstar_server.web.agent_ws", None)
     sys.modules.pop("deathstar_server.services.agent", None)
     sys.modules.pop("deathstar_server.services.agent_runner", None)
+    web_pkg = sys.modules.get("deathstar_server.web")
+    if web_pkg is not None and "agent_ws" in web_pkg.__dict__:
+        del web_pkg.__dict__["agent_ws"]
     from deathstar_server.web import agent_ws
     return agent_ws
 
@@ -51,6 +57,9 @@ def _import_agent_ws():
 def _import_agent_runner():
     sys.modules.pop("deathstar_server.services.agent_runner", None)
     sys.modules.pop("deathstar_server.services.agent", None)
+    services_pkg = sys.modules.get("deathstar_server.services")
+    if services_pkg is not None and "agent_runner" in services_pkg.__dict__:
+        del services_pkg.__dict__["agent_runner"]
     from deathstar_server.services import agent_runner
     return agent_runner
 
