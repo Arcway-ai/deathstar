@@ -1124,6 +1124,18 @@ def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+@web_router.get("/reviews/comments")
+async def get_pr_review_comments(pr_url: str = Query(...)) -> list[dict]:
+    """Fetch existing review comments on a PR for context."""
+    from deathstar_server.app_state import github_service
+    from deathstar_server.services.github import GitHubService
+
+    owner, repo_name, pr_number = GitHubService.parse_pr_url(pr_url)
+    return await github_service.fetch_pr_review_comments(
+        owner=owner, repo=repo_name, pr_number=pr_number,
+    )
+
+
 @web_router.post("/reviews/post-to-github")
 async def post_review_to_github(request: PostReviewRequest) -> dict:
     """Post a structured review to GitHub as a PR review with inline comments."""

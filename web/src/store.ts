@@ -647,6 +647,26 @@ export const useStore = create<Store>()(persist((set, get) => ({
         ? `\n+${selectedPR.additions}/-${selectedPR.deletions} across ${selectedPR.changed_files} files`
         : "";
       effectiveMessage = `Review PR #${selectedPR.number}: ${selectedPR.title}\n${selectedPR.url}\nBranch: ${selectedPR.head_branch} → ${selectedPR.base_branch}${stats}`;
+
+      // Fetch existing review comments for context
+      try {
+        const comments = await api.fetchPRReviewComments(selectedPR.url);
+        if (comments.length > 0) {
+          let commentSection = "\n\n## Existing reviewer comments on this PR\nAddress these alongside your own findings:\n";
+          for (const c of comments.slice(0, 30)) {
+            if (c.type === "inline" && c.path) {
+              commentSection += `\n- **${c.user}** on \`${c.path}${c.line ? `:${c.line}` : ""}\`:\n  ${c.body.slice(0, 500)}`;
+            } else if (c.type === "review" && c.state) {
+              commentSection += `\n- **${c.user}** (${c.state}):\n  ${c.body.slice(0, 500)}`;
+            } else {
+              commentSection += `\n- **${c.user}**:\n  ${c.body.slice(0, 500)}`;
+            }
+          }
+          effectiveMessage += commentSection;
+        }
+      } catch {
+        // Best-effort — don't block review if comment fetch fails
+      }
     }
 
     set({
