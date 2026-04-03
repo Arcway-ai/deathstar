@@ -6,6 +6,8 @@ import asyncio
 import logging
 import time
 
+import anyio
+
 from deathstar_server.services.agent_runner import (
     AgentEvent,
     AgentEventType,
@@ -44,7 +46,7 @@ class QueueWorker:
         self._event_bus = event_bus
         self._task: asyncio.Task | None = None
         self._running = False
-        self._wake_event = asyncio.Event()
+        self._wake_event = anyio.Event()
         self._poll_interval = 3
         # Track the conversation_id of the currently executing queue item
         # so we can interrupt it via the AgentRunner.
@@ -102,19 +104,20 @@ class QueueWorker:
 
                 processed = await self._process_one()
                 if not processed:
+                    # anyio.Event doesn't support clear/re-wait, so we use a
+                    # simple sleep-based poll with the event as an early wake.
                     try:
-                        await asyncio.wait_for(
-                            self._wake_event.wait(),
-                            timeout=self._poll_interval,
-                        )
-                    except asyncio.TimeoutError:
+                        with anyio.fail_after(self._poll_interval):
+                            await self._wake_event.wait()
+                    except TimeoutError:
                         pass
-                    self._wake_event.clear()
+                    # Reset the event for the next cycle
+                    self._wake_event = anyio.Event()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("queue worker error")
-                await asyncio.sleep(5)
+                await anyio.sleep(5)
 
     def _active_branches(self) -> set[tuple[str, str | None]]:
         """Return the set of (repo, branch) pairs with active agent sessions."""
@@ -191,24 +194,23 @@ class QueueWorker:
                 auto_accept=True,
             )
 
-            # Subscribe and wait for the agent to complete
+            # Subscribe and wait for the agent to complete via anyio stream
             result = agent_runner.subscribe(conversation_id)
             if not result:
                 raise RuntimeError("Failed to subscribe to agent")
-            sub_id, queue = result
+            sub_id, recv_stream = result
 
             result_event: AgentEvent | None = None
             try:
-                while True:
-                    try:
-                        event = await asyncio.wait_for(queue.get(), timeout=600)
-                    except asyncio.TimeoutError:
-                        raise RuntimeError("Agent execution timed out (600s)")
-                    if event.type == AgentEventType.RESULT:
-                        result_event = event
-                        break
-                    elif event.type == AgentEventType.ERROR:
-                        raise RuntimeError(event.data.get("message", "Agent error"))
+                with anyio.fail_after(600):
+                    async for event in recv_stream:
+                        if event.type == AgentEventType.RESULT:
+                            result_event = event
+                            break
+                        elif event.type == AgentEventType.ERROR:
+                            raise RuntimeError(event.data.get("message", "Agent error"))
+            except TimeoutError:
+                raise RuntimeError("Agent execution timed out (600s)")
             finally:
                 agent_runner.unsubscribe(conversation_id, sub_id)
 

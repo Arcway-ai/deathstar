@@ -9,10 +9,15 @@ import re
 import subprocess
 import time
 import uuid
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+
+import anyio
+from anyio.abc import TaskGroup
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -43,7 +48,7 @@ logger = logging.getLogger(__name__)
 _MAX_AGENTS = 8
 _AGENT_TTL_SECONDS = 15 * 60  # 15 minutes idle before eviction
 _COMPLETED_RETAIN_SECONDS = 5 * 60  # keep completed agents for snapshot access
-_SUBSCRIBER_QUEUE_SIZE = 512
+_SUBSCRIBER_BUFFER_SIZE = 512
 _PERMISSION_TIMEOUT_SECONDS = 120
 
 
@@ -292,32 +297,34 @@ class RunningAgent:
     status: AgentStatus = AgentStatus.STARTING
     accumulated_text: str = ""
     accumulated_blocks: list[dict] = field(default_factory=list)
-    permission_future: asyncio.Future | None = None
+    # Permission: anyio.Event for signaling, result stored separately
+    permission_event: anyio.Event | None = None
+    permission_result: PermissionResultAllow | PermissionResultDeny | None = None
     created_at: float = field(default_factory=time.time)
     last_active: float = field(default_factory=time.time)
     completed_at: float | None = None
-    task: asyncio.Task | None = None
-    compact_task: asyncio.Task | None = None
     prompt: str = ""
-    # Per-subscriber bounded queues
-    _subscribers: dict[str, asyncio.Queue] = field(default_factory=dict)
+    # Per-subscriber anyio memory object streams (send side kept for fan-out)
+    _subscribers: dict[str, MemoryObjectSendStream[AgentEvent]] = field(default_factory=dict)
 
     def publish(self, event: AgentEvent) -> None:
-        """Publish an event to all subscribers. Drop if queue full."""
-        for sub_id, queue in list(self._subscribers.items()):
+        """Publish an event to all subscribers. Drop if buffer full."""
+        for sub_id, send in list(self._subscribers.items()):
             try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                logger.warning("subscriber %s queue full, dropping event %s", sub_id, event.type)
+                send.send_nowait(event)
+            except (anyio.WouldBlock, anyio.ClosedResourceError):
+                pass
 
-    def subscribe(self) -> tuple[str, asyncio.Queue]:
+    def subscribe(self) -> tuple[str, MemoryObjectReceiveStream[AgentEvent]]:
         sub_id = str(uuid.uuid4())
-        queue: asyncio.Queue = asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_SIZE)
-        self._subscribers[sub_id] = queue
-        return sub_id, queue
+        send, recv = anyio.create_memory_object_stream[AgentEvent](max_buffer_size=_SUBSCRIBER_BUFFER_SIZE)
+        self._subscribers[sub_id] = send
+        return sub_id, recv
 
     def unsubscribe(self, sub_id: str) -> None:
-        self._subscribers.pop(sub_id, None)
+        send = self._subscribers.pop(sub_id, None)
+        if send:
+            send.close()
 
     @property
     def has_subscribers(self) -> bool:
@@ -354,26 +361,23 @@ class AgentRunner:
         self._event_bus = event_bus
         self._agents: dict[str, RunningAgent] = {}
         self._branch_locks: dict[tuple[str, str], str] = {}
-        self._reaper_task: asyncio.Task | None = None
+        self._exit_stack: AsyncExitStack | None = None
+        self._task_group: TaskGroup | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
-        self._reaper_task = asyncio.create_task(self._reaper_loop(), name="agent-reaper")
+        self._exit_stack = AsyncExitStack()
+        await self._exit_stack.__aenter__()
+        self._task_group = await self._exit_stack.enter_async_context(
+            anyio.create_task_group()
+        )
+        self._task_group.start_soon(self._reaper_loop)
         logger.info("agent runner started")
 
     async def stop(self) -> None:
-        if self._reaper_task:
-            self._reaper_task.cancel()
-            try:
-                await self._reaper_task
-            except asyncio.CancelledError:
-                pass
-        # Gracefully stop all running agents and their tasks
+        # Interrupt all running agents so their tasks finish quickly
         for agent in list(self._agents.values()):
-            for t in (agent.task, agent.compact_task):
-                if t and not t.done():
-                    t.cancel()
             if agent.status in (AgentStatus.RUNNING, AgentStatus.WAITING_PERMISSION, AgentStatus.STARTING):
                 try:
                     await agent.client.interrupt()
@@ -383,6 +387,11 @@ class AgentRunner:
                     await agent.client.disconnect()
                 except Exception:
                     pass
+        # Closing the exit stack cancels the task group and all its children
+        if self._exit_stack:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
+            self._task_group = None
         self._agents.clear()
         self._branch_locks.clear()
         logger.info("agent runner stopped")
@@ -464,21 +473,12 @@ class AgentRunner:
         # Check if we can reuse an existing agent
         existing = self._agents.get(conversation_id)
         if existing and existing.status in (AgentStatus.RUNNING, AgentStatus.WAITING_PERMISSION):
-            # Agent still running — cancel previous reader and send follow-up
-            if existing.task and not existing.task.done():
-                existing.task.cancel()
-                try:
-                    await existing.task
-                except asyncio.CancelledError:
-                    pass
+            # Agent still running — send follow-up (task group manages old task)
             existing.last_active = time.time()
             existing.workflow = workflow
             existing.prompt = message
             await existing.client.query(message)
-            existing.task = asyncio.create_task(
-                self._execute_agent(existing),
-                name=f"agent-{conversation_id[:8]}",
-            )
+            self._task_group.start_soon(self._execute_agent, existing)
             return existing
 
         # Tear down any completed/failed agent for this conversation
@@ -507,7 +507,7 @@ class AgentRunner:
         )
         self._agents[conversation_id] = agent
 
-        # Build permission callback
+        # Build permission callback using anyio.Event for signaling
         async def can_use_tool(tool_name, tool_input, context):
             deny = _check_protected_branch_push(tool_name, tool_input)
             if deny:
@@ -521,21 +521,20 @@ class AgentRunner:
                 data={"tool": tool_name, "input": tool_input},
             ))
             agent.status = AgentStatus.WAITING_PERMISSION
-            agent.permission_future = asyncio.get_running_loop().create_future()
+            agent.permission_event = anyio.Event()
+            agent.permission_result = None
             try:
-                result = await asyncio.wait_for(
-                    agent.permission_future,
-                    timeout=_PERMISSION_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
+                with anyio.fail_after(_PERMISSION_TIMEOUT_SECONDS):
+                    await agent.permission_event.wait()
+            except TimeoutError:
                 if agent.has_subscribers:
                     return PermissionResultDeny(message="Permission request timed out")
                 logger.warning("No subscriber connected — auto-accepting tool: %s", tool_name)
                 return PermissionResultAllow()
             finally:
-                agent.permission_future = None
+                agent.permission_event = None
                 agent.status = AgentStatus.RUNNING
-            return result
+            return agent.permission_result or PermissionResultAllow()
 
         options = _build_options(
             workflow=workflow,
@@ -579,14 +578,11 @@ class AgentRunner:
             data={"conversation_id": conversation_id},
         ))
 
-        # Spawn execution task
-        agent.task = asyncio.create_task(
-            self._execute_agent(agent),
-            name=f"agent-{conversation_id[:8]}",
-        )
+        # Spawn execution task — task group owns the lifecycle
+        self._task_group.start_soon(self._execute_agent, agent)
         return agent
 
-    def subscribe(self, conversation_id: str) -> tuple[str, asyncio.Queue] | None:
+    def subscribe(self, conversation_id: str) -> tuple[str, MemoryObjectReceiveStream[AgentEvent]] | None:
         agent = self._agents.get(conversation_id)
         if not agent:
             return None
@@ -599,14 +595,13 @@ class AgentRunner:
 
     def respond_permission(self, conversation_id: str, allow: bool) -> None:
         agent = self._agents.get(conversation_id)
-        if not agent or not agent.permission_future or agent.permission_future.done():
+        if not agent or not agent.permission_event:
             return
         if allow:
-            agent.permission_future.set_result(PermissionResultAllow())
+            agent.permission_result = PermissionResultAllow()
         else:
-            agent.permission_future.set_result(
-                PermissionResultDeny(message="User denied via web UI")
-            )
+            agent.permission_result = PermissionResultDeny(message="User denied via web UI")
+        agent.permission_event.set()
 
     async def interrupt(self, conversation_id: str) -> None:
         agent = self._agents.get(conversation_id)
@@ -629,13 +624,6 @@ class AgentRunner:
         agent = self._agents.get(conversation_id)
         if not agent or agent.status not in (AgentStatus.RUNNING, AgentStatus.COMPLETED):
             raise AppError("No active agent for this conversation")
-        # Cancel previous reader before starting a new turn
-        if agent.task and not agent.task.done():
-            agent.task.cancel()
-            try:
-                await agent.task
-            except asyncio.CancelledError:
-                pass
         agent.last_active = time.time()
         self._conversation_store.add_user_message(conversation_id, message)
         await agent.client.query(message)
@@ -643,10 +631,8 @@ class AgentRunner:
         agent.accumulated_text = ""
         agent.accumulated_blocks = []
         agent.status = AgentStatus.RUNNING
-        agent.task = asyncio.create_task(
-            self._execute_agent(agent),
-            name=f"agent-{conversation_id[:8]}",
-        )
+        # Task group manages the new reader alongside any finishing old one
+        self._task_group.start_soon(self._execute_agent, agent)
 
     async def compact(self, conversation_id: str) -> None:
         agent = self._agents.get(conversation_id)
@@ -654,7 +640,8 @@ class AgentRunner:
             return
         agent.last_active = time.time()
         await agent.client.query("/compact")
-        agent.compact_task = asyncio.create_task(self._read_compact(agent))
+        # Task group owns the compact reader — auto-cancelled on shutdown
+        self._task_group.start_soon(self._read_compact, agent)
 
     def get_agent(self, conversation_id: str) -> RunningAgent | None:
         return self._agents.get(conversation_id)
@@ -1053,7 +1040,7 @@ class AgentRunner:
     async def _reaper_loop(self) -> None:
         """Periodically clean up stale and completed agents."""
         while True:
-            await asyncio.sleep(60)
+            await anyio.sleep(60)
             try:
                 now = time.time()
                 to_remove: list[str] = []
@@ -1076,7 +1063,5 @@ class AgentRunner:
                         self._cleanup_agent(agent)
                         logger.info("reaped agent: conv=%s status=%s", conv_id, agent.status)
 
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 logger.warning("agent reaper error", exc_info=True)

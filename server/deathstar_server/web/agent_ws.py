@@ -7,10 +7,12 @@ import hmac
 import json
 import logging
 
+from anyio import ClosedResourceError
+from anyio.streams.memory import MemoryObjectReceiveStream
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from deathstar_server.errors import AppError
-from deathstar_server.services.agent_runner import AgentEventType, AgentRunner
+from deathstar_server.services.agent_runner import AgentEvent, AgentEventType, AgentRunner
 from deathstar_shared.models import WorkflowKind
 
 logger = logging.getLogger(__name__)
@@ -93,18 +95,17 @@ async def _forward_agent_events(
     agent_runner: AgentRunner,
     conversation_id: str,
     sub_id: str,
-    queue: asyncio.Queue,
+    recv_stream: MemoryObjectReceiveStream[AgentEvent],
 ) -> None:
-    """Read events from an agent's subscriber queue and forward to WebSocket."""
+    """Read events from an agent's subscriber stream and forward to WebSocket."""
     try:
-        while True:
-            event = await queue.get()
+        async for event in recv_stream:
             ws_type = _EVENT_TO_WS_TYPE.get(event.type, event.type.value)
             try:
                 await ws.send_json({"type": ws_type, **event.data})
             except (WebSocketDisconnect, RuntimeError):
                 break
-    except asyncio.CancelledError:
+    except (asyncio.CancelledError, ClosedResourceError):
         pass
     finally:
         agent_runner.unsubscribe(conversation_id, sub_id)
@@ -181,10 +182,10 @@ async def agent_ws(websocket: WebSocket) -> None:
         result = agent_runner.subscribe(conversation_id)
         if not result:
             return
-        sub_id, queue = result
+        sub_id, recv_stream = result
         current_sub_id = sub_id
         agent_forward_task = asyncio.create_task(
-            _forward_agent_events(websocket, agent_runner, conversation_id, sub_id, queue),
+            _forward_agent_events(websocket, agent_runner, conversation_id, sub_id, recv_stream),
             name=f"ws-forward-{conversation_id[:8]}",
         )
 
