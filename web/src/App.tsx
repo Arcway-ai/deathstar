@@ -74,6 +74,7 @@ export default function App() {
         }).catch(() => {});
       }
       loadBranches();
+      useStore.getState().loadConversations(urlRepo);
       // URL has a conversation — load it
       if (urlConversationId && currentConv !== urlConversationId) {
         selectConversation(urlConversationId);
