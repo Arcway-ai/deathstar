@@ -83,6 +83,7 @@ interface Store {
   /* ── Chat ───────────────────────────────────────────────────── */
   sending: boolean;
   sendError: string | null;
+  lastFailedMessage: string | null;
   streamingText: string;
   streamingProgress: string | null;
   agentStream: AgentStreamState;
@@ -92,6 +93,7 @@ interface Store {
   clearQueue: () => Promise<void>;
   syncAgentState: () => Promise<void>;
   sendMessage: (message: string) => Promise<void>;
+  retryLastMessage: () => void;
   sendAgentInput: (text: string) => void;
   pokeAgent: () => void;
   respondToPermission: (allow: boolean) => void;
@@ -504,6 +506,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
   /* ── Chat ────────────────────────────────────────────────────── */
   sending: false,
   sendError: null,
+  lastFailedMessage: null,
   streamingText: "",
   streamingProgress: null,
   agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
@@ -649,6 +652,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
     set({
       sending: true,
       sendError: null,
+      lastFailedMessage: null,
       streamingText: "",
       streamingProgress: null,
       agentStream: { blocks: [], pendingPermission: null, isStreaming: true, startedAt: Date.now(), statusMessage: null },
@@ -711,6 +715,14 @@ export const useStore = create<Store>()(persist((set, get) => ({
     });
   },
 
+  retryLastMessage: () => {
+    const { lastFailedMessage } = get();
+    if (lastFailedMessage) {
+      set({ sendError: null, lastFailedMessage: null });
+      get().sendMessage(lastFailedMessage);
+    }
+  },
+
   sendAgentInput: (text) => {
     _ensureAgentSocket();
     _agentSocket!.sendInput(text);
@@ -743,7 +755,14 @@ export const useStore = create<Store>()(persist((set, get) => ({
   /* ── Workflow + Persona ──────────────────────────────────────── */
   workflow: "prompt",
   setWorkflow: (w) => {
-    const updates: Partial<Store> = { workflow: w };
+    const updates: Partial<Store> = {
+      workflow: w,
+      // Start a fresh conversation for each mode switch
+      conversationId: null,
+      activeConversation: null,
+      sendError: null,
+      lastFailedMessage: null,
+    };
     const { persona, _preReviewPersona } = get();
     if (w === "review") {
       // Auto-switch to Reviewer persona, remembering the current one
@@ -1190,13 +1209,26 @@ function _ensureAgentSocket(): void {
     },
 
     onError: (code, message) => {
+      // Find the last user message so we can offer retry
+      const conv = useStore.getState().activeConversation;
+      const lastUserMsg = conv?.messages
+        ?.filter((m) => m.role === "user")
+        .at(-1)?.content ?? null;
+
+      // Remove the optimistic user message that failed
+      const cleaned = conv
+        ? { ...conv, messages: conv.messages.filter((m) => !(m.role === "user" && m.id.startsWith("pending-") && m.content === lastUserMsg)) }
+        : null;
+
       useStore.setState({
         sending: false,
         sendError: message,
+        lastFailedMessage: lastUserMsg,
         streamingText: "",
         streamingProgress: null,
         abortStream: null,
         agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
+        activeConversation: cleaned,
       });
 
       if (code === "AUTH_REQUIRED" || code === "AUTH_EXPIRED") {

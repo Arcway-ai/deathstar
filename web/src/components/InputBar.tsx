@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, AlertCircle, GitBranch, Pin, X } from "lucide-react";
+import { Send, AlertCircle, GitBranch, Pin, X, RotateCcw } from "lucide-react";
 import { useStore } from "../store";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -18,7 +18,9 @@ export default function InputBar() {
   const sending = useStore((s) => s.sending);
   const compacting = useStore((s) => s.compacting);
   const sendError = useStore((s) => s.sendError);
+  const lastFailedMessage = useStore((s) => s.lastFailedMessage);
   const sendMessage = useStore((s) => s.sendMessage);
+  const retryLastMessage = useStore((s) => s.retryLastMessage);
   const sendAgentInput = useStore((s) => s.sendAgentInput);
   const agentStream = useStore((s) => s.agentStream);
   const repoContext = useStore((s) => s.repoContext);
@@ -143,7 +145,18 @@ export default function InputBar() {
       {sendError && (
         <Alert variant="destructive" className="mb-2 border-error/30 bg-error/10 py-1.5 text-xs text-error [&>svg]:text-error">
           <AlertCircle className="size-3" />
-          <AlertDescription className="text-xs text-error">{sendError}</AlertDescription>
+          <AlertDescription className="flex items-center justify-between gap-2 text-xs text-error">
+            <span>{sendError}</span>
+            {lastFailedMessage && (
+              <button
+                onClick={retryLastMessage}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-error/30 px-2 py-0.5 text-[11px] font-medium text-error hover:bg-error/10 transition-colors"
+              >
+                <RotateCcw size={10} />
+                Retry
+              </button>
+            )}
+          </AlertDescription>
         </Alert>
       )}
 
