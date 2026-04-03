@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+
+from githubkit.webhooks import verify as gh_verify
 
 from deathstar_server.services.event_bus import (
     EVENT_CI_STATUS,
@@ -19,18 +19,6 @@ from deathstar_server.services.event_bus import (
 logger = logging.getLogger(__name__)
 
 webhook_router = APIRouter(prefix="/web/api/webhooks", tags=["webhooks"])
-
-
-def _verify_signature(payload: bytes, signature: str, secret: str) -> bool:
-    """Verify GitHub HMAC-SHA256 webhook signature."""
-    if not signature.startswith("sha256="):
-        return False
-    expected = hmac.new(
-        secret.encode(),
-        payload,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(f"sha256={expected}", signature)
 
 
 def _repo_name_from_payload(payload: dict) -> str | None:
@@ -58,7 +46,7 @@ async def github_webhook(request: Request) -> JSONResponse:
     # Verify signature
     body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
-    if not _verify_signature(body, signature, secret):
+    if not gh_verify(secret, body, signature):
         logger.warning("webhook: invalid signature")
         return JSONResponse(status_code=401, content={"detail": "invalid signature"})
 

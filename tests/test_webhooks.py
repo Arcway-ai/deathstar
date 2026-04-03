@@ -40,13 +40,11 @@ def _pr_payload(repo_name: str = "my-repo") -> dict:
 
 
 class TestWebhookSignatureVerification:
-    """Test HMAC-SHA256 signature verification."""
+    """Test HMAC-SHA256 signature verification via githubkit."""
 
     def _verify(self, payload, sig, secret):
-        # Import the function directly — it has no app_state dependency
-        # at function level (only the endpoint does).
-        from deathstar_server.web.webhooks import _verify_signature
-        return _verify_signature(payload, sig, secret)
+        from githubkit.webhooks import verify
+        return verify(secret, payload, sig)
 
     def test_valid_signature(self):
         secret = "test-webhook-secret-1234"
@@ -63,6 +61,7 @@ class TestWebhookSignatureVerification:
         secret = "test-webhook-secret-1234"
         payload = b'{"test": true}'
         sig = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        # githubkit verify expects "sha256=..." format — bare hex should fail
         assert self._verify(payload, f"sha1={sig}", secret) is False
 
 

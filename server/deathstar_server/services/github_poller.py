@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import subprocess
 from pathlib import Path
 
-import httpx
+from githubkit import GitHub, TokenAuthStrategy
+from githubkit.exception import RequestFailed
 
 from deathstar_server.config import Settings
 from deathstar_server.services.event_bus import (
@@ -21,14 +21,11 @@ from deathstar_server.services.event_bus import (
 
 logger = logging.getLogger(__name__)
 
-# Back off when rate limit is getting low
-_RATE_LIMIT_FLOOR = 500
-
 
 class GitHubPoller:
     """Polls GitHub Events API for changes to cloned repos.
 
-    Uses ETag caching so 304 responses don't count against the rate limit.
+    Uses githubkit with built-in HTTP caching and auto-retry.
     Translates PushEvent, PullRequestEvent, and StatusEvent into RepoEvents.
     """
 
@@ -41,14 +38,11 @@ class GitHubPoller:
         self._event_bus = event_bus
         self._interval = settings.github_poll_interval_seconds
         self._task: asyncio.Task | None = None
-        # repo_name -> ETag header for conditional requests
-        self._etags: dict[str, str] = {}
-        # repo_name -> last seen event ID to avoid reprocessing
+        # repo_name -> last seen event IDs to avoid reprocessing
         self._last_event_ids: dict[str, set[str]] = {}
         self._running = False
 
     async def start(self) -> None:
-        """Start the background polling loop."""
         if not self._settings.github_token:
             logger.info("GitHub poller disabled — no GITHUB_TOKEN configured")
             return
@@ -59,7 +53,6 @@ class GitHubPoller:
         logger.info("GitHub poller started (interval=%ds)", self._interval)
 
     async def stop(self) -> None:
-        """Stop the polling loop gracefully."""
         self._running = False
         if self._task:
             self._task.cancel()
@@ -71,10 +64,7 @@ class GitHubPoller:
         logger.info("GitHub poller stopped")
 
     def _discover_repos(self) -> list[tuple[str, str, str]]:
-        """Discover cloned repos and their GitHub owner/repo.
-
-        Returns list of (repo_name, owner, repo) tuples.
-        """
+        """Discover cloned repos and their GitHub owner/repo."""
         projects_root = self._settings.projects_root
         if not projects_root.is_dir():
             return []
@@ -91,7 +81,6 @@ class GitHubPoller:
 
     @staticmethod
     def _parse_origin(repo_dir: Path) -> tuple[str, str] | None:
-        """Extract GitHub owner/repo from a local repo's origin remote."""
         try:
             result = subprocess.run(
                 ["git", "-C", str(repo_dir), "remote", "get-url", "origin"],
@@ -103,8 +92,6 @@ class GitHubPoller:
             return None
 
         url = result.stdout.strip()
-        # SSH: git@github.com:owner/repo.git
-        # HTTPS: https://github.com/owner/repo.git
         for pattern in (
             r"^git@github\.com:(?P<owner>[^/]+)/(?P<repo>[^.]+?)(?:\.git)?$",
             r"^https://github\.com/(?P<owner>[^/]+)/(?P<repo>[^.]+?)(?:\.git)?$",
@@ -115,22 +102,24 @@ class GitHubPoller:
         return None
 
     async def _poll_loop(self) -> None:
-        """Main polling loop — runs until stopped."""
         while self._running:
             try:
                 repos = self._discover_repos()
                 if repos:
-                    async with httpx.AsyncClient(timeout=30.0) as client:
-                        for repo_name, owner, repo in repos:
-                            if not self._running:
-                                break
-                            await self._poll_repo(client, repo_name, owner, repo)
+                    gh = GitHub(
+                        TokenAuthStrategy(self._settings.github_token),
+                        auto_retry=True,
+                        http_cache=True,
+                    )
+                    for repo_name, owner, repo in repos:
+                        if not self._running:
+                            break
+                        await self._poll_repo(gh, repo_name, owner, repo)
             except asyncio.CancelledError:
                 raise
-            except (httpx.HTTPError, OSError, KeyError, ValueError, json.JSONDecodeError):
+            except Exception:
                 logger.exception("GitHub poller error")
 
-            # Sleep in small increments so we can stop quickly
             for _ in range(self._interval):
                 if not self._running:
                     break
@@ -138,56 +127,30 @@ class GitHubPoller:
 
     async def _poll_repo(
         self,
-        client: httpx.AsyncClient,
+        gh: GitHub,
         repo_name: str,
         owner: str,
         repo: str,
     ) -> None:
         """Poll a single repo's events endpoint."""
-        headers = {
-            "Authorization": f"Bearer {self._settings.github_token}",
-            "Accept": "application/vnd.github+json",
-        }
-
-        # Conditional request with ETag
-        cache_key = f"{owner}/{repo}"
-        etag = self._etags.get(cache_key)
-        if etag:
-            headers["If-None-Match"] = etag
-
         try:
-            response = await client.get(
-                f"https://api.github.com/repos/{owner}/{repo}/events",
-                params={"per_page": 30},
-                headers=headers,
+            resp = await gh.rest.activity.async_list_repo_events(
+                owner, repo, per_page=30,
             )
-        except httpx.HTTPError as exc:
-            logger.warning("GitHub API error for %s/%s: %s", owner, repo, exc)
-            return
-
-        # 304 Not Modified — no new events, and it's free
-        if response.status_code == 304:
-            return
-
-        if response.status_code != 200:
+        except RequestFailed as exc:
+            if exc.response.status_code == 304:
+                return  # Not Modified — no new events
             logger.warning(
                 "GitHub events API returned %d for %s/%s",
-                response.status_code,
-                owner,
-                repo,
+                exc.response.status_code, owner, repo,
             )
             return
 
-        # Store new ETag
-        new_etag = response.headers.get("ETag")
-        if new_etag:
-            self._etags[cache_key] = new_etag
-
-        # Check rate limit
-        remaining = response.headers.get("X-RateLimit-Remaining")
+        # Check rate limit from response headers
+        remaining = resp.headers.get("X-RateLimit-Remaining")
         if remaining:
             try:
-                if int(remaining) < _RATE_LIMIT_FLOOR:
+                if int(remaining) < 500:
                     logger.warning(
                         "GitHub rate limit low (%s remaining) — consider increasing poll interval",
                         remaining,
@@ -195,18 +158,12 @@ class GitHubPoller:
             except ValueError:
                 pass
 
-        try:
-            events = response.json()
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("GitHub events API returned non-JSON for %s/%s", owner, repo)
-            return
-        if not isinstance(events, list):
-            return
-
+        events = resp.parsed_data
+        cache_key = f"{owner}/{repo}"
         seen = self._last_event_ids.setdefault(cache_key, set())
 
         for gh_event in events:
-            event_id = str(gh_event.get("id", ""))
+            event_id = str(gh_event.id)
             if not event_id or event_id in seen:
                 continue
             seen.add(event_id)
@@ -217,17 +174,20 @@ class GitHubPoller:
 
         # Cap the seen set to prevent unbounded growth
         if len(seen) > 500:
-            # Keep only the 200 most recent (events are ordered newest-first)
-            recent_ids = {str(e.get("id", "")) for e in events[:200]}
+            recent_ids = {str(e.id) for e in events[:200]}
             seen.clear()
             seen.update(recent_ids)
 
     @staticmethod
-    def _translate_event(repo_name: str, gh_event: dict) -> RepoEvent | None:
+    def _translate_event(repo_name: str, gh_event) -> RepoEvent | None:
         """Translate a GitHub API event into a RepoEvent."""
-        event_type = gh_event.get("type")
-        payload = gh_event.get("payload", {})
-        actor = gh_event.get("actor", {}).get("login", "unknown")
+        event_type = gh_event.type
+        payload = gh_event.payload
+        actor = gh_event.actor.login if gh_event.actor else "unknown"
+
+        # payload is a dict from the Events API
+        if not isinstance(payload, dict):
+            return None
 
         if event_type == "PushEvent":
             commits = []

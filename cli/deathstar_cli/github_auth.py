@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import time
 import webbrowser
 
-import httpx
 import typer
 
-DEVICE_CODE_URL = "https://github.com/login/device/code"
-ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"
-VERIFICATION_URL = "https://github.com/login/device"
+from githubkit import GitHub
+from githubkit.auth import OAuthDeviceAuthStrategy
 
 REQUIRED_SCOPES = "repo"
 
@@ -84,71 +81,40 @@ def guided_pat_creation() -> str:
 
 
 def run_device_flow(client_id: str) -> str:
-    """Run the GitHub OAuth Device Flow."""
-    response = httpx.post(
-        DEVICE_CODE_URL,
-        data={"client_id": client_id, "scope": REQUIRED_SCOPES},
-        headers={"Accept": "application/json"},
-        timeout=30.0,
-    )
-    response.raise_for_status()
-    data = response.json()
+    """Run the GitHub OAuth Device Flow using githubkit.
 
-    device_code = data["device_code"]
-    user_code = data["user_code"]
-    verification_uri = data.get("verification_uri", VERIFICATION_URL)
-    interval = data.get("interval", 5)
-    expires_in = data.get("expires_in", 900)
+    githubkit handles the polling loop, interval backoff, and error
+    handling internally via OAuthDeviceAuthStrategy.
+    """
 
-    typer.echo("")
-    typer.echo(f"Open this URL in your browser:  {verification_uri}")
-    typer.echo(f"Enter this code:                {user_code}")
-    typer.echo("")
+    def on_verification(data) -> None:
+        user_code = data.user_code
+        verification_uri = data.verification_uri
+
+        typer.echo("")
+        typer.echo(f"Open this URL in your browser:  {verification_uri}")
+        typer.echo(f"Enter this code:                {user_code}")
+        typer.echo("")
+
+        try:
+            webbrowser.open(str(verification_uri))
+        except Exception:  # noqa: BLE001
+            pass
+
+        typer.echo("Waiting for authorization...")
+
+    github = GitHub(OAuthDeviceAuthStrategy(
+        client_id,
+        on_verification=on_verification,
+        scopes=[REQUIRED_SCOPES],
+    ))
 
     try:
-        webbrowser.open(verification_uri)
-    except Exception:  # noqa: BLE001
-        pass
+        auth = github.auth.exchange_token(github)
+    except Exception as exc:
+        raise typer.BadParameter(f"GitHub OAuth device flow failed: {exc}") from exc
 
-    typer.echo("Waiting for authorization...")
-
-    return _poll_for_token(client_id, device_code, interval, expires_in)
-
-
-def _poll_for_token(client_id: str, device_code: str, interval: int, expires_in: int) -> str:
-    deadline = time.time() + expires_in
-
-    while time.time() < deadline:
-        time.sleep(interval)
-
-        response = httpx.post(
-            ACCESS_TOKEN_URL,
-            data={
-                "client_id": client_id,
-                "device_code": device_code,
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            },
-            headers={"Accept": "application/json"},
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        error = data.get("error")
-        if error == "authorization_pending":
-            continue
-        if error == "slow_down":
-            interval = data.get("interval", interval + 5)
-            continue
-        if error == "expired_token":
-            raise typer.BadParameter("device code expired before authorization was completed")
-        if error == "access_denied":
-            raise typer.BadParameter("authorization was denied by the user")
-        if error:
-            raise typer.BadParameter(f"GitHub OAuth error: {error}")
-
-        token = data.get("access_token")
-        if token:
-            return token
-
-    raise typer.BadParameter("timed out waiting for GitHub authorization")
+    token = auth.token
+    if not token:
+        raise typer.BadParameter("device flow succeeded but no token was returned")
+    return token
