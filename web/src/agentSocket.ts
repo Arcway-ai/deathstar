@@ -53,6 +53,16 @@ export interface RepoEventData {
   timestamp: number;
 }
 
+export interface AgentSnapshotData {
+  status: string;
+  text: string;
+  blocks: Array<Record<string, unknown>>;
+  conversation_id: string;
+  repo: string;
+  branch: string | null;
+  workflow: string;
+}
+
 export interface AgentCallbacks {
   onTextDelta: (text: string) => void;
   onThinking: (text: string) => void;
@@ -67,6 +77,7 @@ export interface AgentCallbacks {
   onCompactDone?: (summary: string) => void;
   onStatus?: (event: AgentStatusEvent) => void;
   onRepoEvent?: (event: RepoEventData) => void;
+  onSnapshot?: (data: AgentSnapshotData) => void;
 }
 
 export interface AgentResult {
@@ -145,6 +156,19 @@ export class AgentSocket {
   /** Send a compact command to compress conversation context. */
   compact(): void {
     this.sendJson({ type: "compact" });
+  }
+
+  /** Subscribe to an already-running agent's event stream (for reconnection). */
+  subscribeAgent(conversationId: string): void {
+    const msg = { type: "subscribe_agent", conversation_id: conversationId };
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      const idx = this._sendQueue.findIndex((m) => m["type"] === "subscribe_agent");
+      if (idx >= 0) this._sendQueue.splice(idx, 1);
+      this._sendQueue.push(msg);
+      this.connect();
+    } else {
+      this.sendJson(msg);
+    }
   }
 
   /** Subscribe to real-time repo events for a given repo. */
@@ -294,6 +318,9 @@ export class AgentSocket {
         break;
       case "repo_event":
         this.callbacks.onRepoEvent?.(msg as unknown as RepoEventData);
+        break;
+      case "agent_snapshot":
+        this.callbacks.onSnapshot?.(msg as unknown as AgentSnapshotData);
         break;
       case "error":
         this.callbacks.onError(

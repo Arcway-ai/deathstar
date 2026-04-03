@@ -321,6 +321,7 @@ export interface AgentSessionInfo {
   repo: string;
   branch: string | null;
   workflow: string;
+  status: string;
   started_at: number;
   last_active: number;
 }

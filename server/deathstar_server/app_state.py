@@ -13,6 +13,7 @@ from deathstar_server.services.event_bus import EventBus
 from deathstar_server.web.feedback import FeedbackStore
 from deathstar_server.web.memory_bank import MemoryBank
 from deathstar_server.web.queue_store import QueueStore
+from deathstar_server.services.agent_runner import AgentRunner
 from deathstar_server.services.queue_worker import QueueWorker
 
 settings = load_settings()
@@ -38,4 +39,5 @@ memory_bank = MemoryBank(db)
 feedback_store = FeedbackStore(db)
 event_bus = EventBus()
 queue_store = QueueStore(db)
-queue_worker = QueueWorker(queue_store, conversation_store, worktree_manager, event_bus)
+agent_runner = AgentRunner(conversation_store, worktree_manager, event_bus, settings, git_service, github_service)
+queue_worker = QueueWorker(queue_store, conversation_store, worktree_manager, event_bus, agent_runner)

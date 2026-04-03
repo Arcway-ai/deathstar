@@ -872,7 +872,7 @@ def claude_auth_logout() -> dict:
 
 
 @web_router.get("/github/repos", response_model=list[GitHubRepoInfo])
-def list_github_repos() -> list[GitHubRepoInfo]:
+async def list_github_repos() -> list[GitHubRepoInfo]:
     """List repos accessible to the configured GITHUB_TOKEN."""
     if not settings.github_token:
         raise AppError(
@@ -881,44 +881,33 @@ def list_github_repos() -> list[GitHubRepoInfo]:
             status_code=400,
         )
 
-    import httpx
+    from githubkit import GitHub, TokenAuthStrategy
+    from githubkit.exception import RequestFailed
 
+    gh = GitHub(TokenAuthStrategy(settings.github_token), auto_retry=True)
     repos: list[GitHubRepoInfo] = []
-    page = 1
-    while page <= 5:  # Cap at 5 pages (500 repos)
-        resp = httpx.get(
-            "https://api.github.com/user/repos",
-            params={"per_page": 100, "page": page, "sort": "updated", "direction": "desc"},
-            headers={
-                "Authorization": f"Bearer {settings.github_token}",
-                "Accept": "application/vnd.github+json",
-            },
-            timeout=15,
-        )
-        if resp.status_code != 200:
-            if page == 1:
-                raise AppError(
-                    ErrorCode.AUTH_ERROR,
-                    f"GitHub API error: {resp.status_code}",
-                    status_code=502,
-                )
-            break
-
-        data = resp.json()
-        if not data:
-            break
-
-        for item in data:
+    try:
+        async for item in gh.paginate(
+            gh.rest.repos.async_list_for_authenticated_user,
+            per_page=100, sort="updated", direction="desc",
+        ):
             repos.append(GitHubRepoInfo(
-                full_name=item["full_name"],
-                name=item["name"],
-                description=item.get("description"),
-                default_branch=item.get("default_branch", "main"),
-                private=item.get("private", False),
-                updated_at=item.get("updated_at", ""),
-                language=item.get("language"),
+                full_name=item.full_name,
+                name=item.name,
+                description=item.description,
+                default_branch=item.default_branch or "main",
+                private=item.private,
+                updated_at=item.updated_at.isoformat() if item.updated_at else "",
+                language=item.language,
             ))
-        page += 1
+            if len(repos) >= 500:
+                break
+    except RequestFailed as exc:
+        raise AppError(
+            ErrorCode.AUTH_ERROR,
+            f"GitHub API error: {exc.response.status_code}",
+            status_code=502,
+        ) from exc
 
     return repos
 
@@ -1291,24 +1280,23 @@ def cancel_queue_item(item_id: str) -> dict[str, bool]:
 
 @web_router.get("/agent/sessions")
 def list_agent_sessions() -> list[AgentSessionResponse]:
-    """Return a snapshot of active interactive agent sessions.
+    """Return a snapshot of active agent sessions.
 
     Used by the frontend to reconcile UI state on reconnect or page refresh.
-    Only sessions that currently hold an open WebSocket connection are returned.
-    list() snapshots the dict before iterating to avoid RuntimeError if the
-    event loop adds/removes sessions concurrently from another thread.
+    Returns all running/waiting agents managed by the AgentRunner, regardless
+    of whether a WebSocket is currently connected.
     """
-    from deathstar_server.web.agent_ws import _sessions
+    from deathstar_server.app_state import agent_runner
 
     return [
         AgentSessionResponse(
-            conversation_id=s.conversation_id,
-            repo=s.repo,
-            branch=s.branch,
-            workflow=s.workflow,
-            started_at=s.created_at,
-            last_active=s.last_active,
+            conversation_id=a.conversation_id,
+            repo=a.repo,
+            branch=a.branch,
+            workflow=a.workflow,
+            status=a.status.value,
+            started_at=a.created_at,
+            last_active=a.last_active,
         )
-        for s in list(_sessions.values())
-        if s.websocket is not None
+        for a in agent_runner.list_active()
     ]

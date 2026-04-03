@@ -547,14 +547,32 @@ export const useStore = create<Store>()(persist((set, get) => ({
       const sessions = await api.fetchAgentSessions();
       const { conversationId, sending } = get();
 
-      // If we think we're sending but the server has no session for this
-      // conversation, the agent has already finished (result was never
-      // delivered because the WS was down) — clear the stuck state so the
-      // user isn't locked out of the input.
-      const serverHasOurSession = sessions.some(
+      // Check if server has a running agent for our current conversation
+      const serverSession = sessions.find(
         (s) => s.conversation_id === conversationId,
       );
-      if (sending && !serverHasOurSession) {
+
+      if (serverSession && (serverSession.status === "running" || serverSession.status === "waiting_permission" || serverSession.status === "starting")) {
+        // Agent is still running on the server — re-subscribe to its events.
+        // The server will send an agent_snapshot with accumulated state.
+        if (_agentSocket && conversationId) {
+          _agentSocket.subscribeAgent(conversationId);
+        }
+        // Mark as sending so the UI shows the active state
+        if (!sending) {
+          useStore.setState({
+            sending: true,
+            agentStream: {
+              blocks: [],
+              pendingPermission: null,
+              isStreaming: true,
+              startedAt: Date.now(),
+              statusMessage: "Reconnecting to agent…",
+            },
+          });
+        }
+      } else if (sending && !serverSession) {
+        // Agent has finished while we were disconnected — clear stuck state.
         useStore.setState({
           sending: false,
           agentStream: {
@@ -1349,6 +1367,51 @@ function _ensureAgentSocket(): void {
           break;
         }
       }
+    },
+
+    onSnapshot: (snapshot) => {
+      // Restore agent state from a server-side snapshot (after reconnecting
+      // to a still-running agent).  Cast blocks from the server format to
+      // AgentContentBlock[].
+      const blocks = (snapshot.blocks || []).map((b: Record<string, unknown>) => {
+        switch (b.type) {
+          case "text": return { type: "text" as const, text: b.text as string };
+          case "thinking": return { type: "thinking" as const, text: b.text as string };
+          case "tool_use": return { type: "tool_use" as const, id: b.id as string, tool: b.tool as string, input: b.input as Record<string, unknown> };
+          case "tool_result": return { type: "tool_result" as const, toolUseId: b.toolUseId as string, content: b.content as string, isError: b.isError as boolean };
+          case "permission_request": return { type: "permission_request" as const, tool: b.tool as string, input: b.input as Record<string, unknown> };
+          default: return { type: "text" as const, text: "" };
+        }
+      });
+      const isRunning = snapshot.status === "running" || snapshot.status === "waiting_permission" || snapshot.status === "starting";
+
+      // Restore pending permission if the agent is waiting for one.
+      // Look for the last permission_request block in the snapshot.
+      let pendingPermission: { tool: string; input: Record<string, unknown> } | null = null;
+      if (snapshot.status === "waiting_permission") {
+        const permBlocks = (snapshot.blocks || []).filter(
+          (b: Record<string, unknown>) => b.type === "permission_request"
+        );
+        if (permBlocks.length > 0) {
+          const last = permBlocks[permBlocks.length - 1] as Record<string, unknown>;
+          pendingPermission = {
+            tool: last.tool as string,
+            input: (last.input ?? {}) as Record<string, unknown>,
+          };
+        }
+      }
+
+      useStore.setState({
+        sending: isRunning,
+        streamingText: snapshot.text || "",
+        agentStream: {
+          blocks,
+          pendingPermission,
+          isStreaming: isRunning,
+          startedAt: isRunning ? Date.now() : null,
+          statusMessage: snapshot.status === "waiting_permission" ? "Waiting for permission…" : null,
+        },
+      });
     },
 
     onStateChange: (state) => {

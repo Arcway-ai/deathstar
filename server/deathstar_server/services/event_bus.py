@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -8,6 +7,9 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator
+
+import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +61,12 @@ class RepoEvent:
 
 @dataclass
 class _Subscriber:
-    """Internal subscriber state."""
+    """Internal subscriber state using anyio memory object streams."""
 
     id: str
     repo: str | None  # None = all repos
-    queue: asyncio.Queue[RepoEvent]
+    send: MemoryObjectSendStream[RepoEvent]
+    recv: MemoryObjectReceiveStream[RepoEvent]
 
 
 class EventBus:
@@ -98,11 +101,11 @@ class EventBus:
             if sub.repo is not None and sub.repo != event.repo:
                 continue
             try:
-                sub.queue.put_nowait(event)
+                sub.send.send_nowait(event)
                 delivered += 1
-            except asyncio.QueueFull:
+            except (anyio.WouldBlock, anyio.ClosedResourceError):
                 logger.warning(
-                    "subscriber %s queue full, dropping event %s",
+                    "subscriber %s buffer full or closed, dropping event %s",
                     sub.id,
                     event.event_type,
                 )
@@ -120,17 +123,21 @@ class EventBus:
         return _SubscriptionContext(self, repo)
 
     def _add_subscriber(self, repo: str | None) -> _Subscriber:
+        send, recv = anyio.create_memory_object_stream[RepoEvent](max_buffer_size=256)
         sub = _Subscriber(
             id=uuid.uuid4().hex[:12],
             repo=repo,
-            queue=asyncio.Queue(maxsize=256),
+            send=send,
+            recv=recv,
         )
         self._subscribers[sub.id] = sub
         logger.debug("subscriber %s added (repo=%s)", sub.id, repo)
         return sub
 
     def _remove_subscriber(self, sub_id: str) -> None:
-        self._subscribers.pop(sub_id, None)
+        sub = self._subscribers.pop(sub_id, None)
+        if sub:
+            sub.send.close()
         logger.debug("subscriber %s removed", sub_id)
 
     @property
@@ -163,6 +170,5 @@ class _SubscriptionContext:
 
     async def _iter(self) -> AsyncIterator[RepoEvent]:
         assert self._sub is not None
-        while True:
-            event = await self._sub.queue.get()
+        async for event in self._sub.recv:
             yield event
