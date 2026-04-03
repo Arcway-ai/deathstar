@@ -106,6 +106,8 @@ Tests live in `tests/`. The suite covers:
 
 Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "shared"]`.
 
+**All tests must pass before committing.** If any test is failing — regardless of when it broke — fix it before committing. Never dismiss failures as pre-existing or unrelated.
+
 ## CLI Command Groups
 
 - `deathstar deploy / destroy` — Terraform infrastructure management.

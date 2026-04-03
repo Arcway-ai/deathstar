@@ -410,12 +410,13 @@ class QueueItemResponse(DeathStarModel):
 
 
 class AgentSessionResponse(DeathStarModel):
-    """Active interactive agent session (WebSocket-connected)."""
+    """Active agent session (runs independently of WebSocket connections)."""
 
     conversation_id: str
     repo: str
     branch: str | None = None
     workflow: WorkflowKind
+    status: str = "running"
     started_at: float
     last_active: float
 

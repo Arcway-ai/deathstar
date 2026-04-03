@@ -334,6 +334,10 @@ def _build_web_app_with_queue(tmp_path: Path, api_token: str | None = None):
     mock_event_bus = MagicMock()
     mock_event_bus.publish.return_value = 0
     mock_app_state.event_bus = mock_event_bus
+    # Set up a real AgentRunner so list_active() works correctly in tests
+    from deathstar_server.services.agent_runner import AgentRunner
+    mock_worktree = MagicMock()
+    mock_app_state.agent_runner = AgentRunner(convo_store, mock_worktree, mock_event_bus)
 
     for mod_name in list(sys.modules):
         if mod_name.startswith("deathstar_server.app") or \
@@ -460,36 +464,33 @@ class TestQueueEndpoints:
 class TestAgentSessionsEndpoint:
     def test_returns_empty_when_no_sessions(self, queue_client):
         client, _, _ = queue_client
-        # agent_ws is loaded as a side-effect of building the test app; import
-        # inline here so we get the module instance that the live app is using.
-        import deathstar_server.web.agent_ws as agent_ws_mod  # noqa: PLC0415
-        original = agent_ws_mod._sessions.copy()
+        import deathstar_server.app_state as app_state_mod  # noqa: PLC0415
+        original = dict(app_state_mod.agent_runner._agents)
         try:
-            agent_ws_mod._sessions.clear()
+            app_state_mod.agent_runner._agents.clear()
             resp = client.get("/web/api/agent/sessions")
             assert resp.status_code == 200
             assert resp.json() == []
         finally:
-            agent_ws_mod._sessions.update(original)
+            app_state_mod.agent_runner._agents.update(original)
 
     def test_returns_active_sessions(self, queue_client):
         client, _, _ = queue_client
-        import deathstar_server.web.agent_ws as agent_ws_mod  # noqa: PLC0415
+        import deathstar_server.app_state as app_state_mod  # noqa: PLC0415
+        from deathstar_server.services.agent_runner import AgentStatus, RunningAgent  # noqa: PLC0415
 
-        # Build a fake session with a non-None websocket
-        fake_ws = MagicMock()
-        fake_session = MagicMock()
-        fake_session.conversation_id = "conv-test"
-        fake_session.repo = "my-project"
-        fake_session.branch = "main"
-        fake_session.workflow = "prompt"
-        fake_session.created_at = time.time()
-        fake_session.last_active = time.time()
-        fake_session.websocket = fake_ws
+        fake_agent = MagicMock(spec=RunningAgent)
+        fake_agent.conversation_id = "conv-test"
+        fake_agent.repo = "my-project"
+        fake_agent.branch = "main"
+        fake_agent.workflow = "prompt"
+        fake_agent.status = AgentStatus.RUNNING
+        fake_agent.created_at = time.time()
+        fake_agent.last_active = time.time()
 
-        original = dict(agent_ws_mod._sessions)
+        original = dict(app_state_mod.agent_runner._agents)
         try:
-            agent_ws_mod._sessions["conv-test"] = fake_session
+            app_state_mod.agent_runner._agents["conv-test"] = fake_agent
             resp = client.get("/web/api/agent/sessions")
             assert resp.status_code == 200
             data = resp.json()
@@ -497,30 +498,32 @@ class TestAgentSessionsEndpoint:
             assert data[0]["conversation_id"] == "conv-test"
             assert data[0]["repo"] == "my-project"
             assert data[0]["branch"] == "main"
+            assert data[0]["status"] == "running"
         finally:
-            agent_ws_mod._sessions.clear()
-            agent_ws_mod._sessions.update(original)
+            app_state_mod.agent_runner._agents.clear()
+            app_state_mod.agent_runner._agents.update(original)
 
-    def test_excludes_sessions_without_websocket(self, queue_client):
-        """Sessions where websocket is None must not appear in the response."""
+    def test_excludes_completed_sessions(self, queue_client):
+        """Completed agents are not returned by list_active()."""
         client, _, _ = queue_client
-        import deathstar_server.web.agent_ws as agent_ws_mod  # noqa: PLC0415
+        import deathstar_server.app_state as app_state_mod  # noqa: PLC0415
+        from deathstar_server.services.agent_runner import AgentStatus, RunningAgent  # noqa: PLC0415
 
-        disconnected = MagicMock()
-        disconnected.conversation_id = "conv-gone"
-        disconnected.repo = "my-project"
-        disconnected.branch = "main"
-        disconnected.workflow = "prompt"
-        disconnected.created_at = time.time()
-        disconnected.last_active = time.time()
-        disconnected.websocket = None  # not connected
+        completed = MagicMock(spec=RunningAgent)
+        completed.conversation_id = "conv-done"
+        completed.repo = "my-project"
+        completed.branch = "main"
+        completed.workflow = "prompt"
+        completed.status = AgentStatus.COMPLETED
+        completed.created_at = time.time()
+        completed.last_active = time.time()
 
-        original = dict(agent_ws_mod._sessions)
+        original = dict(app_state_mod.agent_runner._agents)
         try:
-            agent_ws_mod._sessions["conv-gone"] = disconnected
+            app_state_mod.agent_runner._agents["conv-done"] = completed
             resp = client.get("/web/api/agent/sessions")
             assert resp.status_code == 200
             assert resp.json() == []
         finally:
-            agent_ws_mod._sessions.clear()
-            agent_ws_mod._sessions.update(original)
+            app_state_mod.agent_runner._agents.clear()
+            app_state_mod.agent_runner._agents.update(original)

@@ -1291,24 +1291,23 @@ def cancel_queue_item(item_id: str) -> dict[str, bool]:
 
 @web_router.get("/agent/sessions")
 def list_agent_sessions() -> list[AgentSessionResponse]:
-    """Return a snapshot of active interactive agent sessions.
+    """Return a snapshot of active agent sessions.
 
     Used by the frontend to reconcile UI state on reconnect or page refresh.
-    Only sessions that currently hold an open WebSocket connection are returned.
-    list() snapshots the dict before iterating to avoid RuntimeError if the
-    event loop adds/removes sessions concurrently from another thread.
+    Returns all running/waiting agents managed by the AgentRunner, regardless
+    of whether a WebSocket is currently connected.
     """
-    from deathstar_server.web.agent_ws import _sessions
+    from deathstar_server.app_state import agent_runner
 
     return [
         AgentSessionResponse(
-            conversation_id=s.conversation_id,
-            repo=s.repo,
-            branch=s.branch,
-            workflow=s.workflow,
-            started_at=s.created_at,
-            last_active=s.last_active,
+            conversation_id=a.conversation_id,
+            repo=a.repo,
+            branch=a.branch,
+            workflow=a.workflow,
+            status=a.status.value,
+            started_at=a.created_at,
+            last_active=a.last_active,
         )
-        for s in list(_sessions.values())
-        if s.websocket is not None
+        for a in agent_runner.list_active()
     ]

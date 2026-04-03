@@ -39,13 +39,13 @@ _github_poller = GitHubPoller(settings, event_bus)
 
 async def _worktree_reaper() -> None:
     """Periodically clean up stale worktrees not tied to active sessions."""
-    from deathstar_server.web.agent_ws import get_active_branches
+    from deathstar_server.app_state import agent_runner
 
     while True:
         await asyncio.sleep(300)  # Every 5 minutes
         try:
             # Take a snapshot to avoid iteration over a mutating dict
-            locks_snapshot = get_active_branches()
+            locks_snapshot = agent_runner.get_active_branches()
             projects = settings.projects_root
             if not projects.is_dir():
                 continue
@@ -70,14 +70,16 @@ async def _worktree_reaper() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start/stop background services."""
-    from deathstar_server.app_state import queue_worker
+    from deathstar_server.app_state import agent_runner, queue_worker
 
     await _github_poller.start()
+    await agent_runner.start()
     await queue_worker.start()
     reaper_task = asyncio.create_task(_worktree_reaper(), name="worktree-reaper")
     yield
     reaper_task.cancel()
     await queue_worker.stop()
+    await agent_runner.stop()
     await _github_poller.stop()
 
 
