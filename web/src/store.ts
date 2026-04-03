@@ -471,9 +471,9 @@ export const useStore = create<Store>()(persist((set, get) => ({
 
   loadConversations: async (repo) => {
     try {
-      const { repoContext } = get();
-      const branch = repoContext?.branch;
-      const conversations = await api.fetchConversations(repo, branch ?? undefined);
+      // Load ALL conversations for this repo (no branch filter) so users
+      // can see conversations from other branches in the sidebar.
+      const conversations = await api.fetchConversations(repo);
       set({ conversations });
     } catch { /* ignore */ }
   },

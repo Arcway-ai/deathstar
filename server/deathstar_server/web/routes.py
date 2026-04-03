@@ -364,10 +364,33 @@ def list_worktrees(name: str) -> list[WorktreeResponse]:
     ]
 
 
+_BOT_BRANCH_PREFIXES = ("dependabot/", "renovate/", "snyk-", "imgbot/", "greenkeeper/")
+
+
 @web_router.get("/repos/{name}/branches")
 def list_branches(name: str) -> dict[str, object]:
-    """List local branches and identify the current one."""
+    """List branches, including remote branches synced from GitHub.
+
+    Fetches from origin first, then merges local and remote branches.
+    Bot-generated branches (dependabot, renovate, etc.) are excluded.
+    """
     repo_root = git_service.resolve_target(name)
+
+    # Fetch latest remote state (best-effort, don't block on failure)
+    try:
+        subprocess.run(
+            ["git", "fetch", "--prune", "origin"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Local branches
+    local: set[str] = set()
     try:
         result = subprocess.run(
             ["git", "branch", "--format=%(refname:short)"],
@@ -376,9 +399,36 @@ def list_branches(name: str) -> dict[str, object]:
             text=True,
             check=True,
         )
-        branches = [b.strip() for b in result.stdout.strip().splitlines() if b.strip()]
+        local = {b.strip() for b in result.stdout.strip().splitlines() if b.strip()}
     except subprocess.CalledProcessError:
-        branches = []
+        pass
+
+    # Remote branches (strip "origin/" prefix)
+    remote: set[str] = set()
+    try:
+        result = subprocess.run(
+            ["git", "branch", "-r", "--format=%(refname:short)"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        for ref in result.stdout.strip().splitlines():
+            ref = ref.strip()
+            if ref.startswith("origin/") and not ref.startswith("origin/HEAD"):
+                branch_name = ref.removeprefix("origin/")
+                remote.add(branch_name)
+    except subprocess.CalledProcessError:
+        pass
+
+    # Merge: all local + remote branches that aren't already local
+    all_branches = local | remote
+
+    # Filter out bot branches
+    branches = sorted(
+        b for b in all_branches
+        if not any(b.startswith(prefix) for prefix in _BOT_BRANCH_PREFIXES)
+    )
 
     try:
         current = git_service.current_branch(repo_root)
