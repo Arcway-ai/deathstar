@@ -209,11 +209,13 @@ class TestRunAgentStream:
 
 class TestSessionIdMethods:
     def test_update_and_get_session_id(self, tmp_path):
-        from deathstar_server.web.database import Database
+        from sqlmodel import SQLModel
+        from deathstar_server.db.engine import create_db_engine
         from deathstar_server.web.conversations import ConversationStore
 
-        db = Database(tmp_path / "test.db")
-        store = ConversationStore(db)
+        engine = create_db_engine(f"sqlite:///{tmp_path}/test.db")
+        SQLModel.metadata.create_all(engine)
+        store = ConversationStore(engine)
 
         cid = store.get_or_create(None, "my-repo")
 
@@ -229,10 +231,12 @@ class TestSessionIdMethods:
         assert store.get_session_id(cid) == "sdk-session-def"
 
     def test_get_session_id_nonexistent(self, tmp_path):
-        from deathstar_server.web.database import Database
+        from sqlmodel import SQLModel
+        from deathstar_server.db.engine import create_db_engine
         from deathstar_server.web.conversations import ConversationStore
 
-        db = Database(tmp_path / "test.db")
-        store = ConversationStore(db)
+        engine = create_db_engine(f"sqlite:///{tmp_path}/test.db")
+        SQLModel.metadata.create_all(engine)
+        store = ConversationStore(engine)
 
         assert store.get_session_id("nonexistent") is None

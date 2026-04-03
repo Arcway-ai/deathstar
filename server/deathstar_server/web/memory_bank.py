@@ -4,31 +4,28 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from deathstar_server.web.database import Database
+from sqlalchemy import Engine
+from sqlmodel import Session, select
+
+from deathstar_server.db.models import Memory
 
 MAX_MEMORY_CONTENT_CHARS = 10_000
 
 
 class MemoryBank:
-    """SQLite-backed memory bank — stores approved AI responses per repo."""
+    """PostgreSQL/SQLite-backed memory bank — stores approved AI responses per repo."""
 
-    def __init__(self, db: Database) -> None:
-        self._db = db
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def list_memories(self, repo: str | None = None) -> list[dict[str, object]]:
-        conn = self._db.get_conn()
-        if repo:
-            rows = conn.execute(
-                "SELECT id, repo, content, source_message_id, source_prompt, tags, created_at "
-                "FROM memories WHERE repo = ? ORDER BY created_at DESC",
-                (repo,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT id, repo, content, source_message_id, source_prompt, tags, created_at "
-                "FROM memories ORDER BY created_at DESC",
-            ).fetchall()
-        return [_row_to_dict(r) for r in rows]
+        with Session(self._engine) as session:
+            stmt = select(Memory)
+            if repo:
+                stmt = stmt.where(Memory.repo == repo)
+            stmt = stmt.order_by(Memory.created_at.desc())
+            rows = session.exec(stmt).all()
+            return [_model_to_dict(m) for m in rows]
 
     def save_memory(
         self,
@@ -39,72 +36,80 @@ class MemoryBank:
         source_prompt: str,
         tags: list[str],
     ) -> dict[str, object]:
-        conn = self._db.get_conn()
-        mid = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        truncated_content = content[:MAX_MEMORY_CONTENT_CHARS]
-        truncated_prompt = source_prompt[:2000]
-        truncated_tags = tags[:10]
-        conn.execute(
-            "INSERT INTO memories "
-            "(id, repo, content, source_message_id, source_prompt, tags, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (mid, repo, truncated_content, source_message_id, truncated_prompt,
-             json.dumps(truncated_tags), now),
-        )
-        conn.commit()
-        return {
-            "id": mid,
-            "repo": repo,
-            "content": truncated_content,
-            "source_message_id": source_message_id,
-            "source_prompt": truncated_prompt,
-            "tags": truncated_tags,
-            "created_at": now,
-        }
+        with Session(self._engine) as session:
+            mid = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+            truncated_content = content[:MAX_MEMORY_CONTENT_CHARS]
+            truncated_prompt = source_prompt[:2000]
+            truncated_tags = tags[:10]
+
+            memory = Memory(
+                id=mid,
+                repo=repo,
+                content=truncated_content,
+                source_message_id=source_message_id,
+                source_prompt=truncated_prompt,
+                tags=json.dumps(truncated_tags),
+                created_at=now,
+            )
+            session.add(memory)
+            session.commit()
+
+            return {
+                "id": mid,
+                "repo": repo,
+                "content": truncated_content,
+                "source_message_id": source_message_id,
+                "source_prompt": truncated_prompt,
+                "tags": truncated_tags,
+                "created_at": now,
+            }
 
     def delete_memory(self, memory_id: str) -> bool:
-        conn = self._db.get_conn()
-        cur = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
-        conn.commit()
-        return cur.rowcount > 0
+        with Session(self._engine) as session:
+            memory = session.get(Memory, memory_id)
+            if memory is None:
+                return False
+            session.delete(memory)
+            session.commit()
+            return True
 
     def get_relevant_memories(
         self, repo: str, max_chars: int = 4000, max_count: int = 5,
     ) -> list[dict[str, object]]:
         """Return most recent memories for a repo, fitting within a character budget."""
-        conn = self._db.get_conn()
-        rows = conn.execute(
-            "SELECT id, repo, content, source_message_id, source_prompt, tags, created_at "
-            "FROM memories WHERE repo = ? ORDER BY created_at DESC",
-            (repo,),
-        ).fetchall()
+        with Session(self._engine) as session:
+            stmt = (
+                select(Memory)
+                .where(Memory.repo == repo)
+                .order_by(Memory.created_at.desc())
+            )
+            rows = session.exec(stmt).all()
 
-        result: list[dict[str, object]] = []
-        total_chars = 0
-        for row in rows:
-            if len(result) >= max_count:
-                break
-            content_len = len(row["content"])
-            if total_chars + content_len > max_chars:
-                break
-            result.append(_row_to_dict(row))
-            total_chars += content_len
-        return result
+            result: list[dict[str, object]] = []
+            total_chars = 0
+            for memory in rows:
+                if len(result) >= max_count:
+                    break
+                content_len = len(memory.content)
+                if total_chars + content_len > max_chars:
+                    break
+                result.append(_model_to_dict(memory))
+                total_chars += content_len
+            return result
 
 
-def _row_to_dict(row) -> dict[str, object]:
-    tags_raw = row["tags"]
+def _model_to_dict(memory: Memory) -> dict[str, object]:
     try:
-        tags = json.loads(tags_raw) if isinstance(tags_raw, str) else tags_raw
+        tags = json.loads(memory.tags) if isinstance(memory.tags, str) else memory.tags
     except (json.JSONDecodeError, TypeError):
         tags = []
     return {
-        "id": row["id"],
-        "repo": row["repo"],
-        "content": row["content"],
-        "source_message_id": row["source_message_id"],
-        "source_prompt": row["source_prompt"],
+        "id": memory.id,
+        "repo": memory.repo,
+        "content": memory.content,
+        "source_message_id": memory.source_message_id,
+        "source_prompt": memory.source_prompt,
         "tags": tags,
-        "created_at": row["created_at"],
+        "created_at": memory.created_at,
     }

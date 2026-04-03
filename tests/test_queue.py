@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from deathstar_server.web.database import Database
+from sqlalchemy import text
+from sqlmodel import SQLModel, Session
+
+from deathstar_server.db.engine import create_db_engine
 from deathstar_server.web.queue_store import QueueStore
 
 
 def _make_queue_store(tmp_path: Path) -> QueueStore:
-    db = Database(tmp_path / "test.db")
-    return QueueStore(db)
+    engine = create_db_engine(f"sqlite:///{tmp_path}/test.db")
+    SQLModel.metadata.create_all(engine)
+    return QueueStore(engine)
 
 
 class TestEnqueue:
@@ -129,13 +133,14 @@ class TestMarkCompleted:
         # Should not appear in pending
         assert store.list_pending() == []
         # Verify in DB
-        conn = store._db.get_conn()
-        row = conn.execute(
-            "SELECT status, result_message_id FROM message_queue WHERE id = ?",
-            (claimed["id"],),
-        ).fetchone()
-        assert row["status"] == "completed"
-        assert row["result_message_id"] == "result-msg-1"
+        with Session(store._engine) as session:
+            row = session.exec(
+                text("SELECT status, result_message_id FROM message_queue WHERE id = :id"),
+                params={"id": claimed["id"]},
+            ).first()
+            assert row is not None
+            assert row[0] == "completed"
+            assert row[1] == "result-msg-1"
 
 
 class TestMarkFailed:
@@ -145,13 +150,14 @@ class TestMarkFailed:
         claimed = store.claim_next()
         assert claimed is not None
         store.mark_failed(str(claimed["id"]), "something went wrong")
-        conn = store._db.get_conn()
-        row = conn.execute(
-            "SELECT status, error_message FROM message_queue WHERE id = ?",
-            (claimed["id"],),
-        ).fetchone()
-        assert row["status"] == "failed"
-        assert row["error_message"] == "something went wrong"
+        with Session(store._engine) as session:
+            row = session.exec(
+                text("SELECT status, error_message FROM message_queue WHERE id = :id"),
+                params={"id": claimed["id"]},
+            ).first()
+            assert row is not None
+            assert row[0] == "failed"
+            assert row[1] == "something went wrong"
 
 
 class TestRecoverStale:
@@ -161,12 +167,12 @@ class TestRecoverStale:
         claimed = store.claim_next()
         assert claimed is not None
         # Force started_at to be old
-        conn = store._db.get_conn()
-        conn.execute(
-            "UPDATE message_queue SET started_at = '2020-01-01T00:00:00+00:00' WHERE id = ?",
-            (claimed["id"],),
-        )
-        conn.commit()
+        with Session(store._engine) as session:
+            session.exec(
+                text("UPDATE message_queue SET started_at = '2020-01-01T00:00:00+00:00' WHERE id = :id"),
+                params={"id": claimed["id"]},
+            )
+            session.commit()
         recovered = store.recover_stale(timeout_seconds=1)
         assert recovered == 1
         # Should be claimable again
@@ -220,11 +226,13 @@ class TestForceCancel:
         store.force_cancel(str(claimed["id"]))
         # Worker tries to mark_completed (WHERE status = 'processing' — no match)
         store.mark_completed(str(claimed["id"]), "late-msg")
-        conn = store._db.get_conn()
-        row = conn.execute(
-            "SELECT status FROM message_queue WHERE id = ?", (claimed["id"],)
-        ).fetchone()
-        assert row["status"] == "cancelled"
+        with Session(store._engine) as session:
+            row = session.exec(
+                text("SELECT status FROM message_queue WHERE id = :id"),
+                params={"id": claimed["id"]},
+            ).first()
+            assert row is not None
+            assert row[0] == "cancelled"
 
 
 class TestHasPending:

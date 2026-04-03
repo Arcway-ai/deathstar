@@ -4,7 +4,10 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from deathstar_server.web.database import Database
+from sqlalchemy import Engine, func
+from sqlmodel import Session, select
+
+from deathstar_server.db.models import Conversation, Message
 from deathstar_shared.models import (
     ConversationDetail,
     ConversationMessage,
@@ -17,10 +20,10 @@ HISTORY_CHAR_LIMIT = 16_000
 
 
 class ConversationStore:
-    """SQLite-backed conversation store."""
+    """PostgreSQL/SQLite-backed conversation store using SQLModel."""
 
-    def __init__(self, db: Database) -> None:
-        self._db = db
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     # ------------------------------------------------------------------
     # Public API
@@ -29,133 +32,138 @@ class ConversationStore:
     def list_conversations(
         self, repo: str | None = None, branch: str | None = None,
     ) -> list[ConversationSummary]:
-        conn = self._db.get_conn()
-        base = (
-            "SELECT c.id, c.repo, c.title, c.created_at, c.updated_at, c.branch, "
-            "(SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) AS message_count "
-            "FROM conversations c"
-        )
-        conditions: list[str] = []
-        params: list[str] = []
-        if repo:
-            conditions.append("c.repo = ?")
-            params.append(repo)
-        if branch:
-            # Show conversations for this branch AND legacy ones (branch IS NULL)
-            conditions.append("(c.branch = ? OR c.branch IS NULL)")
-            params.append(branch)
-
-        query = base
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-        query += " ORDER BY c.updated_at DESC"
-
-        rows = conn.execute(query, params).fetchall()
-        return [
-            ConversationSummary(
-                id=r["id"],
-                repo=r["repo"],
-                title=r["title"],
-                message_count=r["message_count"],
-                created_at=r["created_at"],
-                updated_at=r["updated_at"],
-                branch=r["branch"],
+        with Session(self._engine) as session:
+            # Subquery for message count
+            msg_count = (
+                select(func.count(Message.id))
+                .where(Message.conversation_id == Conversation.id)
+                .correlate(Conversation)
+                .scalar_subquery()
             )
-            for r in rows
-        ]
+
+            stmt = select(Conversation, msg_count.label("message_count"))
+
+            if repo:
+                stmt = stmt.where(Conversation.repo == repo)
+            if branch:
+                stmt = stmt.where(
+                    (Conversation.branch == branch) | (Conversation.branch.is_(None))  # type: ignore[union-attr]
+                )
+
+            stmt = stmt.order_by(Conversation.updated_at.desc())
+            rows = session.exec(stmt).all()  # type: ignore[arg-type]
+
+            return [
+                ConversationSummary(
+                    id=conv.id,
+                    repo=conv.repo,
+                    title=conv.title,
+                    message_count=count,
+                    created_at=conv.created_at,
+                    updated_at=conv.updated_at,
+                    branch=conv.branch,
+                )
+                for conv, count in rows
+            ]
 
     def get_conversation(self, conversation_id: str) -> ConversationDetail | None:
-        conn = self._db.get_conn()
-        c = conn.execute(
-            "SELECT id, repo, title, created_at, updated_at, branch "
-            "FROM conversations WHERE id = ?",
-            (conversation_id,),
-        ).fetchone()
-        if c is None:
-            return None
-        msg_rows = conn.execute(
-            "SELECT id, role, content, timestamp, workflow, provider, model, duration_ms, agent_blocks "
-            "FROM messages WHERE conversation_id = ? ORDER BY timestamp",
-            (conversation_id,),
-        ).fetchall()
-        return ConversationDetail(
-            id=c["id"],
-            repo=c["repo"],
-            title=c["title"],
-            messages=[
-                ConversationMessage(
-                    id=m["id"],
-                    role=m["role"],
-                    content=m["content"],
-                    timestamp=m["timestamp"],
-                    workflow=m["workflow"],
-                    provider=m["provider"],
-                    model=m["model"],
-                    duration_ms=m["duration_ms"],
-                    agent_blocks=json.loads(m["agent_blocks"]) if m["agent_blocks"] else None,
-                )
-                for m in msg_rows
-            ],
-            created_at=c["created_at"],
-            updated_at=c["updated_at"],
-            branch=c["branch"],
-        )
+        with Session(self._engine) as session:
+            conv = session.get(Conversation, conversation_id)
+            if conv is None:
+                return None
+
+            stmt = (
+                select(Message)
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.timestamp)
+            )
+            messages = session.exec(stmt).all()
+
+            return ConversationDetail(
+                id=conv.id,
+                repo=conv.repo,
+                title=conv.title,
+                messages=[
+                    ConversationMessage(
+                        id=m.id,
+                        role=m.role,
+                        content=m.content,
+                        timestamp=m.timestamp,
+                        workflow=m.workflow,
+                        provider=m.provider,
+                        model=m.model,
+                        duration_ms=m.duration_ms,
+                        agent_blocks=json.loads(m.agent_blocks) if m.agent_blocks else None,
+                    )
+                    for m in messages
+                ],
+                created_at=conv.created_at,
+                updated_at=conv.updated_at,
+                branch=conv.branch,
+            )
 
     def delete_conversation(self, conversation_id: str) -> bool:
-        conn = self._db.get_conn()
-        cur = conn.execute(
-            "DELETE FROM conversations WHERE id = ?", (conversation_id,)
-        )
-        conn.commit()
-        return cur.rowcount > 0
+        with Session(self._engine) as session:
+            conv = session.get(Conversation, conversation_id)
+            if conv is None:
+                return False
+            session.delete(conv)
+            session.commit()
+            return True
 
     def get_or_create(
         self, conversation_id: str | None, repo: str, branch: str | None = None,
     ) -> str:
-        conn = self._db.get_conn()
-        if conversation_id:
-            row = conn.execute(
-                "SELECT id FROM conversations WHERE id = ?", (conversation_id,)
-            ).fetchone()
-            if row:
-                return conversation_id
+        with Session(self._engine) as session:
+            if conversation_id:
+                existing = session.get(Conversation, conversation_id)
+                if existing:
+                    return conversation_id
 
-        cid = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "INSERT INTO conversations (id, repo, title, created_at, updated_at, branch) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (cid, repo, "New conversation", now, now, branch),
-        )
-        conn.commit()
-        return cid
+            now = datetime.now(timezone.utc).isoformat()
+            cid = str(uuid.uuid4())
+            conv = Conversation(
+                id=cid,
+                repo=repo,
+                title="New conversation",
+                created_at=now,
+                updated_at=now,
+                branch=branch,
+            )
+            session.add(conv)
+            session.commit()
+            return cid
 
     def add_user_message(self, conversation_id: str, content: str) -> str:
-        conn = self._db.get_conn()
-        msg_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, timestamp) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (msg_id, conversation_id, "user", content, now),
-        )
-        # Update title to first user message if this is the first message
-        count = conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
-            (conversation_id,),
-        ).fetchone()[0]
-        if count == 1:
-            conn.execute(
-                "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
-                (content[:80], now, conversation_id),
+        with Session(self._engine) as session:
+            msg_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+
+            msg = Message(
+                id=msg_id,
+                conversation_id=conversation_id,
+                role="user",
+                content=content,
+                timestamp=now,
             )
-        else:
-            conn.execute(
-                "UPDATE conversations SET updated_at = ? WHERE id = ?",
-                (now, conversation_id),
-            )
-        conn.commit()
-        return msg_id
+            session.add(msg)
+
+            # Update title to first user message if this is the first message
+            count = session.exec(
+                select(func.count(Message.id)).where(
+                    Message.conversation_id == conversation_id
+                )
+            ).one()
+
+            conv = session.get(Conversation, conversation_id)
+            if conv:
+                if count == 0:
+                    # This is the first message (count is before our INSERT is flushed)
+                    conv.title = content[:80]
+                conv.updated_at = now
+
+            session.commit()
+            return msg_id
 
     def add_assistant_message(
         self,
@@ -168,62 +176,69 @@ class ConversationStore:
         duration_ms: int,
         agent_blocks: list[dict] | None = None,
     ) -> str:
-        conn = self._db.get_conn()
-        msg_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        blocks_json = json.dumps(agent_blocks) if agent_blocks else None
-        conn.execute(
-            "INSERT INTO messages "
-            "(id, conversation_id, role, content, timestamp, workflow, provider, model, duration_ms, agent_blocks) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (msg_id, conversation_id, "assistant", content, now, workflow, provider, model, duration_ms, blocks_json),
-        )
-        conn.execute(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (now, conversation_id),
-        )
-        conn.commit()
-        return msg_id
+        with Session(self._engine) as session:
+            msg_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+            blocks_json = json.dumps(agent_blocks) if agent_blocks else None
+
+            msg = Message(
+                id=msg_id,
+                conversation_id=conversation_id,
+                role="assistant",
+                content=content,
+                timestamp=now,
+                workflow=workflow,
+                provider=provider,
+                model=model,
+                duration_ms=duration_ms,
+                agent_blocks=blocks_json,
+            )
+            session.add(msg)
+
+            conv = session.get(Conversation, conversation_id)
+            if conv:
+                conv.updated_at = now
+
+            session.commit()
+            return msg_id
 
     def update_session_id(self, conversation_id: str, session_id: str | None) -> None:
-        conn = self._db.get_conn()
-        conn.execute(
-            "UPDATE conversations SET sdk_session_id = ? WHERE id = ?",
-            (session_id, conversation_id),
-        )
-        conn.commit()
+        with Session(self._engine) as session:
+            conv = session.get(Conversation, conversation_id)
+            if conv:
+                conv.sdk_session_id = session_id
+                session.commit()
 
     def get_session_id(self, conversation_id: str) -> str | None:
-        conn = self._db.get_conn()
-        row = conn.execute(
-            "SELECT sdk_session_id FROM conversations WHERE id = ?",
-            (conversation_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return row["sdk_session_id"]
+        with Session(self._engine) as session:
+            conv = session.get(Conversation, conversation_id)
+            if conv is None:
+                return None
+            return conv.sdk_session_id
 
     def build_history_prompt(self, conversation_id: str) -> str:
-        conn = self._db.get_conn()
-        rows = conn.execute(
-            "SELECT role, content FROM messages "
-            "WHERE conversation_id = ? ORDER BY timestamp",
-            (conversation_id,),
-        ).fetchall()
-        if not rows:
-            return ""
+        with Session(self._engine) as session:
+            stmt = (
+                select(Message.role, Message.content)
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.timestamp)
+            )
+            rows = session.exec(stmt).all()
 
-        lines: list[str] = []
-        total = 0
-        for row in reversed(rows):
-            label = "User" if row["role"] == "user" else "Assistant"
-            entry = f"{label}: {row['content']}"
-            if total + len(entry) > HISTORY_CHAR_LIMIT:
-                break
-            lines.append(entry)
-            total += len(entry)
+            if not rows:
+                return ""
 
-        if not lines:
-            return ""
-        lines.reverse()
-        return "Conversation history:\n" + "\n\n".join(lines)
+            lines: list[str] = []
+            total = 0
+            for role, content in reversed(rows):
+                label = "User" if role == "user" else "Assistant"
+                entry = f"{label}: {content}"
+                if total + len(entry) > HISTORY_CHAR_LIMIT:
+                    break
+                lines.append(entry)
+                total += len(entry)
+
+            if not lines:
+                return ""
+            lines.reverse()
+            return "Conversation history:\n" + "\n\n".join(lines)

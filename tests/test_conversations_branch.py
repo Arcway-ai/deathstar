@@ -6,11 +6,14 @@ import sqlite3
 
 import pytest
 
+from sqlmodel import SQLModel
+
+from deathstar_server.db.engine import create_db_engine
 from deathstar_server.web.database import Database
 
 
 # ---------------------------------------------------------------------------
-# Database migration v3 → v4
+# Database migration v3 → v4 (legacy SQLite Database class)
 # ---------------------------------------------------------------------------
 
 
@@ -134,7 +137,7 @@ class TestMigrationV4:
 
 
 # ---------------------------------------------------------------------------
-# Conversation store branch-aware queries
+# Conversation store branch-aware queries (SQLModel)
 # ---------------------------------------------------------------------------
 
 
@@ -142,8 +145,9 @@ class TestConversationStoreBranch:
     @pytest.fixture()
     def store(self, tmp_path):
         from deathstar_server.web.conversations import ConversationStore
-        db = Database(tmp_path / "test.db")
-        return ConversationStore(db)
+        engine = create_db_engine(f"sqlite:///{tmp_path}/test.db")
+        SQLModel.metadata.create_all(engine)
+        return ConversationStore(engine)
 
     def test_get_or_create_stores_branch(self, store):
         cid = store.get_or_create(None, "my-repo", branch="feature/auth")

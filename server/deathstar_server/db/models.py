@@ -1,6 +1,7 @@
 """SQLModel table definitions for all DeathStar database tables."""
 
-from __future__ import annotations
+# NOTE: Do NOT use `from __future__ import annotations` here.
+# SQLAlchemy/SQLModel need runtime type evaluation for Relationship() to work.
 
 from datetime import datetime, timezone
 from typing import Optional
@@ -34,7 +35,7 @@ class Conversation(SQLModel, table=True):
     sdk_session_id: Optional[str] = Field(default=None)
     branch: Optional[str] = Field(default=None)
 
-    messages: list[Message] = Relationship(
+    messages: list["Message"] = Relationship(
         back_populates="conversation",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )

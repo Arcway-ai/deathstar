@@ -3,14 +3,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from deathstar_server.web.database import Database
+from sqlalchemy import Engine
+from sqlmodel import Session, select
+
+from deathstar_server.db.models import Feedback
 
 
 class FeedbackStore:
-    """SQLite-backed store for message-level feedback (thumbs up/down)."""
+    """PostgreSQL/SQLite-backed store for message-level feedback (thumbs up/down)."""
 
-    def __init__(self, db: Database) -> None:
-        self._db = db
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def save_feedback(
         self,
@@ -23,52 +26,73 @@ class FeedbackStore:
         prompt: str = "",
         comment: str = "",
     ) -> dict[str, object]:
-        conn = self._db.get_conn()
-        fid = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "INSERT INTO feedback "
-            "(id, message_id, conversation_id, kind, repo, content, prompt, comment, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (fid, message_id, conversation_id, kind, repo,
-             content[:10_000], prompt[:2000], comment[:1000], now),
-        )
-        conn.commit()
-        return {
-            "id": fid,
-            "message_id": message_id,
-            "kind": kind,
-            "repo": repo,
-            "created_at": now,
-        }
+        with Session(self._engine) as session:
+            fid = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+
+            fb = Feedback(
+                id=fid,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                kind=kind,
+                repo=repo,
+                content=content[:10_000],
+                prompt=prompt[:2000],
+                comment=comment[:1000],
+                created_at=now,
+            )
+            session.add(fb)
+            session.commit()
+
+            return {
+                "id": fid,
+                "message_id": message_id,
+                "kind": kind,
+                "repo": repo,
+                "created_at": now,
+            }
 
     def list_feedback(
         self, repo: str | None = None, kind: str | None = None,
     ) -> list[dict[str, object]]:
-        conn = self._db.get_conn()
-        query = (
-            "SELECT id, message_id, conversation_id, kind, repo, comment, created_at "
-            "FROM feedback"
-        )
-        params: list[str] = []
-        conditions: list[str] = []
-        if repo:
-            conditions.append("repo = ?")
-            params.append(repo)
-        if kind:
-            conditions.append("kind = ?")
-            params.append(kind)
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-        query += " ORDER BY created_at DESC"
-        rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        with Session(self._engine) as session:
+            stmt = select(Feedback)
+            if repo:
+                stmt = stmt.where(Feedback.repo == repo)
+            if kind:
+                stmt = stmt.where(Feedback.kind == kind)
+            stmt = stmt.order_by(Feedback.created_at.desc())
+
+            rows = session.exec(stmt).all()
+            return [
+                {
+                    "id": fb.id,
+                    "message_id": fb.message_id,
+                    "conversation_id": fb.conversation_id,
+                    "kind": fb.kind,
+                    "repo": fb.repo,
+                    "comment": fb.comment,
+                    "created_at": fb.created_at,
+                }
+                for fb in rows
+            ]
 
     def get_feedback_for_message(self, message_id: str) -> dict[str, object] | None:
-        conn = self._db.get_conn()
-        row = conn.execute(
-            "SELECT id, message_id, kind, repo, comment, created_at "
-            "FROM feedback WHERE message_id = ? ORDER BY created_at DESC LIMIT 1",
-            (message_id,),
-        ).fetchone()
-        return dict(row) if row else None
+        with Session(self._engine) as session:
+            stmt = (
+                select(Feedback)
+                .where(Feedback.message_id == message_id)
+                .order_by(Feedback.created_at.desc())
+                .limit(1)
+            )
+            fb = session.exec(stmt).first()
+            if fb is None:
+                return None
+            return {
+                "id": fb.id,
+                "message_id": fb.message_id,
+                "kind": fb.kind,
+                "repo": fb.repo,
+                "comment": fb.comment,
+                "created_at": fb.created_at,
+            }

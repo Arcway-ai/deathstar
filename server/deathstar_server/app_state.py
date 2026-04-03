@@ -1,13 +1,17 @@
 import os
 
+from sqlmodel import SQLModel
+
 from deathstar_server.config import load_settings
+from deathstar_server.db.engine import create_db_engine
+from deathstar_server.db.session import init_engine
+from deathstar_server.db import models  # noqa: F401 — register all models
 from deathstar_server.logging import configure_logging
 from deathstar_server.services import agent as agent_service  # noqa: F401
 from deathstar_server.services.backup import BackupService
 from deathstar_server.services.github import GitHubService
 from deathstar_server.services.gitops import GitService
 from deathstar_server.services.worktree import WorktreeManager
-from deathstar_server.web.database import Database
 from deathstar_server.web.conversations import ConversationStore
 from deathstar_server.services.event_bus import EventBus
 from deathstar_server.web.feedback import FeedbackStore
@@ -31,13 +35,18 @@ github_service = GitHubService(settings)
 backup_service = BackupService(settings)
 worktree_manager = WorktreeManager(settings)
 
-# SQLite database — single file, backed up with the rest of /workspace
-db = Database(settings.workspace_root / "deathstar" / "deathstar.db")
+# Database — SQLModel engine (PostgreSQL in production, SQLite for dev/tests)
+engine = create_db_engine(settings.database_url)
+init_engine(engine)
 
-conversation_store = ConversationStore(db)
-memory_bank = MemoryBank(db)
-feedback_store = FeedbackStore(db)
+# Create all tables if they don't exist (for fresh installs or dev with SQLite).
+# In production, Alembic migrations manage the schema.
+SQLModel.metadata.create_all(engine)
+
+conversation_store = ConversationStore(engine)
+memory_bank = MemoryBank(engine)
+feedback_store = FeedbackStore(engine)
 event_bus = EventBus()
-queue_store = QueueStore(db)
+queue_store = QueueStore(engine)
 agent_runner = AgentRunner(conversation_store, worktree_manager, event_bus, settings, git_service, github_service)
 queue_worker = QueueWorker(queue_store, conversation_store, worktree_manager, event_bus, agent_runner)

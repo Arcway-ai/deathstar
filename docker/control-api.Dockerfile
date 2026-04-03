@@ -55,10 +55,11 @@ COPY plugins/deathstar-code /opt/claude-plugins/deathstar-code
 # re-copy of code layers while keeping heavy dependency layers cached.
 ARG CACHEBUST=0
 
-COPY pyproject.toml README.md /app/
+COPY pyproject.toml README.md alembic.ini /app/
 COPY cli /app/cli
 COPY server /app/server
 COPY shared /app/shared
+COPY alembic /app/alembic
 
 RUN python -m pip install --upgrade pip \
   && python -m pip install /app
