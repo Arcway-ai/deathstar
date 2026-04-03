@@ -934,7 +934,13 @@ class AgentRunner:
                             },
                         ))
 
-            # Update accumulated state on the agent for snapshot access
+                # Sync incremental state to agent after every message so that
+                # get_snapshot() reflects current output for reconnecting clients.
+                agent.accumulated_text = accumulated_text
+                agent.accumulated_blocks = accumulated_blocks
+
+            # Final sync (redundant but safe — covers the ResultMessage break path
+            # and ensures consistency if the loop exits without a ResultMessage)
             agent.accumulated_text = accumulated_text
             agent.accumulated_blocks = accumulated_blocks
 

@@ -92,6 +92,121 @@ def _make_running_agent(*, conversation_id="conv-1", repo="org/repo", branch="fe
 
 
 # ---------------------------------------------------------------------------
+# _execute_agent — incremental snapshot sync
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteAgentSnapshot:
+    """_execute_agent must sync accumulated_text/blocks to the agent object after
+    every message so that get_snapshot() returns current output for reconnecting
+    clients, not an empty string.
+
+    Before the fix: accumulated_text was a local variable only written back to
+    agent.accumulated_text after the async for loop exited.
+    """
+
+    @pytest.mark.asyncio
+    async def test_snapshot_has_text_after_first_stream_event(self):
+        """agent.accumulated_text reflects streamed text mid-run (before ResultMessage)."""
+        import asyncio
+
+        from claude_agent_sdk import ResultMessage, StreamEvent
+
+        runner = _make_runner()
+        agent = _make_running_agent()
+        runner._agents[agent.conversation_id] = agent
+
+        # Gate that fires after the first StreamEvent is processed
+        first_processed = asyncio.Event()
+        # Gate that lets execution continue to the ResultMessage
+        resume = asyncio.Event()
+
+        async def fake_receive_messages():
+            yield StreamEvent(
+                uuid="u1",
+                session_id="s1",
+                event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hello"}},
+            )
+            # Signal the test that the first message is done, then wait for clearance
+            first_processed.set()
+            await resume.wait()
+            yield ResultMessage(
+                subtype="result",
+                uuid="u2",
+                session_id="s1",
+                duration_ms=100,
+                duration_api_ms=100,
+                is_error=False,
+                num_turns=1,
+                result="Hello",
+                total_cost_usd=0.0,
+                usage=None,
+            )
+
+        agent.client.receive_messages = fake_receive_messages
+
+        task = asyncio.create_task(runner._execute_agent(agent))
+        await asyncio.wait_for(first_processed.wait(), timeout=5.0)
+
+        # Mid-run: the first text delta has been processed.
+        # With the fix: agent.accumulated_text == "Hello"
+        # Without the fix: agent.accumulated_text == "" (local var not yet written back)
+        mid_run_text = agent.accumulated_text
+
+        resume.set()
+        await asyncio.wait_for(task, timeout=5.0)
+
+        assert mid_run_text == "Hello", (
+            f"get_snapshot() mid-run returned {mid_run_text!r}; "
+            "expected 'Hello' — incremental sync is missing"
+        )
+        # Final state should also be correct
+        assert agent.accumulated_text == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_accumulates_across_multiple_deltas(self):
+        """Each streamed delta is visible in get_snapshot() immediately after processing."""
+        import asyncio
+
+        from claude_agent_sdk import ResultMessage, StreamEvent
+
+        runner = _make_runner()
+        agent = _make_running_agent()
+        runner._agents[agent.conversation_id] = agent
+
+        checkpoints: list[str] = []
+        gates = [asyncio.Event() for _ in range(3)]
+        resumes = [asyncio.Event() for _ in range(3)]
+
+        async def fake_receive_messages():
+            for i, text in enumerate(["Hello", " world", "!"]):
+                yield StreamEvent(
+                    uuid=f"u{i}",
+                    session_id="s1",
+                    event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}},
+                )
+                gates[i].set()
+                await resumes[i].wait()
+            yield ResultMessage(
+                subtype="result", uuid="u9", session_id="s1",
+                duration_ms=100, duration_api_ms=100, is_error=False,
+                num_turns=3, result="Hello world!", total_cost_usd=0.0, usage=None,
+            )
+
+        agent.client.receive_messages = fake_receive_messages
+        task = asyncio.create_task(runner._execute_agent(agent))
+
+        expected = ["Hello", "Hello world", "Hello world!"]
+        for i in range(3):
+            await asyncio.wait_for(gates[i].wait(), timeout=5.0)
+            checkpoints.append(agent.accumulated_text)
+            resumes[i].set()
+
+        await asyncio.wait_for(task, timeout=5.0)
+        assert checkpoints == expected, f"Mid-run snapshots wrong: {checkpoints}"
+
+
+# ---------------------------------------------------------------------------
 # RunningAgent — pub/sub
 # ---------------------------------------------------------------------------
 
