@@ -44,7 +44,7 @@ _MAX_AGENTS = 8
 _AGENT_TTL_SECONDS = 15 * 60  # 15 minutes idle before eviction
 _COMPLETED_RETAIN_SECONDS = 5 * 60  # keep completed agents for snapshot access
 _SUBSCRIBER_QUEUE_SIZE = 512
-_PERMISSION_TIMEOUT_SECONDS = 60
+_PERMISSION_TIMEOUT_SECONDS = 120
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +297,7 @@ class RunningAgent:
     last_active: float = field(default_factory=time.time)
     completed_at: float | None = None
     task: asyncio.Task | None = None
+    compact_task: asyncio.Task | None = None
     prompt: str = ""
     # Per-subscriber bounded queues
     _subscribers: dict[str, asyncio.Queue] = field(default_factory=dict)
@@ -368,8 +369,11 @@ class AgentRunner:
                 await self._reaper_task
             except asyncio.CancelledError:
                 pass
-        # Gracefully stop all running agents
+        # Gracefully stop all running agents and their tasks
         for agent in list(self._agents.values()):
+            for t in (agent.task, agent.compact_task):
+                if t and not t.done():
+                    t.cancel()
             if agent.status in (AgentStatus.RUNNING, AgentStatus.WAITING_PERMISSION, AgentStatus.STARTING):
                 try:
                     await agent.client.interrupt()
@@ -460,7 +464,13 @@ class AgentRunner:
         # Check if we can reuse an existing agent
         existing = self._agents.get(conversation_id)
         if existing and existing.status in (AgentStatus.RUNNING, AgentStatus.WAITING_PERMISSION):
-            # Agent still running — send follow-up
+            # Agent still running — cancel previous reader and send follow-up
+            if existing.task and not existing.task.done():
+                existing.task.cancel()
+                try:
+                    await existing.task
+                except asyncio.CancelledError:
+                    pass
             existing.last_active = time.time()
             existing.workflow = workflow
             existing.prompt = message
@@ -511,7 +521,7 @@ class AgentRunner:
                 data={"tool": tool_name, "input": tool_input},
             ))
             agent.status = AgentStatus.WAITING_PERMISSION
-            agent.permission_future = asyncio.get_event_loop().create_future()
+            agent.permission_future = asyncio.get_running_loop().create_future()
             try:
                 result = await asyncio.wait_for(
                     agent.permission_future,
@@ -619,6 +629,13 @@ class AgentRunner:
         agent = self._agents.get(conversation_id)
         if not agent or agent.status not in (AgentStatus.RUNNING, AgentStatus.COMPLETED):
             raise AppError("No active agent for this conversation")
+        # Cancel previous reader before starting a new turn
+        if agent.task and not agent.task.done():
+            agent.task.cancel()
+            try:
+                await agent.task
+            except asyncio.CancelledError:
+                pass
         agent.last_active = time.time()
         self._conversation_store.add_user_message(conversation_id, message)
         await agent.client.query(message)
@@ -637,7 +654,7 @@ class AgentRunner:
             return
         agent.last_active = time.time()
         await agent.client.query("/compact")
-        asyncio.create_task(self._read_compact(agent))
+        agent.compact_task = asyncio.create_task(self._read_compact(agent))
 
     def get_agent(self, conversation_id: str) -> RunningAgent | None:
         return self._agents.get(conversation_id)
