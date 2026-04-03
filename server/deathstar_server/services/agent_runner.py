@@ -497,6 +497,11 @@ class AgentRunner:
                 except (asyncio.CancelledError, Exception):
                     pass
             existing._execute_task = None
+            # Re-acquire branch lock: the cancelled task's finally block unconditionally
+            # releases it, opening a window before the next await where a concurrent
+            # start_agent call for the same branch could sneak through.
+            if existing.branch:
+                self._branch_locks[(existing.repo, existing.branch)] = existing.conversation_id
             existing.last_active = time.time()
             existing.workflow = workflow
             existing.prompt = message
@@ -668,6 +673,11 @@ class AgentRunner:
             except (asyncio.CancelledError, Exception):
                 pass
         agent._execute_task = None
+        # Re-acquire branch lock: the cancelled task's finally block releases it,
+        # opening a yield-point window before query() where another start_agent could
+        # claim the branch.
+        if agent.branch:
+            self._branch_locks[(agent.repo, agent.branch)] = agent.conversation_id
         # Reconnect the SDK client for multi-turn continuity if agent has completed
         if agent.status == AgentStatus.COMPLETED:
             try:

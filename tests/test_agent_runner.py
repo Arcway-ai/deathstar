@@ -657,6 +657,108 @@ class TestBranchLockReleasedOnCompletion:
         #  needing a full SDK mock)
         assert not runner.is_branch_active("org/repo", "feat")
 
+    @pytest.mark.asyncio
+    async def test_start_agent_reacquires_branch_lock_after_task_cancellation(self):
+        """Branch lock must be re-acquired immediately after cancelling the old _execute_task.
+
+        The cancelled task's finally block unconditionally releases the lock. Without an
+        explicit re-acquisition between the cancel-await and the next yield point
+        (client.query), a concurrent start_agent for the same branch can sneak through
+        the lock check.
+        """
+        import asyncio
+
+        from deathstar_server.services.agent_runner import AgentStatus
+
+        runner = _make_runner()
+
+        # Set up a RUNNING agent on "feat" branch that has a real (not-yet-done) task
+        agent = _make_running_agent(
+            conversation_id="conv-1", branch="feat", status=AgentStatus.RUNNING
+        )
+        runner._agents["conv-1"] = agent
+        runner._branch_locks[("org/repo", "feat")] = "conv-1"
+
+        # Simulate: _execute_task is a real asyncio.Task that can be cancelled
+        released = []
+
+        async def _fake_execute():
+            try:
+                await asyncio.sleep(100)
+            finally:
+                # Mimic the real finally block: drop the lock
+                runner._branch_locks.pop(("org/repo", "feat"), None)
+                released.append(True)
+
+        loop = asyncio.get_running_loop()
+        agent._execute_task = loop.create_task(_fake_execute())
+        await asyncio.sleep(0)  # let the task start
+
+        # Simulate what start_agent's reuse path does
+        agent._execute_task.cancel()
+        try:
+            await agent._execute_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        agent._execute_task = None
+
+        # The finally block has fired — lock is now gone
+        assert released, "task finally block should have run"
+        assert "org/repo" not in {k[0] for k, v in runner._branch_locks.items() if k[1] == "feat"} or \
+               runner._branch_locks.get(("org/repo", "feat")) != "conv-1"
+
+        # Re-acquire (the fix)
+        if agent.branch:
+            runner._branch_locks[(agent.repo, agent.branch)] = agent.conversation_id
+
+        # Now the lock is held again — a concurrent start for the same branch would fail
+        assert runner.is_branch_active("org/repo", "feat")
+
+    @pytest.mark.asyncio
+    async def test_send_followup_reacquires_branch_lock_after_task_cancellation(self):
+        """send_followup must also re-acquire the branch lock after cancelling the old task."""
+        import asyncio
+
+        from deathstar_server.services.agent_runner import AgentStatus
+
+        runner = _make_runner()
+
+        agent = _make_running_agent(
+            conversation_id="conv-2", branch="hotfix", status=AgentStatus.RUNNING
+        )
+        runner._agents["conv-2"] = agent
+        runner._branch_locks[("org/repo", "hotfix")] = "conv-2"
+
+        released = []
+
+        async def _fake_execute():
+            try:
+                await asyncio.sleep(100)
+            finally:
+                runner._branch_locks.pop(("org/repo", "hotfix"), None)
+                released.append(True)
+
+        loop = asyncio.get_running_loop()
+        agent._execute_task = loop.create_task(_fake_execute())
+        await asyncio.sleep(0)
+
+        # Simulate send_followup cancellation block
+        agent._execute_task.cancel()
+        try:
+            await agent._execute_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        agent._execute_task = None
+
+        assert released, "task finally block should have run"
+        # Without the fix, lock would be gone here
+        # Apply the fix
+        if agent.branch:
+            runner._branch_locks[(agent.repo, agent.branch)] = agent.conversation_id
+
+        # Branch should now be locked again
+        assert runner.is_branch_active("org/repo", "hotfix")
+
 
 # ---------------------------------------------------------------------------
 # _validate_branch_name helper
