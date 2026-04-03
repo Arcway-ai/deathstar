@@ -482,6 +482,11 @@ export const useStore = create<Store>()(persist((set, get) => ({
     try {
       const detail = await api.fetchConversation(id);
       set({ activeConversation: detail, conversationId: detail.id });
+      // If this conversation isn't in the sidebar list, refresh it
+      const { conversations, selectedRepo } = get();
+      if (!conversations.some((c) => c.id === detail.id)) {
+        get().loadConversations(selectedRepo ?? detail.repo);
+      }
     } catch { /* ignore */ }
   },
 
