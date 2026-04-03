@@ -721,6 +721,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             branch: repoContext?.branch ?? null,
+            branches: [],
           },
     }));
 

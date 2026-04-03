@@ -9,7 +9,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -123,6 +123,15 @@ CREATE TABLE IF NOT EXISTS branch_prs (
     PRIMARY KEY (repo, branch)
 );
 CREATE INDEX IF NOT EXISTS idx_branch_prs_repo ON branch_prs(repo);
+
+CREATE TABLE IF NOT EXISTS conversation_branches (
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    branch TEXT NOT NULL,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, branch)
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_branches_conv
+    ON conversation_branches(conversation_id);
 """
 
 
@@ -233,6 +242,25 @@ class Database:
                     ON branch_prs(repo);
             """)
             logger.info("migration v6: added branch_prs table")
+
+        if from_version < 7:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS conversation_branches (
+                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    branch TEXT NOT NULL,
+                    added_at TEXT NOT NULL,
+                    PRIMARY KEY (conversation_id, branch)
+                );
+                CREATE INDEX IF NOT EXISTS idx_conversation_branches_conv
+                    ON conversation_branches(conversation_id);
+            """)
+            # Migrate existing single-branch data (skip main/master)
+            conn.execute("""
+                INSERT OR IGNORE INTO conversation_branches (conversation_id, branch, added_at)
+                SELECT id, branch, created_at FROM conversations
+                WHERE branch IS NOT NULL AND branch NOT IN ('main', 'master')
+            """)
+            logger.info("migration v7: added conversation_branches table")
 
         conn.execute(
             "UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,)

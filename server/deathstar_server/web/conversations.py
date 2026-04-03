@@ -15,12 +15,41 @@ from deathstar_shared.models import (
 
 HISTORY_CHAR_LIMIT = 16_000
 
+_PROTECTED_BRANCHES = frozenset({"main", "master"})
+
 
 class ConversationStore:
     """SQLite-backed conversation store."""
 
     def __init__(self, db: Database) -> None:
         self._db = db
+
+    # ------------------------------------------------------------------
+    # Branch association
+    # ------------------------------------------------------------------
+
+    def add_branch(self, conversation_id: str, branch: str) -> None:
+        """Associate a branch with a conversation. Idempotent. Skips main/master."""
+        if not branch or branch in _PROTECTED_BRANCHES:
+            return
+        conn = self._db.get_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT OR IGNORE INTO conversation_branches (conversation_id, branch, added_at) "
+            "VALUES (?, ?, ?)",
+            (conversation_id, branch, now),
+        )
+        conn.commit()
+
+    def get_branches(self, conversation_id: str) -> list[str]:
+        """Return all branches associated with a conversation."""
+        conn = self._db.get_conn()
+        rows = conn.execute(
+            "SELECT branch FROM conversation_branches "
+            "WHERE conversation_id = ? ORDER BY added_at",
+            (conversation_id,),
+        ).fetchall()
+        return [r["branch"] for r in rows]
 
     # ------------------------------------------------------------------
     # Public API
@@ -51,6 +80,20 @@ class ConversationStore:
         query += " ORDER BY c.updated_at DESC"
 
         rows = conn.execute(query, params).fetchall()
+
+        # Batch-load branches for all conversations
+        conv_ids = [r["id"] for r in rows]
+        branches_map: dict[str, list[str]] = {cid: [] for cid in conv_ids}
+        if conv_ids:
+            placeholders = ",".join("?" * len(conv_ids))
+            branch_rows = conn.execute(
+                f"SELECT conversation_id, branch FROM conversation_branches "
+                f"WHERE conversation_id IN ({placeholders}) ORDER BY added_at",
+                conv_ids,
+            ).fetchall()
+            for br in branch_rows:
+                branches_map[br["conversation_id"]].append(br["branch"])
+
         return [
             ConversationSummary(
                 id=r["id"],
@@ -60,6 +103,7 @@ class ConversationStore:
                 created_at=r["created_at"],
                 updated_at=r["updated_at"],
                 branch=r["branch"],
+                branches=branches_map.get(r["id"], []),
             )
             for r in rows
         ]
@@ -78,6 +122,7 @@ class ConversationStore:
             "FROM messages WHERE conversation_id = ? ORDER BY timestamp",
             (conversation_id,),
         ).fetchall()
+        branches = self.get_branches(conversation_id)
         return ConversationDetail(
             id=c["id"],
             repo=c["repo"],
@@ -99,6 +144,7 @@ class ConversationStore:
             created_at=c["created_at"],
             updated_at=c["updated_at"],
             branch=c["branch"],
+            branches=branches,
         )
 
     def delete_conversation(self, conversation_id: str) -> bool:
@@ -118,6 +164,9 @@ class ConversationStore:
                 "SELECT id FROM conversations WHERE id = ?", (conversation_id,)
             ).fetchone()
             if row:
+                # Auto-associate branch with existing conversation
+                if branch:
+                    self.add_branch(conversation_id, branch)
                 return conversation_id
 
         cid = str(uuid.uuid4())
@@ -128,6 +177,9 @@ class ConversationStore:
             (cid, repo, "New conversation", now, now, branch),
         )
         conn.commit()
+        # Auto-associate branch with new conversation
+        if branch:
+            self.add_branch(cid, branch)
         return cid
 
     def add_user_message(self, conversation_id: str, content: str) -> str:
