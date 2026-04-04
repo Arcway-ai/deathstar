@@ -204,7 +204,7 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
   }, [message.agent_blocks]);
 
   return (
-    <div className="group">
+    <div className="group border-l-2 border-accent/20 pl-3">
       {/* Agent tool history (thinking, tool calls, results) */}
       {nonTextBlocks && <AgentBlocksView blocks={nonTextBlocks} />}
 

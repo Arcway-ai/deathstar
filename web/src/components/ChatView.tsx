@@ -68,7 +68,7 @@ export default function ChatView() {
         {messages.length === 0 && !sending ? (
           <EmptyState repo={selectedRepo!} personaName={persona.shortName} />
         ) : (
-          <div className="mx-auto max-w-3xl space-y-4">
+          <div className="mx-auto max-w-3xl space-y-6">
             {messages.map((msg, i) => (
               <MessageBubble key={msg.id} message={msg} index={i} />
             ))}
