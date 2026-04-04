@@ -1,18 +1,21 @@
-"""SQLite-backed message queue for async agent processing."""
+"""Message queue store for async agent processing."""
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from deathstar_server.web.database import Database
+from sqlalchemy import Engine, update
+from sqlmodel import Session, select
+
+from deathstar_server.db.models import MessageQueue
 
 
 class QueueStore:
     """CRUD operations for the message_queue table."""
 
-    def __init__(self, db: Database) -> None:
-        self._db = db
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
 
     def enqueue(
         self,
@@ -25,167 +28,234 @@ class QueueStore:
         model: str | None = None,
         system_prompt: str | None = None,
     ) -> dict[str, object]:
-        conn = self._db.get_conn()
-        item_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "INSERT INTO message_queue "
-            "(id, conversation_id, repo, branch, message, workflow, model, "
-            "system_prompt, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-            (item_id, conversation_id, repo, branch, message, workflow,
-             model, system_prompt, now),
-        )
-        conn.commit()
-        return {
-            "id": item_id,
-            "conversation_id": conversation_id,
-            "repo": repo,
-            "branch": branch,
-            "message": message,
-            "workflow": workflow,
-            "model": model,
-            "status": "pending",
-            "created_at": now,
-        }
+        with Session(self._engine) as session:
+            item_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+
+            item = MessageQueue(
+                id=item_id,
+                conversation_id=conversation_id,
+                repo=repo,
+                branch=branch,
+                message=message,
+                workflow=workflow,
+                model=model,
+                system_prompt=system_prompt,
+                status="pending",
+                created_at=now,
+            )
+            session.add(item)
+            session.commit()
+
+            return {
+                "id": item_id,
+                "conversation_id": conversation_id,
+                "repo": repo,
+                "branch": branch,
+                "message": message,
+                "workflow": workflow,
+                "model": model,
+                "status": "pending",
+                "created_at": now,
+            }
 
     def list_pending(
         self,
         conversation_id: str | None = None,
         repo: str | None = None,
     ) -> list[dict[str, object]]:
-        conn = self._db.get_conn()
-        clauses = ["status IN ('pending', 'processing')"]
-        params: list[object] = []
-        if conversation_id:
-            clauses.append("conversation_id = ?")
-            params.append(conversation_id)
-        if repo:
-            clauses.append("repo = ?")
-            params.append(repo)
-        where = " AND ".join(clauses)
-        rows = conn.execute(
-            f"SELECT id, conversation_id, repo, branch, message, workflow, "
-            f"status, created_at FROM message_queue WHERE {where} "
-            f"ORDER BY created_at ASC",
-            params,
-        ).fetchall()
-        return [dict(r) for r in rows]
+        with Session(self._engine) as session:
+            stmt = select(MessageQueue).where(
+                MessageQueue.status.in_(["pending", "processing"])
+            )
+            if conversation_id:
+                stmt = stmt.where(MessageQueue.conversation_id == conversation_id)
+            if repo:
+                stmt = stmt.where(MessageQueue.repo == repo)
+            stmt = stmt.order_by(MessageQueue.created_at.asc())
+
+            rows = session.exec(stmt).all()
+            return [
+                {
+                    "id": item.id,
+                    "conversation_id": item.conversation_id,
+                    "repo": item.repo,
+                    "branch": item.branch,
+                    "message": item.message,
+                    "workflow": item.workflow,
+                    "status": item.status,
+                    "created_at": item.created_at,
+                }
+                for item in rows
+            ]
 
     def cancel(self, item_id: str) -> bool:
-        conn = self._db.get_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        cur = conn.execute(
-            "UPDATE message_queue SET status = 'cancelled', completed_at = ? "
-            "WHERE id = ? AND status = 'pending'",
-            (now, item_id),
-        )
-        conn.commit()
-        return cur.rowcount > 0
+        """Cancel a pending item.
+
+        Uses a single atomic UPDATE to avoid TOCTOU races — the WHERE clause
+        ensures the status check and update happen in one statement, preventing
+        claim_next() from racing between our SELECT and commit.
+        """
+        with Session(self._engine) as session:
+            now = datetime.now(timezone.utc).isoformat()
+            result = session.execute(
+                update(MessageQueue)
+                .where(MessageQueue.id == item_id)
+                .where(MessageQueue.status == "pending")
+                .values(status="cancelled", completed_at=now)
+            )
+            session.commit()
+            return result.rowcount > 0  # type: ignore[union-attr]
 
     def force_cancel(self, item_id: str) -> bool:
-        """Cancel a pending or processing item.  Used when the worker is
-        interrupted mid-flight and the caller has already stopped the SDK
-        client externally."""
-        conn = self._db.get_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        cur = conn.execute(
-            "UPDATE message_queue SET status = 'cancelled', completed_at = ? "
-            "WHERE id = ? AND status IN ('pending', 'processing')",
-            (now, item_id),
-        )
-        conn.commit()
-        return cur.rowcount > 0
+        """Cancel a pending or processing item.
 
-    def claim_next(self, skip_repos_branches: set[tuple[str, str | None]] | None = None) -> dict[str, object] | None:
+        Uses a single atomic UPDATE to avoid TOCTOU races — the WHERE clause
+        ensures the status check and update happen in one statement.
+        """
+        with Session(self._engine) as session:
+            now = datetime.now(timezone.utc).isoformat()
+            result = session.execute(
+                update(MessageQueue)
+                .where(MessageQueue.id == item_id)
+                .where(MessageQueue.status.in_(["pending", "processing"]))
+                .values(status="cancelled", completed_at=now)
+            )
+            session.commit()
+            return result.rowcount > 0  # type: ignore[union-attr]
+
+    def claim_next(
+        self, skip_repos_branches: set[tuple[str, str | None]] | None = None,
+    ) -> dict[str, object] | None:
         """Atomically claim the oldest pending item for processing.
 
-        Items matching any (repo, branch) in skip_repos_branches are skipped.
+        Uses SELECT ... FOR UPDATE SKIP LOCKED on PostgreSQL to prevent
+        concurrent workers from claiming the same item.  Falls back to a
+        plain SELECT on SQLite (single-writer, no row-level locking).
         """
-        conn = self._db.get_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        # Single atomic UPDATE with subquery
-        excludes = ""
-        params: list[object] = [now]
-        if skip_repos_branches:
-            placeholders = []
-            for repo, branch in skip_repos_branches:
-                if branch is None:
-                    placeholders.append("(repo = ? AND branch IS NULL)")
-                    params.append(repo)
-                else:
-                    placeholders.append("(repo = ? AND branch = ?)")
-                    params.extend([repo, branch])
-            excludes = " AND NOT (" + " OR ".join(placeholders) + ")"
-        conn.execute(
-            "UPDATE message_queue SET status = 'processing', started_at = ? "
-            "WHERE id = ("
-            "  SELECT id FROM message_queue "
-            f"  WHERE status = 'pending'{excludes} "
-            "  ORDER BY created_at ASC LIMIT 1"
-            ")",
-            params,
-        )
-        conn.commit()
-        claimed = conn.execute(
-            "SELECT * FROM message_queue "
-            "WHERE status = 'processing' AND started_at = ? "
-            "ORDER BY created_at ASC LIMIT 1",
-            (now,),
-        ).fetchone()
-        return dict(claimed) if claimed else None
+        is_pg = self._engine.dialect.name == "postgresql"
+
+        with Session(self._engine) as session:
+            now = datetime.now(timezone.utc).isoformat()
+
+            # Build the query to find the next pending item
+            stmt = (
+                select(MessageQueue)
+                .where(MessageQueue.status == "pending")
+                .order_by(MessageQueue.created_at.asc())
+                .limit(1)
+            )
+
+            if skip_repos_branches:
+                for repo, branch in skip_repos_branches:
+                    if branch is None:
+                        stmt = stmt.where(
+                            ~((MessageQueue.repo == repo) & (MessageQueue.branch.is_(None)))  # type: ignore[union-attr]
+                        )
+                    else:
+                        stmt = stmt.where(
+                            ~((MessageQueue.repo == repo) & (MessageQueue.branch == branch))
+                        )
+
+            # Row-level lock: skip rows already locked by another worker
+            if is_pg:
+                stmt = stmt.with_for_update(skip_locked=True)
+
+            item = session.exec(stmt).first()
+            if item is None:
+                return None
+
+            item.status = "processing"
+            item.started_at = now
+            session.commit()
+            session.refresh(item)
+
+            return {
+                "id": item.id,
+                "conversation_id": item.conversation_id,
+                "repo": item.repo,
+                "branch": item.branch,
+                "message": item.message,
+                "workflow": item.workflow,
+                "model": item.model,
+                "system_prompt": item.system_prompt,
+                "status": item.status,
+                "result_message_id": item.result_message_id,
+                "error_message": item.error_message,
+                "created_at": item.created_at,
+                "started_at": item.started_at,
+                "completed_at": item.completed_at,
+            }
 
     def requeue(self, item_id: str) -> None:
         """Return a claimed item back to pending status."""
-        conn = self._db.get_conn()
-        conn.execute(
-            "UPDATE message_queue SET status = 'pending', "
-            "started_at = NULL, error_message = NULL, completed_at = NULL "
-            "WHERE id = ?",
-            (item_id,),
-        )
-        conn.commit()
+        with Session(self._engine) as session:
+            item = session.get(MessageQueue, item_id)
+            if item:
+                item.status = "pending"
+                item.started_at = None
+                item.error_message = None
+                item.completed_at = None
+                session.commit()
 
     def mark_completed(self, item_id: str, result_message_id: str) -> None:
-        conn = self._db.get_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "UPDATE message_queue SET status = 'completed', "
-            "result_message_id = ?, completed_at = ? "
-            "WHERE id = ? AND status = 'processing'",
-            (result_message_id, now, item_id),
-        )
-        conn.commit()
+        with Session(self._engine) as session:
+            now = datetime.now(timezone.utc).isoformat()
+            session.execute(
+                update(MessageQueue)
+                .where(MessageQueue.id == item_id)
+                .where(MessageQueue.status == "processing")
+                .values(
+                    status="completed",
+                    result_message_id=result_message_id,
+                    completed_at=now,
+                )
+            )
+            session.commit()
 
     def mark_failed(self, item_id: str, error: str) -> None:
-        conn = self._db.get_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            "UPDATE message_queue SET status = 'failed', "
-            "error_message = ?, completed_at = ? "
-            "WHERE id = ? AND status = 'processing'",
-            (error[:2000], now, item_id),
-        )
-        conn.commit()
+        with Session(self._engine) as session:
+            now = datetime.now(timezone.utc).isoformat()
+            session.execute(
+                update(MessageQueue)
+                .where(MessageQueue.id == item_id)
+                .where(MessageQueue.status == "processing")
+                .values(
+                    status="failed",
+                    error_message=error[:2000],
+                    completed_at=now,
+                )
+            )
+            session.commit()
 
     def recover_stale(self, timeout_seconds: int = 600) -> int:
-        """Reset processing items older than timeout back to pending."""
-        conn = self._db.get_conn()
-        cutoff = datetime.now(timezone.utc).isoformat()
-        # Use SQLite datetime() to compare ISO timestamps.
-        # Items started more than timeout_seconds ago are considered stale.
-        cur = conn.execute(
-            "UPDATE message_queue SET status = 'pending', started_at = NULL "
-            "WHERE status = 'processing' AND started_at IS NOT NULL "
-            "AND datetime(started_at) < datetime(?, ?)",
-            (cutoff, f"-{timeout_seconds} seconds"),
-        )
-        conn.commit()
-        return cur.rowcount
+        """Reset processing items older than timeout back to pending.
+
+        Uses a single bulk UPDATE for efficiency — avoids loading all stale
+        rows into memory.  ISO timestamp string comparison works portably
+        across SQLite and PostgreSQL since ISO 8601 strings sort
+        lexicographically.
+        """
+        with Session(self._engine) as session:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+            ).isoformat()
+
+            result = session.execute(
+                update(MessageQueue)
+                .where(MessageQueue.status == "processing")
+                .where(MessageQueue.started_at.is_not(None))  # type: ignore[union-attr]
+                .where(MessageQueue.started_at < cutoff)  # type: ignore[operator]
+                .values(status="pending", started_at=None)
+            )
+            session.commit()
+            return result.rowcount  # type: ignore[union-attr]
 
     def has_pending(self) -> bool:
-        conn = self._db.get_conn()
-        row = conn.execute(
-            "SELECT 1 FROM message_queue WHERE status = 'pending' LIMIT 1"
-        ).fetchone()
-        return row is not None
+        with Session(self._engine) as session:
+            stmt = (
+                select(MessageQueue.id)
+                .where(MessageQueue.status == "pending")
+                .limit(1)
+            )
+            return session.exec(stmt).first() is not None

@@ -51,6 +51,7 @@ def _make_settings(tmp_path: Path) -> Settings:
         github_poll_interval_seconds=30,
         max_worktrees_per_repo=6,
         max_total_worktrees=16,
+        database_url="sqlite://",
     )
 
 

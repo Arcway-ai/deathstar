@@ -38,7 +38,12 @@ fi
 
 echo "[blue/green] Using image: $IMAGE"
 
-# ── Step 2: Check if there's an existing container running ───────
+# ── Step 2: Ensure Postgres is running ──────────────────────────
+# Start Postgres first (if not already running) so the canary can connect.
+compose up -d postgres
+echo "[blue/green] Postgres is ready."
+
+# ── Step 3: Check if there's an existing control-api running ────
 OLD_CONTAINER=$(docker ps -q -f "name=deathstar-control-api" 2>/dev/null || true)
 
 if [ -z "$OLD_CONTAINER" ]; then
@@ -51,14 +56,28 @@ fi
 
 echo "[blue/green] Old container running: $OLD_CONTAINER"
 
-# ── Step 3: Start canary container on port 8081 for health check ─
+# ── Step 4: Start canary container on port 8081 for health check ─
 echo "[blue/green] Starting canary on port 8081..."
+
+# Determine the Docker compose network name so canary can reach Postgres
+NETWORK=$(docker inspect deathstar-postgres --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null || echo "docker_default")
+
+# Resolve DB password: host env takes priority, then runtime.env, then default.
+# The --env-file flag only injects vars into the container, not the host shell,
+# so we must parse it ourselves to build the DATABASE_URL.
+if [ -z "${DEATHSTAR_DB_PASSWORD:-}" ] && [ -f /opt/deathstar/runtime.env ]; then
+    _pw=$(grep -m1 '^DEATHSTAR_DB_PASSWORD=' /opt/deathstar/runtime.env | cut -d= -f2- || true)
+    [ -n "${_pw:-}" ] && DEATHSTAR_DB_PASSWORD="$_pw"
+fi
+DB_PASSWORD="${DEATHSTAR_DB_PASSWORD:-deathstar}"
 
 CANARY_NAME="deathstar-canary-$$"
 docker run -d \
   --name "$CANARY_NAME" \
+  --network "$NETWORK" \
   --env-file /opt/deathstar/runtime.env \
   -e CLAUDE_PLUGIN_DIR=/opt/claude-plugins \
+  -e DEATHSTAR_DATABASE_URL=postgresql://deathstar:${DB_PASSWORD}@postgres:5432/deathstar \
   -p 8081:8080 \
   -v /workspace:/workspace \
   -v /workspace/deathstar/logs:/var/log/deathstar \
@@ -67,7 +86,7 @@ docker run -d \
   uvicorn deathstar_server.main:app --host 0.0.0.0 --port 8080 \
   >/dev/null
 
-# ── Step 4: Health check the canary ─────────────────────────────
+# ── Step 5: Health check the canary ─────────────────────────────
 echo "[blue/green] Waiting for canary health check..."
 elapsed=0
 healthy=false
@@ -82,7 +101,7 @@ while [ "$elapsed" -lt "$HEALTH_TIMEOUT" ]; do
   echo "[blue/green]   ...waiting ($elapsed/${HEALTH_TIMEOUT}s)"
 done
 
-# ── Step 5: Swap or rollback ────────────────────────────────────
+# ── Step 6: Swap or rollback ────────────────────────────────────
 if [ "$healthy" = true ]; then
   echo "[blue/green] Canary healthy! Swapping..."
 

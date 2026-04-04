@@ -9,7 +9,12 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from deathstar_server.app_state import event_bus, git_service, settings
+from sqlalchemy import delete
+from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel import Session, select
+
+from deathstar_server.app_state import engine as db_engine, event_bus, git_service, settings
+from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
 from deathstar_server.services.event_bus import (
     EVENT_BRANCH_UPDATE,
@@ -1056,36 +1061,30 @@ async def list_pull_requests(
     repo_root = git_service.resolve_target(name)
     prs = await github_service.list_pull_requests(repo_root=repo_root, state=state)
 
-    # Cache branch→PR mapping in SQLite
+    # Cache branch→PR mapping — evict stale entries first so merged/closed
+    # PRs that the API no longer returns don't linger as 'open' in the cache.
     try:
-        from deathstar_server.app_state import db
-        conn = db.get_conn()
-        # Clear stale entries for this repo, then upsert current PRs
-        conn.execute("DELETE FROM branch_prs WHERE repo = ?", (name,))
-        for pr in prs:
-            conn.execute(
-                """INSERT OR REPLACE INTO branch_prs
-                   (repo, branch, pr_number, pr_url, pr_title, pr_state,
-                    draft, user, base_branch, additions, deletions, changed_files, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    name,
-                    pr["head_branch"],
-                    pr["number"],
-                    pr["url"],
-                    pr["title"],
-                    pr["state"],
-                    1 if pr.get("draft") else 0,
-                    pr.get("user", ""),
-                    pr.get("base_branch", "main"),
-                    pr.get("additions"),
-                    pr.get("deletions"),
-                    pr.get("changed_files"),
-                    pr.get("updated_at", ""),
-                ),
-            )
-        conn.commit()
-    except Exception:
+        with Session(db_engine) as session:
+            session.execute(delete(BranchPR).where(BranchPR.repo == name))
+            for pr in prs:
+                branch_pr = BranchPR(
+                    repo=name,
+                    branch=pr["head_branch"],
+                    pr_number=pr["number"],
+                    pr_url=pr["url"],
+                    pr_title=pr["title"],
+                    pr_state=pr["state"],
+                    draft=bool(pr.get("draft")),
+                    user=pr.get("user", ""),
+                    base_branch=pr.get("base_branch", "main"),
+                    additions=pr.get("additions"),
+                    deletions=pr.get("deletions"),
+                    changed_files=pr.get("changed_files"),
+                    updated_at=pr.get("updated_at", ""),
+                )
+                session.merge(branch_pr)
+            session.commit()
+    except SQLAlchemyError:
         logger.warning("failed to cache branch PRs", exc_info=True)
 
     return prs
@@ -1094,27 +1093,28 @@ async def list_pull_requests(
 @web_router.get("/repos/{name}/branch-pr")
 def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
     """Get the cached PR for a specific branch (if any)."""
-    from deathstar_server.app_state import db
-    conn = db.get_conn()
-    row = conn.execute(
-        "SELECT * FROM branch_prs WHERE repo = ? AND branch = ? AND pr_state = 'open'",
-        (name, branch),
-    ).fetchone()
+    with Session(db_engine) as session:
+        row = session.exec(
+            select(BranchPR)
+            .where(BranchPR.repo == name)
+            .where(BranchPR.branch == branch)
+            .where(BranchPR.pr_state == "open")
+        ).first()
     if not row:
         return {"pr": None}
     return {
         "pr": {
-            "number": row["pr_number"],
-            "url": row["pr_url"],
-            "title": row["pr_title"],
-            "state": row["pr_state"],
-            "draft": bool(row["draft"]),
-            "user": row["user"],
-            "base_branch": row["base_branch"],
-            "additions": row["additions"],
-            "deletions": row["deletions"],
-            "changed_files": row["changed_files"],
-            "updated_at": row["updated_at"],
+            "number": row.pr_number,
+            "url": row.pr_url,
+            "title": row.pr_title,
+            "state": row.pr_state,
+            "draft": row.draft,
+            "user": row.user,
+            "base_branch": row.base_branch,
+            "additions": row.additions,
+            "deletions": row.deletions,
+            "changed_files": row.changed_files,
+            "updated_at": row.updated_at,
         },
     }
 

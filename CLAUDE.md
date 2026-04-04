@@ -49,7 +49,7 @@ deathstar upgrade
 
 ## Code Conventions
 
-- Python 3.11+. Use `from __future__ import annotations` in all files.
+- Python 3.11+. Use `from __future__ import annotations` in all files. **Exception**: `db/models.py` omits this because SQLModel/SQLAlchemy need runtime type evaluation for `Relationship()` to resolve forward references.
 - Type hints everywhere. Pydantic models for all API contracts.
 - Frozen dataclasses for configuration objects (`@dataclass(frozen=True)`).
 - Subprocess calls always use list format (never `shell=True`).

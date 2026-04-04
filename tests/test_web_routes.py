@@ -45,11 +45,13 @@ def _build_web_app(tmp_path: Path, api_token: str | None = None):
     mock_backup = MagicMock()
     mock_backup.latest_log_lines.return_value = ["line1"]
 
-    from deathstar_server.web.database import Database
+    from sqlmodel import SQLModel
+    from deathstar_server.db.engine import create_db_engine
     from deathstar_server.web.conversations import ConversationStore
 
-    test_db = Database(tmp_path / "deathstar.db")
-    convo_store = ConversationStore(test_db)
+    test_engine = create_db_engine(f"sqlite:///{tmp_path}/deathstar.db")
+    SQLModel.metadata.create_all(test_engine)
+    convo_store = ConversationStore(test_engine)
 
     # Create mock app_state module
     mock_app_state = MagicMock()
@@ -314,13 +316,15 @@ def _build_web_app_with_queue(tmp_path: Path, api_token: str | None = None):
     mock_backup = MagicMock()
     mock_backup.latest_log_lines.return_value = []
 
-    from deathstar_server.web.database import Database
+    from sqlmodel import SQLModel
+    from deathstar_server.db.engine import create_db_engine
     from deathstar_server.web.conversations import ConversationStore
     from deathstar_server.web.queue_store import QueueStore
 
-    test_db = Database(tmp_path / "deathstar.db")
-    convo_store = ConversationStore(test_db)
-    queue_store = QueueStore(test_db)
+    test_engine = create_db_engine(f"sqlite:///{tmp_path}/deathstar.db")
+    SQLModel.metadata.create_all(test_engine)
+    convo_store = ConversationStore(test_engine)
+    queue_store = QueueStore(test_engine)
 
     mock_app_state = MagicMock()
     mock_app_state.settings = mock_settings
