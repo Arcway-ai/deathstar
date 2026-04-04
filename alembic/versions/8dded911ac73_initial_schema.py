@@ -123,7 +123,7 @@ def upgrade() -> None:
     sa.Column('input_tokens', sa.Integer(), nullable=True),
     sa.Column('output_tokens', sa.Integer(), nullable=True),
     sa.Column('agent_blocks', sa.Text(), nullable=True),
-    sa.ForeignKeyConstraint(['conversation_id'], ['conversations.id'], ),
+    sa.ForeignKeyConstraint(['conversation_id'], ['conversations.id'], name='fk_messages_conversation_id'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('idx_messages_conversation', 'messages', ['conversation_id', 'timestamp'], unique=False)

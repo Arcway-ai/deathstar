@@ -7,6 +7,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+from githubkit import GitHub, TokenAuthStrategy
+from githubkit.exception import RequestFailed
 from pydantic import BaseModel
 
 from sqlalchemy import delete
@@ -936,9 +938,6 @@ async def list_github_repos() -> list[GitHubRepoInfo]:
             status_code=400,
         )
 
-    from githubkit import GitHub, TokenAuthStrategy
-    from githubkit.exception import RequestFailed
-
     gh = GitHub(TokenAuthStrategy(settings.github_token), auto_retry=True)
     repos: list[GitHubRepoInfo] = []
     try:
@@ -1100,23 +1099,23 @@ def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
             .where(BranchPR.branch == branch)
             .where(BranchPR.pr_state == "open")
         ).first()
-    if not row:
-        return {"pr": None}
-    return {
-        "pr": {
-            "number": row.pr_number,
-            "url": row.pr_url,
-            "title": row.pr_title,
-            "state": row.pr_state,
-            "draft": row.draft,
-            "user": row.user,
-            "base_branch": row.base_branch,
-            "additions": row.additions,
-            "deletions": row.deletions,
-            "changed_files": row.changed_files,
-            "updated_at": row.updated_at,
-        },
-    }
+        if not row:
+            return {"pr": None}
+        return {
+            "pr": {
+                "number": row.pr_number,
+                "url": row.pr_url,
+                "title": row.pr_title,
+                "state": row.pr_state,
+                "draft": row.draft,
+                "user": row.user,
+                "base_branch": row.base_branch,
+                "additions": row.additions,
+                "deletions": row.deletions,
+                "changed_files": row.changed_files,
+                "updated_at": row.updated_at,
+            },
+        }
 
 
 # ---------------------------------------------------------------------------

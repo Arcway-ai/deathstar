@@ -75,7 +75,13 @@ class Message(SQLModel, table=True):
     )
 
     id: str = Field(primary_key=True)
-    conversation_id: str = Field(foreign_key="conversations.id", nullable=False)
+    conversation_id: str = Field(
+        sa_column=Column(
+            String,
+            ForeignKey("conversations.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
     role: str = Field(nullable=False)
     content: str = Field(sa_column=Column(Text, nullable=False))
     timestamp: str = Field(nullable=False)

@@ -85,4 +85,4 @@ RUN git config --global --add safe.directory '*' \
 
 EXPOSE 8080
 
-CMD ["uvicorn", "deathstar_server.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "cd /app && alembic upgrade head && uvicorn deathstar_server.main:app --host 0.0.0.0 --port 8080"]
