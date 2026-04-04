@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useStore } from "./store";
 import * as api from "./api";
 import { initSession } from "./api";
@@ -18,10 +18,12 @@ import { Toaster } from "./components/ui/sonner";
 
 export default function App() {
   const { repo: urlRepo, conversationId: urlConversationId } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const selectedRepo = useStore((s) => s.selectedRepo);
   const conversationId = useStore((s) => s.conversationId);
+  const workflow = useStore((s) => s.workflow);
   const fileContent = useStore((s) => s.fileContent);
   const terminalOpen = useStore((s) => s.terminalOpen);
   const claudeAuth = useStore((s) => s.claudeAuth);
@@ -88,6 +90,15 @@ export default function App() {
         useStore.setState({ selectedRepo: null, conversationId: null, activeConversation: null });
       }
     }
+    // Sync ?mode= query param → store workflow
+    const urlMode = searchParams.get("mode");
+    if (urlMode) {
+      const validModes = ["prompt", "patch", "review", "docs", "audit", "plan"];
+      if (validModes.includes(urlMode) && urlMode !== useStore.getState().workflow) {
+        useStore.getState().setWorkflow(urlMode as import("./types").WorkflowKind);
+      }
+    }
+
     initialSync.current = true;
 
     // Load server-side message queue
@@ -109,14 +120,18 @@ export default function App() {
       }
     }
 
-    // Decode current path for comparison
-    const currentPath = decodeURIComponent(window.location.pathname);
-    const expectedDecoded = decodeURIComponent(expectedPath);
+    // Add ?mode= query param (omit for default "prompt")
+    const modeParam = workflow !== "prompt" ? `?mode=${workflow}` : "";
+    const fullPath = expectedPath + modeParam;
 
-    if (currentPath !== expectedDecoded) {
-      navigate(expectedPath, { replace: true });
+    // Decode current location for comparison
+    const currentFull = decodeURIComponent(window.location.pathname) + window.location.search;
+    const expectedFull = decodeURIComponent(expectedPath) + modeParam;
+
+    if (currentFull !== expectedFull) {
+      navigate(fullPath, { replace: true });
     }
-  }, [selectedRepo, conversationId, navigate]);
+  }, [selectedRepo, conversationId, workflow, navigate]);
 
   // Cmd+S / Ctrl+S → quick save
   useEffect(() => {

@@ -249,7 +249,7 @@ export default function BranchSelector() {
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDelete(branch); }}
                       disabled={deleting !== null || switching !== null}
-                      className="shrink-0 px-2 py-1.5 text-text-muted opacity-0 group-hover:opacity-100 hover:text-error transition-all"
+                      className="shrink-0 px-2 py-1.5 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-error transition-all"
                       title={`Delete ${branch}`}
                     >
                       {deleting === branch ? (

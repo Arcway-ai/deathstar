@@ -1174,8 +1174,8 @@ function _ensureAgentSocket(): void {
       // Store→URL effect in App.tsx, leaving the URL stale).
       const repo = useStore.getState().selectedRepo;
       if (repo) {
-        const path = `/${encodeURIComponent(repo)}/c/${encodeURIComponent(conversationId)}`;
-        if (decodeURIComponent(window.location.pathname) !== decodeURIComponent(path)) {
+        const path = `/${encodeURIComponent(repo)}/c/${encodeURIComponent(conversationId)}${window.location.search}`;
+        if (decodeURIComponent(window.location.pathname) !== decodeURIComponent(path.split("?")[0] ?? path)) {
           window.history.replaceState(null, "", path);
         }
       }

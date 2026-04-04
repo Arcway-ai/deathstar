@@ -103,7 +103,7 @@ function ConversationList() {
                 e.stopPropagation();
                 deleteConversation(c.id);
               }}
-              className="invisible flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted hover:bg-error/20 hover:text-error group-hover:visible"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted hover:bg-error/20 hover:text-error md:invisible md:group-hover:visible"
             >
               <Trash2 size={12} />
             </button>
