@@ -46,11 +46,14 @@ export default function ChatView() {
     }
   }, []);
 
-  // Auto-scroll only when already near the bottom
+  // Auto-scroll only when already near the bottom (RAF-throttled to avoid
+  // excessive DOM writes during fast streaming)
   useEffect(() => {
-    if (isNearBottom && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    if (!isNearBottom || !scrollRef.current) return;
+    const id = requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    });
+    return () => cancelAnimationFrame(id);
   }, [messages.length, sending, compacting, agentStream.blocks.length, streamingText.length, isNearBottom]);
 
   return (

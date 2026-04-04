@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useStore } from "./store";
 import * as api from "./api";
 import { initSession } from "./api";
@@ -18,7 +18,6 @@ import { Toaster } from "./components/ui/sonner";
 
 export default function App() {
   const { repo: urlRepo, conversationId: urlConversationId } = useParams();
-  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const selectedRepo = useStore((s) => s.selectedRepo);
@@ -90,8 +89,9 @@ export default function App() {
         useStore.setState({ selectedRepo: null, conversationId: null, activeConversation: null });
       }
     }
-    // Sync ?mode= query param → store workflow
-    const urlMode = searchParams.get("mode");
+    // Sync ?mode= query param → store workflow (read from window.location
+    // directly to avoid coupling with the Store→URL effect via useSearchParams)
+    const urlMode = new URLSearchParams(window.location.search).get("mode");
     if (urlMode) {
       const validModes = ["prompt", "patch", "review", "docs", "audit", "plan"];
       if (validModes.includes(urlMode) && urlMode !== useStore.getState().workflow) {
