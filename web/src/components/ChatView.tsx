@@ -14,6 +14,7 @@ export default function ChatView() {
   const sending = useStore((s) => s.sending);
   const compacting = useStore((s) => s.compacting);
   const agentStream = useStore((s) => s.agentStream);
+  const streamingText = useStore((s) => s.streamingText);
   const streamingProgress = useStore((s) => s.streamingProgress);
   const selectedRepo = useStore((s) => s.selectedRepo);
   const persona = useStore((s) => s.persona);
@@ -50,7 +51,7 @@ export default function ChatView() {
     if (isNearBottom && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length, sending, compacting, agentStream.blocks.length, isNearBottom]);
+  }, [messages.length, sending, compacting, agentStream.blocks.length, streamingText.length, isNearBottom]);
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">

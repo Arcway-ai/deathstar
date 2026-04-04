@@ -1173,6 +1173,15 @@ function _ensureAgentSocket(): void {
 
     onStarted: (conversationId) => {
       useStore.setState({ conversationId });
+      // Ensure URL updates immediately (React batching can delay the
+      // Store→URL effect in App.tsx, leaving the URL stale).
+      const repo = useStore.getState().selectedRepo;
+      if (repo) {
+        const path = `/${encodeURIComponent(repo)}/c/${encodeURIComponent(conversationId)}`;
+        if (decodeURIComponent(window.location.pathname) !== decodeURIComponent(path)) {
+          window.history.replaceState(null, "", path);
+        }
+      }
     },
 
     onResult: (data: AgentResult) => {
