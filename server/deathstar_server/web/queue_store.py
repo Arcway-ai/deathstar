@@ -224,28 +224,25 @@ class QueueStore:
     def recover_stale(self, timeout_seconds: int = 600) -> int:
         """Reset processing items older than timeout back to pending.
 
-        Uses ISO timestamp string comparison which works portably across
-        SQLite and PostgreSQL since ISO 8601 strings sort lexicographically.
+        Uses a single bulk UPDATE for efficiency — avoids loading all stale
+        rows into memory.  ISO timestamp string comparison works portably
+        across SQLite and PostgreSQL since ISO 8601 strings sort
+        lexicographically.
         """
         with Session(self._engine) as session:
             cutoff = (
                 datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
             ).isoformat()
 
-            stmt = (
-                select(MessageQueue)
+            result = session.execute(
+                update(MessageQueue)
                 .where(MessageQueue.status == "processing")
                 .where(MessageQueue.started_at.is_not(None))  # type: ignore[union-attr]
                 .where(MessageQueue.started_at < cutoff)  # type: ignore[operator]
+                .values(status="pending", started_at=None)
             )
-            stale_items = session.exec(stmt).all()
-
-            for item in stale_items:
-                item.status = "pending"
-                item.started_at = None
-
             session.commit()
-            return len(stale_items)
+            return result.rowcount  # type: ignore[union-attr]
 
     def has_pending(self) -> bool:
         with Session(self._engine) as session:
