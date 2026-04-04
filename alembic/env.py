@@ -19,11 +19,16 @@ if config.config_file_name is not None:
 
 target_metadata = SQLModel.metadata
 
-# Prefer DEATHSTAR_DATABASE_URL over the placeholder in alembic.ini.
-# In production the env var is always set; the ini value is a safety net.
+# Require DEATHSTAR_DATABASE_URL — alembic.ini intentionally has no URL
+# so that credentials are never committed to version control.
 database_url = os.getenv("DEATHSTAR_DATABASE_URL")
-if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+if not database_url:
+    raise RuntimeError(
+        "DEATHSTAR_DATABASE_URL is not set. "
+        "Export it before running Alembic, e.g.:\n"
+        "  export DEATHSTAR_DATABASE_URL=postgresql://user:pass@host:5432/deathstar"
+    )
+config.set_main_option("sqlalchemy.url", database_url)
 
 
 def run_migrations_offline() -> None:

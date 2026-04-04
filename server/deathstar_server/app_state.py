@@ -39,9 +39,11 @@ worktree_manager = WorktreeManager(settings)
 engine = create_db_engine(settings.database_url)
 init_engine(engine)
 
-# Create all tables if they don't exist (for fresh installs or dev with SQLite).
-# In production, Alembic migrations manage the schema.
-SQLModel.metadata.create_all(engine)
+# SQLite (dev/test): create tables directly — no Alembic needed.
+# PostgreSQL (production): Alembic migrations own the schema.
+# Run `alembic upgrade head` as part of the deploy step.
+if settings.database_url.startswith("sqlite"):
+    SQLModel.metadata.create_all(engine)
 
 conversation_store = ConversationStore(engine)
 memory_bank = MemoryBank(engine)

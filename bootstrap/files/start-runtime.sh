@@ -62,13 +62,22 @@ echo "[blue/green] Starting canary on port 8081..."
 # Determine the Docker compose network name so canary can reach Postgres
 NETWORK=$(docker inspect deathstar-postgres --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null || echo "docker_default")
 
+# Resolve DB password: host env takes priority, then runtime.env, then default.
+# The --env-file flag only injects vars into the container, not the host shell,
+# so we must parse it ourselves to build the DATABASE_URL.
+if [ -z "${DEATHSTAR_DB_PASSWORD:-}" ] && [ -f /opt/deathstar/runtime.env ]; then
+    _pw=$(grep -m1 '^DEATHSTAR_DB_PASSWORD=' /opt/deathstar/runtime.env | cut -d= -f2- || true)
+    [ -n "${_pw:-}" ] && DEATHSTAR_DB_PASSWORD="$_pw"
+fi
+DB_PASSWORD="${DEATHSTAR_DB_PASSWORD:-deathstar}"
+
 CANARY_NAME="deathstar-canary-$$"
 docker run -d \
   --name "$CANARY_NAME" \
   --network "$NETWORK" \
   --env-file /opt/deathstar/runtime.env \
   -e CLAUDE_PLUGIN_DIR=/opt/claude-plugins \
-  -e DEATHSTAR_DATABASE_URL=postgresql://deathstar:${DEATHSTAR_DB_PASSWORD:-deathstar}@postgres:5432/deathstar \
+  -e DEATHSTAR_DATABASE_URL=postgresql://deathstar:${DB_PASSWORD}@postgres:5432/deathstar \
   -p 8081:8080 \
   -v /workspace:/workspace \
   -v /workspace/deathstar/logs:/var/log/deathstar \
