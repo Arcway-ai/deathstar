@@ -783,9 +783,6 @@ export const useStore = create<Store>()(persist((set, get) => ({
   setWorkflow: (w) => {
     const updates: Partial<Store> = {
       workflow: w,
-      // Start a fresh conversation for each mode switch
-      conversationId: null,
-      activeConversation: null,
       sendError: null,
       lastFailedMessage: null,
     };
