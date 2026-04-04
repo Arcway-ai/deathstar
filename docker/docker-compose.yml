@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: deathstar
       POSTGRES_USER: deathstar
-      POSTGRES_PASSWORD: deathstar
+      POSTGRES_PASSWORD: ${DEATHSTAR_DB_PASSWORD:-deathstar}
     volumes:
       - /workspace/deathstar/pgdata:/var/lib/postgresql/data
     ports:
@@ -29,7 +29,7 @@ services:
       - /opt/deathstar/runtime.env
     environment:
       - CLAUDE_PLUGIN_DIR=/opt/claude-plugins
-      - DEATHSTAR_DATABASE_URL=postgresql://deathstar:deathstar@postgres:5432/deathstar
+      - DEATHSTAR_DATABASE_URL=postgresql://deathstar:${DEATHSTAR_DB_PASSWORD:-deathstar}@postgres:5432/deathstar
     ports:
       - "8080:8080"
     volumes:

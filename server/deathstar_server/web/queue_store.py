@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, update
 from sqlmodel import Session, select
 
 from deathstar_server.db.models import MessageQueue
@@ -101,21 +101,33 @@ class QueueStore:
             return True
 
     def force_cancel(self, item_id: str) -> bool:
-        """Cancel a pending or processing item."""
+        """Cancel a pending or processing item.
+
+        Uses a single atomic UPDATE to avoid TOCTOU races — the WHERE clause
+        ensures the status check and update happen in one statement.
+        """
         with Session(self._engine) as session:
-            item = session.get(MessageQueue, item_id)
-            if item is None or item.status not in ("pending", "processing"):
-                return False
             now = datetime.now(timezone.utc).isoformat()
-            item.status = "cancelled"
-            item.completed_at = now
+            result = session.execute(
+                update(MessageQueue)
+                .where(MessageQueue.id == item_id)
+                .where(MessageQueue.status.in_(["pending", "processing"]))
+                .values(status="cancelled", completed_at=now)
+            )
             session.commit()
-            return True
+            return result.rowcount > 0  # type: ignore[union-attr]
 
     def claim_next(
         self, skip_repos_branches: set[tuple[str, str | None]] | None = None,
     ) -> dict[str, object] | None:
-        """Atomically claim the oldest pending item for processing."""
+        """Atomically claim the oldest pending item for processing.
+
+        Uses SELECT ... FOR UPDATE SKIP LOCKED on PostgreSQL to prevent
+        concurrent workers from claiming the same item.  Falls back to a
+        plain SELECT on SQLite (single-writer, no row-level locking).
+        """
+        is_pg = self._engine.dialect.name == "postgresql"
+
         with Session(self._engine) as session:
             now = datetime.now(timezone.utc).isoformat()
 
@@ -137,6 +149,10 @@ class QueueStore:
                         stmt = stmt.where(
                             ~((MessageQueue.repo == repo) & (MessageQueue.branch == branch))
                         )
+
+            # Row-level lock: skip rows already locked by another worker
+            if is_pg:
+                stmt = stmt.with_for_update(skip_locked=True)
 
             item = session.exec(stmt).first()
             if item is None:
@@ -177,23 +193,33 @@ class QueueStore:
 
     def mark_completed(self, item_id: str, result_message_id: str) -> None:
         with Session(self._engine) as session:
-            item = session.get(MessageQueue, item_id)
-            if item and item.status == "processing":
-                now = datetime.now(timezone.utc).isoformat()
-                item.status = "completed"
-                item.result_message_id = result_message_id
-                item.completed_at = now
-                session.commit()
+            now = datetime.now(timezone.utc).isoformat()
+            session.execute(
+                update(MessageQueue)
+                .where(MessageQueue.id == item_id)
+                .where(MessageQueue.status == "processing")
+                .values(
+                    status="completed",
+                    result_message_id=result_message_id,
+                    completed_at=now,
+                )
+            )
+            session.commit()
 
     def mark_failed(self, item_id: str, error: str) -> None:
         with Session(self._engine) as session:
-            item = session.get(MessageQueue, item_id)
-            if item and item.status == "processing":
-                now = datetime.now(timezone.utc).isoformat()
-                item.status = "failed"
-                item.error_message = error[:2000]
-                item.completed_at = now
-                session.commit()
+            now = datetime.now(timezone.utc).isoformat()
+            session.execute(
+                update(MessageQueue)
+                .where(MessageQueue.id == item_id)
+                .where(MessageQueue.status == "processing")
+                .values(
+                    status="failed",
+                    error_message=error[:2000],
+                    completed_at=now,
+                )
+            )
+            session.commit()
 
     def recover_stale(self, timeout_seconds: int = 600) -> int:
         """Reset processing items older than timeout back to pending.

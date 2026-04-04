@@ -68,7 +68,7 @@ docker run -d \
   --network "$NETWORK" \
   --env-file /opt/deathstar/runtime.env \
   -e CLAUDE_PLUGIN_DIR=/opt/claude-plugins \
-  -e DEATHSTAR_DATABASE_URL=postgresql://deathstar:deathstar@postgres:5432/deathstar \
+  -e DEATHSTAR_DATABASE_URL=postgresql://deathstar:${DEATHSTAR_DB_PASSWORD:-deathstar}@postgres:5432/deathstar \
   -p 8081:8080 \
   -v /workspace:/workspace \
   -v /workspace/deathstar/logs:/var/log/deathstar \

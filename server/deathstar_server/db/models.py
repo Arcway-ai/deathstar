@@ -6,7 +6,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, Index, Text, UniqueConstraint
+from sqlalchemy import Column, Index, Text
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -167,7 +167,7 @@ class MessageQueue(SQLModel, table=True):
 class BranchPR(SQLModel, table=True):
     __tablename__ = "branch_prs"
     __table_args__ = (
-        UniqueConstraint("repo", "branch", name="uq_branch_prs_repo_branch"),
+        # No UniqueConstraint needed — (repo, branch) is already the composite PK.
         Index("idx_branch_prs_repo", "repo"),
     )
 

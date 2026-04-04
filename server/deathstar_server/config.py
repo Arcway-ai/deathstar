@@ -85,6 +85,6 @@ def load_settings() -> Settings:
         max_total_worktrees=_int_env("DEATHSTAR_MAX_TOTAL_WORKTREES", 16),
         database_url=os.getenv(
             "DEATHSTAR_DATABASE_URL",
-            "postgresql://deathstar:deathstar@localhost:5432/deathstar",
+            "sqlite:///deathstar.db",
         ),
     )

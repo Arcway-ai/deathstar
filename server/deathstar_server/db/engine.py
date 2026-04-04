@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, event
 
 
 def create_db_engine(database_url: str) -> Engine:
@@ -22,4 +22,15 @@ def create_db_engine(database_url: str) -> Engine:
         kwargs["pool_size"] = 10
         kwargs["max_overflow"] = 20
 
-    return create_engine(database_url, **kwargs)
+    engine = create_engine(database_url, **kwargs)
+
+    if is_sqlite:
+        # SQLite doesn't enforce foreign keys by default — enable via PRAGMA
+        # so CASCADE deletes (e.g. Conversation → Messages) work correctly.
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, _connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+    return engine

@@ -139,6 +139,14 @@ class ConversationStore:
             msg_id = str(uuid.uuid4())
             now = datetime.now(timezone.utc).isoformat()
 
+            # Count existing messages *before* adding the new one so the check
+            # is independent of SQLAlchemy autoflush behaviour.
+            count = session.exec(
+                select(func.count(Message.id)).where(
+                    Message.conversation_id == conversation_id
+                )
+            ).one()
+
             msg = Message(
                 id=msg_id,
                 conversation_id=conversation_id,
@@ -148,17 +156,9 @@ class ConversationStore:
             )
             session.add(msg)
 
-            # Update title to first user message if this is the first message
-            count = session.exec(
-                select(func.count(Message.id)).where(
-                    Message.conversation_id == conversation_id
-                )
-            ).one()
-
             conv = session.get(Conversation, conversation_id)
             if conv:
                 if count == 0:
-                    # This is the first message (count is before our INSERT is flushed)
                     conv.title = content[:80]
                 conv.updated_at = now
 

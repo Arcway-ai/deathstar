@@ -9,7 +9,11 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from deathstar_server.app_state import event_bus, git_service, settings
+from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel import Session, select
+
+from deathstar_server.app_state import engine as db_engine, event_bus, git_service, settings
+from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
 from deathstar_server.services.event_bus import (
     EVENT_BRANCH_UPDATE,
@@ -1006,18 +1010,9 @@ async def list_pull_requests(
     repo_root = git_service.resolve_target(name)
     prs = await github_service.list_pull_requests(repo_root=repo_root, state=state)
 
-    # Cache branch→PR mapping in database
+    # Cache branch→PR mapping in database via merge (upsert)
     try:
-        from deathstar_server.app_state import engine as _engine
-        from deathstar_server.db.models import BranchPR
-        from sqlmodel import Session, select
-
-        with Session(_engine) as session:
-            # Clear stale entries for this repo
-            stale = session.exec(select(BranchPR).where(BranchPR.repo == name)).all()
-            for s in stale:
-                session.delete(s)
-            # Upsert current PRs
+        with Session(db_engine) as session:
             for pr in prs:
                 branch_pr = BranchPR(
                     repo=name,
@@ -1036,7 +1031,7 @@ async def list_pull_requests(
                 )
                 session.merge(branch_pr)
             session.commit()
-    except Exception:
+    except SQLAlchemyError:
         logger.warning("failed to cache branch PRs", exc_info=True)
 
     return prs
@@ -1045,11 +1040,7 @@ async def list_pull_requests(
 @web_router.get("/repos/{name}/branch-pr")
 def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
     """Get the cached PR for a specific branch (if any)."""
-    from deathstar_server.app_state import engine as _engine
-    from deathstar_server.db.models import BranchPR
-    from sqlmodel import Session, select
-
-    with Session(_engine) as session:
+    with Session(db_engine) as session:
         row = session.exec(
             select(BranchPR)
             .where(BranchPR.repo == name)

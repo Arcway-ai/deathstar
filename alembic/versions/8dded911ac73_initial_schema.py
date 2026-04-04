@@ -35,7 +35,6 @@ def upgrade() -> None:
     sa.Column('changed_files', sa.Integer(), nullable=True),
     sa.Column('updated_at', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.PrimaryKeyConstraint('repo', 'branch'),
-    sa.UniqueConstraint('repo', 'branch', name='uq_branch_prs_repo_branch')
     )
     op.create_index('idx_branch_prs_repo', 'branch_prs', ['repo'], unique=False)
     op.create_table('conversations',
