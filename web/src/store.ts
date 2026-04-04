@@ -228,9 +228,9 @@ export const useStore = create<Store>()(persist((set, get) => ({
         api.fetchCommits(name),
       ]);
       set({ repoContext: context, commits });
-      // Load conversations filtered by the repo's current branch so the
-      // sidebar only shows conversations that belong to this branch.
-      const conversations = await api.fetchConversations(name, context.branch ?? undefined);
+      // Load all conversations for this repo (no branch filter) so the
+      // sidebar shows conversations from all branches.
+      const conversations = await api.fetchConversations(name);
       set({ conversations });
       if (context.branch_switched_from) {
         toast.info(
@@ -471,9 +471,9 @@ export const useStore = create<Store>()(persist((set, get) => ({
 
   loadConversations: async (repo) => {
     try {
-      const { repoContext } = get();
-      const branch = repoContext?.branch;
-      const conversations = await api.fetchConversations(repo, branch ?? undefined);
+      // Load ALL conversations for this repo (no branch filter) so users
+      // can see conversations from other branches in the sidebar.
+      const conversations = await api.fetchConversations(repo);
       set({ conversations });
     } catch { /* ignore */ }
   },
@@ -482,6 +482,11 @@ export const useStore = create<Store>()(persist((set, get) => ({
     try {
       const detail = await api.fetchConversation(id);
       set({ activeConversation: detail, conversationId: detail.id });
+      // If this conversation isn't in the sidebar list, refresh it
+      const { conversations, selectedRepo } = get();
+      if (!conversations.some((c) => c.id === detail.id)) {
+        get().loadConversations(selectedRepo ?? detail.repo);
+      }
     } catch { /* ignore */ }
   },
 
@@ -647,6 +652,26 @@ export const useStore = create<Store>()(persist((set, get) => ({
         ? `\n+${selectedPR.additions}/-${selectedPR.deletions} across ${selectedPR.changed_files} files`
         : "";
       effectiveMessage = `Review PR #${selectedPR.number}: ${selectedPR.title}\n${selectedPR.url}\nBranch: ${selectedPR.head_branch} → ${selectedPR.base_branch}${stats}`;
+
+      // Fetch existing review comments for context
+      try {
+        const comments = await api.fetchPRReviewComments(selectedPR.url);
+        if (comments.length > 0) {
+          let commentSection = "\n\n## Existing reviewer comments on this PR\nAddress these alongside your own findings:\n";
+          for (const c of comments.slice(0, 30)) {
+            if (c.type === "inline" && c.path) {
+              commentSection += `\n- **${c.user}** on \`${c.path}${c.line ? `:${c.line}` : ""}\`:\n  ${c.body.slice(0, 500)}`;
+            } else if (c.type === "review" && c.state) {
+              commentSection += `\n- **${c.user}** (${c.state}):\n  ${c.body.slice(0, 500)}`;
+            } else {
+              commentSection += `\n- **${c.user}**:\n  ${c.body.slice(0, 500)}`;
+            }
+          }
+          effectiveMessage += commentSection;
+        }
+      } catch {
+        // Best-effort — don't block review if comment fetch fails
+      }
     }
 
     set({
@@ -696,6 +721,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             branch: repoContext?.branch ?? null,
+            branches: [],
           },
     }));
 
@@ -757,9 +783,6 @@ export const useStore = create<Store>()(persist((set, get) => ({
   setWorkflow: (w) => {
     const updates: Partial<Store> = {
       workflow: w,
-      // Start a fresh conversation for each mode switch
-      conversationId: null,
-      activeConversation: null,
       sendError: null,
       lastFailedMessage: null,
     };

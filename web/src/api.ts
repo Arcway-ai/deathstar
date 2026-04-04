@@ -257,6 +257,19 @@ export async function saveFeedback(req: FeedbackRequest): Promise<FeedbackRespon
 
 /* ── Reviews ──────────────────────────────────────────────────── */
 
+export interface PRReviewComment {
+  type: "review" | "inline" | "comment";
+  user: string;
+  body: string;
+  state?: string;
+  path?: string;
+  line?: number | null;
+}
+
+export async function fetchPRReviewComments(prUrl: string): Promise<PRReviewComment[]> {
+  return request(`/reviews/comments?pr_url=${encodeURIComponent(prUrl)}`);
+}
+
 export async function postReviewToGitHub(params: {
   pr_url: string;
   summary: string;

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Engine, func
 from sqlmodel import Session, select
 
-from deathstar_server.db.models import Conversation, Message
+from deathstar_server.db.models import Conversation, ConversationBranch, Message
 from deathstar_shared.models import (
     ConversationDetail,
     ConversationMessage,
@@ -18,12 +18,45 @@ from deathstar_shared.models import (
 
 HISTORY_CHAR_LIMIT = 16_000
 
+_PROTECTED_BRANCHES = frozenset({"main", "master"})
+
 
 class ConversationStore:
     """PostgreSQL/SQLite-backed conversation store using SQLModel."""
 
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
+
+    # ------------------------------------------------------------------
+    # Branch association
+    # ------------------------------------------------------------------
+
+    def add_branch(self, conversation_id: str, branch: str) -> None:
+        """Associate a branch with a conversation. Idempotent. Skips main/master."""
+        if not branch or branch in _PROTECTED_BRANCHES:
+            return
+        with Session(self._engine) as session:
+            existing = session.get(ConversationBranch, (conversation_id, branch))
+            if existing:
+                return
+            now = datetime.now(timezone.utc).isoformat()
+            cb = ConversationBranch(
+                conversation_id=conversation_id,
+                branch=branch,
+                added_at=now,
+            )
+            session.add(cb)
+            session.commit()
+
+    def get_branches(self, conversation_id: str) -> list[str]:
+        """Return all branches associated with a conversation."""
+        with Session(self._engine) as session:
+            stmt = (
+                select(ConversationBranch.branch)
+                .where(ConversationBranch.conversation_id == conversation_id)
+                .order_by(ConversationBranch.added_at)
+            )
+            return list(session.exec(stmt).all())
 
     # ------------------------------------------------------------------
     # Public API
@@ -53,6 +86,18 @@ class ConversationStore:
             stmt = stmt.order_by(Conversation.updated_at.desc())
             rows = session.exec(stmt).all()  # type: ignore[arg-type]
 
+            # Batch-load branches for all conversations
+            conv_ids = [conv.id for conv, _ in rows]
+            branches_map: dict[str, list[str]] = {cid: [] for cid in conv_ids}
+            if conv_ids:
+                branch_rows = session.exec(
+                    select(ConversationBranch.conversation_id, ConversationBranch.branch)
+                    .where(ConversationBranch.conversation_id.in_(conv_ids))  # type: ignore[union-attr]
+                    .order_by(ConversationBranch.added_at)
+                ).all()
+                for conv_id, br in branch_rows:
+                    branches_map[conv_id].append(br)
+
             return [
                 ConversationSummary(
                     id=conv.id,
@@ -62,6 +107,7 @@ class ConversationStore:
                     created_at=conv.created_at,
                     updated_at=conv.updated_at,
                     branch=conv.branch,
+                    branches=branches_map.get(conv.id, []),
                 )
                 for conv, count in rows
             ]
@@ -78,6 +124,7 @@ class ConversationStore:
                 .order_by(Message.timestamp)
             )
             messages = session.exec(stmt).all()
+            branches = self.get_branches(conversation_id)
 
             return ConversationDetail(
                 id=conv.id,
@@ -100,6 +147,7 @@ class ConversationStore:
                 created_at=conv.created_at,
                 updated_at=conv.updated_at,
                 branch=conv.branch,
+                branches=branches,
             )
 
     def delete_conversation(self, conversation_id: str) -> bool:
@@ -118,6 +166,9 @@ class ConversationStore:
             if conversation_id:
                 existing = session.get(Conversation, conversation_id)
                 if existing:
+                    # Auto-associate branch with existing conversation
+                    if branch:
+                        self.add_branch(conversation_id, branch)
                     return conversation_id
 
             now = datetime.now(timezone.utc).isoformat()
@@ -132,7 +183,11 @@ class ConversationStore:
             )
             session.add(conv)
             session.commit()
-            return cid
+
+        # Auto-associate branch with new conversation
+        if branch:
+            self.add_branch(cid, branch)
+        return cid
 
     def add_user_message(self, conversation_id: str, content: str) -> str:
         with Session(self._engine) as session:

@@ -273,6 +273,7 @@ class ConversationSummary(DeathStarModel):
     created_at: datetime
     updated_at: datetime
     branch: str | None = None
+    branches: list[str] = Field(default_factory=list)
 
 
 class ConversationDetail(DeathStarModel):
@@ -283,6 +284,7 @@ class ConversationDetail(DeathStarModel):
     created_at: datetime
     updated_at: datetime
     branch: str | None = None
+    branches: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

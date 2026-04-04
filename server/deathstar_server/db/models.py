@@ -6,7 +6,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, Index, Text
+from sqlalchemy import Column, ForeignKey, Index, String, Text
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -38,6 +38,33 @@ class Conversation(SQLModel, table=True):
     messages: list["Message"] = Relationship(
         back_populates="conversation",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    conversation_branches: list["ConversationBranch"] = Relationship(
+        back_populates="conversation",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+
+
+class ConversationBranch(SQLModel, table=True):
+    """Many-to-many link between conversations and branches they've been used on."""
+
+    __tablename__ = "conversation_branches"
+    __table_args__ = (
+        Index("idx_conversation_branches_conv", "conversation_id"),
+    )
+
+    conversation_id: str = Field(
+        sa_column=Column(
+            String,
+            ForeignKey("conversations.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+    )
+    branch: str = Field(primary_key=True)
+    added_at: str = Field(nullable=False, default_factory=_utcnow)
+
+    conversation: Optional[Conversation] = Relationship(
+        back_populates="conversation_branches",
     )
 
 

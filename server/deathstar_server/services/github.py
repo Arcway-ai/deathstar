@@ -178,11 +178,11 @@ class GitHubService:
                 "user": pr.user.login if pr.user else "unknown",
                 "head_branch": pr.head.ref,
                 "base_branch": pr.base.ref,
-                "updated_at": pr.updated_at.isoformat() if pr.updated_at else None,
-                "additions": pr.additions,
-                "deletions": pr.deletions,
-                "changed_files": pr.changed_files,
-                "draft": pr.draft or False,
+                "updated_at": pr.updated_at.isoformat() if pr.updated_at else "",
+                "additions": getattr(pr, "additions", None),
+                "deletions": getattr(pr, "deletions", None),
+                "changed_files": getattr(pr, "changed_files", None),
+                "draft": getattr(pr, "draft", False) or False,
                 "url": str(pr.html_url),
             })
         return results
@@ -284,6 +284,70 @@ class GitHubService:
                 status_code=400,
             )
         return match.group("owner"), match.group("repo"), int(match.group("number"))
+
+    async def fetch_pr_review_comments(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> list[dict]:
+        """Fetch existing review comments on a PR for context."""
+        gh = self._client()
+        comments: list[dict] = []
+
+        # Get top-level PR reviews (approve/request changes/comment)
+        try:
+            reviews_resp = await gh.rest.pulls.async_list_reviews(
+                owner, repo, pr_number, per_page=50,
+            )
+            for review in reviews_resp.parsed_data:
+                if review.body and review.body.strip():
+                    comments.append({
+                        "type": "review",
+                        "user": review.user.login if review.user else "unknown",
+                        "state": review.state,
+                        "body": review.body.strip(),
+                    })
+        except RequestFailed:
+            pass
+
+        # Get inline review comments (file-level and line-level)
+        try:
+            inline_resp = await gh.rest.pulls.async_list_review_comments(
+                owner, repo, pr_number, per_page=100,
+            )
+            for comment in inline_resp.parsed_data:
+                comments.append({
+                    "type": "inline",
+                    "user": comment.user.login if comment.user else "unknown",
+                    "path": comment.path,
+                    "line": getattr(comment, "line", None) or getattr(comment, "original_line", None),
+                    "body": comment.body.strip() if comment.body else "",
+                })
+        except RequestFailed:
+            pass
+
+        # Get issue comments (general PR discussion)
+        try:
+            issue_resp = await gh.rest.issues.async_list_comments(
+                owner, repo, pr_number, per_page=50,
+            )
+            for comment in issue_resp.parsed_data:
+                if comment.body and comment.body.strip():
+                    user = comment.user.login if comment.user else "unknown"
+                    # Skip bot comments
+                    if user.endswith("[bot]") or user in ("github-actions",):
+                        continue
+                    comments.append({
+                        "type": "comment",
+                        "user": user,
+                        "body": comment.body.strip(),
+                    })
+        except RequestFailed:
+            pass
+
+        return comments
 
     async def submit_review(
         self,

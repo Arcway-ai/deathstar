@@ -1,8 +1,10 @@
 import { useNavigate } from "react-router-dom";
+import { useState } from "react";
 import {
   MessageSquare,
   Brain,
   Trash2,
+  GitBranch,
 } from "lucide-react";
 import { useStore } from "../store";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -57,11 +59,8 @@ function ConversationList() {
   const conversations = useStore((s) => s.conversations);
   const conversationId = useStore((s) => s.conversationId);
   const selectedRepo = useStore((s) => s.selectedRepo);
-  const repoContext = useStore((s) => s.repoContext);
   const deleteConversation = useStore((s) => s.deleteConversation);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
-
-  const currentBranch = repoContext?.branch;
 
   if (conversations.length === 0) {
     return (
@@ -74,7 +73,7 @@ function ConversationList() {
   return (
     <div className="space-y-0.5">
       {conversations.map((c) => {
-        const showBranchBadge = c.branch && c.branch !== currentBranch;
+        const branches = c.branches?.length > 0 ? c.branches : (c.branch && c.branch !== "main" && c.branch !== "master" ? [c.branch] : []);
         return (
           <div
             key={c.id}
@@ -94,13 +93,9 @@ function ConversationList() {
               <p className="truncate text-xs font-medium">{c.title}</p>
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-text-muted">
-                  {c.message_count} messages
+                  {c.message_count} msg{c.message_count !== 1 ? "s" : ""}
                 </span>
-                {showBranchBadge && (
-                  <Badge variant="secondary" className="h-4 px-1 text-[9px] text-text-muted">
-                    {c.branch}
-                  </Badge>
-                )}
+                {branches.length > 0 && <BranchPills branches={branches} />}
               </div>
             </div>
             <button
@@ -108,7 +103,7 @@ function ConversationList() {
                 e.stopPropagation();
                 deleteConversation(c.id);
               }}
-              className="invisible flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted hover:bg-error/20 hover:text-error group-hover:visible"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted hover:bg-error/20 hover:text-error md:invisible md:group-hover:visible"
             >
               <Trash2 size={12} />
             </button>
@@ -118,6 +113,39 @@ function ConversationList() {
     </div>
   );
 }
+
+function BranchPills({ branches }: { branches: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const MAX_VISIBLE = 2;
+  const visible = expanded ? branches : branches.slice(0, MAX_VISIBLE);
+  const overflow = branches.length - MAX_VISIBLE;
+
+  return (
+    <span className="inline-flex items-center gap-0.5 min-w-0">
+      <GitBranch size={9} className="shrink-0 text-text-muted/60" />
+      {visible.map((b) => (
+        <Badge
+          key={b}
+          variant="secondary"
+          className="h-3.5 max-w-[80px] truncate px-1 text-[8px] font-normal text-text-muted"
+          title={b}
+        >
+          {b}
+        </Badge>
+      ))}
+      {!expanded && overflow > 0 && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+          className="h-3.5 rounded px-0.5 text-[8px] text-text-muted hover:text-accent transition-colors"
+          title={branches.slice(MAX_VISIBLE).join(", ")}
+        >
+          +{overflow}
+        </button>
+      )}
+    </span>
+  );
+}
+
 
 function MemoryPanel() {
   const memories = useStore((s) => s.memories);

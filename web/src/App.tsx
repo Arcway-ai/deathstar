@@ -22,6 +22,7 @@ export default function App() {
 
   const selectedRepo = useStore((s) => s.selectedRepo);
   const conversationId = useStore((s) => s.conversationId);
+  const workflow = useStore((s) => s.workflow);
   const fileContent = useStore((s) => s.fileContent);
   const terminalOpen = useStore((s) => s.terminalOpen);
   const claudeAuth = useStore((s) => s.claudeAuth);
@@ -74,6 +75,7 @@ export default function App() {
         }).catch(() => {});
       }
       loadBranches();
+      useStore.getState().loadConversations(urlRepo);
       // URL has a conversation — load it
       if (urlConversationId && currentConv !== urlConversationId) {
         selectConversation(urlConversationId);
@@ -87,6 +89,16 @@ export default function App() {
         useStore.setState({ selectedRepo: null, conversationId: null, activeConversation: null });
       }
     }
+    // Sync ?mode= query param → store workflow (read from window.location
+    // directly to avoid coupling with the Store→URL effect via useSearchParams)
+    const urlMode = new URLSearchParams(window.location.search).get("mode");
+    if (urlMode) {
+      const validModes = ["prompt", "patch", "review", "docs", "audit", "plan"];
+      if (validModes.includes(urlMode) && urlMode !== useStore.getState().workflow) {
+        useStore.getState().setWorkflow(urlMode as import("./types").WorkflowKind);
+      }
+    }
+
     initialSync.current = true;
 
     // Load server-side message queue
@@ -108,14 +120,18 @@ export default function App() {
       }
     }
 
-    // Decode current path for comparison
-    const currentPath = decodeURIComponent(window.location.pathname);
-    const expectedDecoded = decodeURIComponent(expectedPath);
+    // Add ?mode= query param (omit for default "prompt")
+    const modeParam = workflow !== "prompt" ? `?mode=${workflow}` : "";
+    const fullPath = expectedPath + modeParam;
 
-    if (currentPath !== expectedDecoded) {
-      navigate(expectedPath, { replace: true });
+    // Decode current location for comparison
+    const currentFull = decodeURIComponent(window.location.pathname) + window.location.search;
+    const expectedFull = decodeURIComponent(expectedPath) + modeParam;
+
+    if (currentFull !== expectedFull) {
+      navigate(fullPath, { replace: true });
     }
-  }, [selectedRepo, conversationId, navigate]);
+  }, [selectedRepo, conversationId, workflow, navigate]);
 
   // Cmd+S / Ctrl+S → quick save
   useEffect(() => {

@@ -165,6 +165,7 @@ export interface ConversationSummary {
   created_at: string;
   updated_at: string;
   branch: string | null;
+  branches: string[];
 }
 
 export interface ConversationDetail {
@@ -175,6 +176,7 @@ export interface ConversationDetail {
   created_at: string;
   updated_at: string;
   branch: string | null;
+  branches: string[];
 }
 
 export interface ProviderStatus {
