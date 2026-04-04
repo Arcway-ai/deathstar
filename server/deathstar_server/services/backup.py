@@ -120,9 +120,20 @@ class BackupService:
                 archive.add(wal_path, arcname=f"deathstar/deathstar.db{suffix}")
 
     def _backup_postgres(self, archive: tarfile.TarFile, deathstar_dir: Path) -> None:
-        """Run pg_dump and add the SQL dump to the archive."""
+        """Run pg_dump and add the SQL dump to the archive.
+
+        Uses a temp file to avoid collisions from concurrent backups.
+        Raises AppError if pg_dump fails (CalledProcessError) so the
+        caller knows the archive has no database dump.  FileNotFoundError
+        (pg_dump binary missing) is a known environment limitation and
+        logged as a warning.
+        """
         deathstar_dir.mkdir(parents=True, exist_ok=True)
-        dump_path = deathstar_dir / "pgdump.sql"
+        fd, dump_path_str = tempfile.mkstemp(
+            suffix=".sql", prefix="pgdump-", dir=str(deathstar_dir),
+        )
+        os.close(fd)
+        dump_path = Path(dump_path_str)
         pg_env = self._pg_env()
 
         try:
@@ -135,7 +146,6 @@ class BackupService:
                     "--dbname", pg_env["dbname"],
                     "--no-owner",
                     "--no-acl",
-                    "--format=plain",
                     "--file", str(dump_path),
                 ],
                 capture_output=True,
@@ -148,13 +158,21 @@ class BackupService:
         except FileNotFoundError:
             logger.warning("pg_dump not available — skipping database backup")
         except subprocess.CalledProcessError as exc:
-            logger.warning("pg_dump failed: %s", exc.stderr[:500])
+            raise AppError(
+                ErrorCode.INTERNAL_ERROR,
+                f"pg_dump failed: {(exc.stderr or '')[:500]}",
+                status_code=500,
+            ) from exc
         finally:
             if dump_path.exists():
                 dump_path.unlink()
 
     def _restore_postgres(self, dump_path: Path) -> None:
-        """Restore a pg_dump SQL file into the current Postgres database."""
+        """Restore a pg_dump SQL file into the current Postgres database.
+
+        Raises AppError on failure so the caller never returns a
+        successful RestoreResponse when the database wasn't restored.
+        """
         pg_env = self._pg_env()
 
         try:
@@ -176,9 +194,17 @@ class BackupService:
             )
             logger.info("psql restore completed successfully")
         except FileNotFoundError:
-            logger.warning("psql not available — cannot restore database dump")
+            raise AppError(
+                ErrorCode.INTERNAL_ERROR,
+                "psql is not available — cannot restore PostgreSQL database dump",
+                status_code=500,
+            )
         except subprocess.CalledProcessError as exc:
-            logger.warning("psql restore failed: %s", exc.stderr[:500])
+            raise AppError(
+                ErrorCode.INTERNAL_ERROR,
+                f"database restore failed: {(exc.stderr or '')[:500]}",
+                status_code=500,
+            ) from exc
 
     def _pg_env(self) -> dict[str, str]:
         """Parse the database URL into components for pg_dump/psql."""
