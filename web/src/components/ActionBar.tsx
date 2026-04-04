@@ -34,7 +34,7 @@ export default function ActionBar() {
     ? pullRequests.find((pr) => pr.state === "open" && pr.head_branch === currentBranch)
     : null;
 
-  const canCompact = !!conversationId && !sending && !compacting;
+  const canCompact = !!conversationId && !compacting;
   const canMakePR = !!(workflow === "patch" && isOnFeatureBranch && conversationId && !sending);
   const canMerge = !!(branchPR && conversationId && !sending);
   const canStartReview = !!(workflow === "review" && selectedPR !== null && !sending);
