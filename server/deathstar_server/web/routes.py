@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from sqlalchemy import delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
@@ -1060,9 +1061,11 @@ async def list_pull_requests(
     repo_root = git_service.resolve_target(name)
     prs = await github_service.list_pull_requests(repo_root=repo_root, state=state)
 
-    # Cache branch→PR mapping in database via merge (upsert)
+    # Cache branch→PR mapping — evict stale entries first so merged/closed
+    # PRs that the API no longer returns don't linger as 'open' in the cache.
     try:
         with Session(db_engine) as session:
+            session.execute(delete(BranchPR).where(BranchPR.repo == name))
             for pr in prs:
                 branch_pr = BranchPR(
                     repo=name,

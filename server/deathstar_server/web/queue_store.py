@@ -90,15 +90,22 @@ class QueueStore:
             ]
 
     def cancel(self, item_id: str) -> bool:
+        """Cancel a pending item.
+
+        Uses a single atomic UPDATE to avoid TOCTOU races — the WHERE clause
+        ensures the status check and update happen in one statement, preventing
+        claim_next() from racing between our SELECT and commit.
+        """
         with Session(self._engine) as session:
-            item = session.get(MessageQueue, item_id)
-            if item is None or item.status != "pending":
-                return False
             now = datetime.now(timezone.utc).isoformat()
-            item.status = "cancelled"
-            item.completed_at = now
+            result = session.execute(
+                update(MessageQueue)
+                .where(MessageQueue.id == item_id)
+                .where(MessageQueue.status == "pending")
+                .values(status="cancelled", completed_at=now)
+            )
             session.commit()
-            return True
+            return result.rowcount > 0  # type: ignore[union-attr]
 
     def force_cancel(self, item_id: str) -> bool:
         """Cancel a pending or processing item.
