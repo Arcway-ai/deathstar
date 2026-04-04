@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import logging
+import os
+import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-import re
+from urllib.parse import urlparse
 
 import boto3
 
 from deathstar_server.config import Settings
 from deathstar_server.errors import AppError
 from deathstar_shared.models import BackupResponse, ErrorCode, RestoreResponse
+
+logger = logging.getLogger(__name__)
 
 
 class BackupService:
@@ -20,6 +26,10 @@ class BackupService:
         self.settings.backup_directory.mkdir(parents=True, exist_ok=True)
         self.settings.projects_root.mkdir(parents=True, exist_ok=True)
         self.s3 = boto3.client("s3", region_name=settings.aws_region)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def create_backup(self, label: str | None) -> BackupResponse:
         timestamp = datetime.now(timezone.utc)
@@ -30,15 +40,11 @@ class BackupService:
         deathstar_dir = self.settings.workspace_root / "deathstar"
 
         with tarfile.open(local_path, "w:gz") as archive:
-            # Back up the SQLite database (conversations, memories, feedback)
-            db_path = deathstar_dir / "deathstar.db"
-            if db_path.exists():
-                archive.add(db_path, arcname="deathstar/deathstar.db")
-            # Back up WAL/SHM files if present (for consistency)
-            for suffix in ("-wal", "-shm"):
-                wal_path = deathstar_dir / f"deathstar.db{suffix}"
-                if wal_path.exists():
-                    archive.add(wal_path, arcname=f"deathstar/deathstar.db{suffix}")
+            if self._is_postgres():
+                self._backup_postgres(archive, deathstar_dir)
+            else:
+                self._backup_sqlite(archive, deathstar_dir)
+
             # Back up .claude config if present
             claude_dir = deathstar_dir / ".claude"
             if claude_dir.is_dir():
@@ -63,6 +69,13 @@ class BackupService:
         with tarfile.open(local_path, "r:gz") as archive:
             _safe_extract(archive, self.settings.workspace_root)
 
+        # If the archive contains a pg_dump file and we're on Postgres, load it
+        if self._is_postgres():
+            pg_dump_path = self.settings.workspace_root / "deathstar" / "pgdump.sql"
+            if pg_dump_path.exists():
+                self._restore_postgres(pg_dump_path)
+                pg_dump_path.unlink()  # Clean up the dump file after restore
+
         return RestoreResponse(
             backup_id=resolved_backup_id,
             restored_from=restored_from,
@@ -86,6 +99,101 @@ class BackupService:
             return [line.rstrip() for line in lines[-tail:]]
         except OSError:
             return []
+
+    # ------------------------------------------------------------------
+    # Database-specific backup/restore
+    # ------------------------------------------------------------------
+
+    def _is_postgres(self) -> bool:
+        url = self.settings.database_url
+        return url.startswith("postgresql://") or url.startswith("postgres://")
+
+    def _backup_sqlite(self, archive: tarfile.TarFile, deathstar_dir: Path) -> None:
+        """Back up the SQLite database file and WAL/SHM files."""
+        db_path = deathstar_dir / "deathstar.db"
+        if db_path.exists():
+            archive.add(db_path, arcname="deathstar/deathstar.db")
+        # Back up WAL/SHM files if present (for consistency)
+        for suffix in ("-wal", "-shm"):
+            wal_path = deathstar_dir / f"deathstar.db{suffix}"
+            if wal_path.exists():
+                archive.add(wal_path, arcname=f"deathstar/deathstar.db{suffix}")
+
+    def _backup_postgres(self, archive: tarfile.TarFile, deathstar_dir: Path) -> None:
+        """Run pg_dump and add the SQL dump to the archive."""
+        deathstar_dir.mkdir(parents=True, exist_ok=True)
+        dump_path = deathstar_dir / "pgdump.sql"
+        pg_env = self._pg_env()
+
+        try:
+            subprocess.run(
+                [
+                    "pg_dump",
+                    "--host", pg_env["host"],
+                    "--port", pg_env["port"],
+                    "--username", pg_env["user"],
+                    "--dbname", pg_env["dbname"],
+                    "--no-owner",
+                    "--no-acl",
+                    "--format=plain",
+                    "--file", str(dump_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, "PGPASSWORD": pg_env["password"]},
+            )
+            archive.add(dump_path, arcname="deathstar/pgdump.sql")
+            logger.info("pg_dump completed successfully")
+        except FileNotFoundError:
+            logger.warning("pg_dump not available — skipping database backup")
+        except subprocess.CalledProcessError as exc:
+            logger.warning("pg_dump failed: %s", exc.stderr[:500])
+        finally:
+            if dump_path.exists():
+                dump_path.unlink()
+
+    def _restore_postgres(self, dump_path: Path) -> None:
+        """Restore a pg_dump SQL file into the current Postgres database."""
+        pg_env = self._pg_env()
+
+        try:
+            subprocess.run(
+                [
+                    "psql",
+                    "--host", pg_env["host"],
+                    "--port", pg_env["port"],
+                    "--username", pg_env["user"],
+                    "--dbname", pg_env["dbname"],
+                    "--file", str(dump_path),
+                    "--single-transaction",
+                    "--quiet",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, "PGPASSWORD": pg_env["password"]},
+            )
+            logger.info("psql restore completed successfully")
+        except FileNotFoundError:
+            logger.warning("psql not available — cannot restore database dump")
+        except subprocess.CalledProcessError as exc:
+            logger.warning("psql restore failed: %s", exc.stderr[:500])
+
+    def _pg_env(self) -> dict[str, str]:
+        """Parse the database URL into components for pg_dump/psql."""
+        parsed = urlparse(self.settings.database_url)
+        return {
+            "host": parsed.hostname or "localhost",
+            "port": str(parsed.port or 5432),
+            "user": parsed.username or "deathstar",
+            "password": parsed.password or "",
+            "dbname": (parsed.path or "/deathstar").lstrip("/"),
+        }
+
+    # ------------------------------------------------------------------
+    # Archive resolution
+    # ------------------------------------------------------------------
 
     def _resolve_backup_archive(self, backup_id: str | None) -> tuple[Path, str, str]:
         if backup_id:

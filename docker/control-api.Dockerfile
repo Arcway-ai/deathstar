@@ -85,4 +85,8 @@ RUN git config --global --add safe.directory '*' \
 
 EXPOSE 8080
 
+# Entrypoint runs Alembic migrations (idempotent) before starting the app.
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["uvicorn", "deathstar_server.main:app", "--host", "0.0.0.0", "--port", "8080"]
