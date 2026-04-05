@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 
-VERSION = "0.11.4"
+VERSION = "0.11.5"
 
 
 def git_commit_sha() -> str | None:
