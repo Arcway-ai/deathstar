@@ -1006,6 +1006,10 @@ def _tailscale_cleanup(
 def deploy(
     region: str | None = typer.Option(None, "--region", help="AWS region override."),
     yes: bool = typer.Option(False, "--yes", help="Skip interactive confirmation."),
+    skip_backup: bool = typer.Option(
+        False, "--skip-backup", help="Skip pre-deploy backup of the remote instance.",
+    ),
+    transport: Literal["auto", "tailscale", "ssm"] = typer.Option("auto", "--transport"),
 ) -> None:
     config = _config()
     effective_region = region or config.region
@@ -1014,6 +1018,26 @@ def deploy(
 
     if not yes and not typer.confirm(f"Deploy DeathStar into {effective_region}?"):
         raise typer.Exit(code=1)
+
+    # Pre-deploy backup: if an instance is already running, back up before
+    # Terraform potentially replaces it.  The EBS data volume survives
+    # instance replacement, but an explicit backup is a safety net.
+    if not skip_backup:
+        typer.echo("  Creating pre-deploy backup...")
+        try:
+            client = RemoteAPIClient(
+                config,
+                effective_region,
+                transport=_validate_transport(
+                    transport if transport != "auto" else config.remote_transport
+                ),
+            )
+            backup_response = client.backup(BackupRequest(label="pre-deploy"))
+            typer.echo(f"  Backup: {backup_response.backup_id}")
+        except (RuntimeError, httpx.HTTPError):
+            typer.echo("  Skipping backup — remote instance not reachable (first deploy?).")
+    else:
+        typer.echo("  Skipping backup (--skip-backup).")
 
     # Clean up stale Tailscale nodes before deploy so the new instance gets a clean hostname.
     if config.enable_tailscale and config.tailscale_oauth_client_id and config.tailscale_oauth_client_secret:
