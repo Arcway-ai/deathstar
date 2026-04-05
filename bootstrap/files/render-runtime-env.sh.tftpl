@@ -87,6 +87,7 @@ append_parameter "ANTHROPIC_API_KEY" "${anthropic_api_key_parameter_name}"
 append_parameter "GOOGLE_API_KEY" "${google_api_key_parameter_name}"
 write_gcp_credential "${vertex_sa_key_parameter_name}"
 append_parameter "GITHUB_TOKEN" "${github_token_parameter_name}"
+append_parameter "DEATHSTAR_DB_PASSWORD" "${db_password_parameter_name}"
 
 # Configure gh CLI and git HTTPS credentials for ubuntu
 GH_TOKEN=$(grep '^GITHUB_TOKEN=' "$ENV_FILE" | cut -d= -f2-)

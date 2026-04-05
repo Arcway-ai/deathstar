@@ -403,6 +403,9 @@ def init() -> None:
         "DEATHSTAR_TAILSCALE_HOSTNAME=",
         "DEATHSTAR_TAILSCALE_ADVERTISE_TAGS=",
         "",
+        "# Database",
+        f"DEATHSTAR_DB_PASSWORD_PARAMETER_NAME=/{callsign}/database/password",
+        "",
         "# API authentication",
         f"DEATHSTAR_API_TOKEN={api_token}",
         "",
@@ -509,6 +512,11 @@ def secrets_bootstrap(
         "--include-github/--no-include-github",
         help="Prompt for the optional GitHub token as part of the bootstrap flow.",
     ),
+    include_database: bool = typer.Option(
+        True,
+        "--include-database/--no-include-database",
+        help="Prompt for the PostgreSQL database password.",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -521,6 +529,7 @@ def secrets_bootstrap(
         config,
         include_tailscale=include_tailscale,
         include_github=include_github,
+        include_database=include_database,
     )
 
     typer.echo(

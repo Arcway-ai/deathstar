@@ -16,6 +16,7 @@ from deathstar_shared.models import ProviderName
 class IntegrationName(str, Enum):
     TAILSCALE = "tailscale"
     GITHUB = "github"
+    DATABASE = "database"
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,10 @@ def integration_target(config: CLIConfig, integration: IntegrationName) -> Secre
             label="GitHub token",
             parameter_name=config.github_parameter_name,
         ),
+        IntegrationName.DATABASE: SecretTarget(
+            label="Database password",
+            parameter_name=config.db_password_parameter_name,
+        ),
     }
     return mapping[integration]
 
@@ -84,11 +89,14 @@ def bootstrap_targets(
     config: CLIConfig,
     include_tailscale: bool,
     include_github: bool,
+    include_database: bool = True,
 ) -> list[SecretTarget]:
     targets = [
         provider_target(config, ProviderName.ANTHROPIC),
     ]
 
+    if include_database:
+        targets.append(integration_target(config, IntegrationName.DATABASE))
     if include_tailscale:
         targets.append(integration_target(config, IntegrationName.TAILSCALE))
     if include_github:

@@ -85,7 +85,7 @@ deathstar upgrade
 - **Web UI**: Always-on React + Vite frontend. Multi-stage Docker build (Node.js builds frontend, Python builds backend). Static files and `/` bypass auth; `/web/api/*` requires bearer token. WebSocket terminal at `/web/api/terminal`.
 - **shadcn/ui**: All UI primitives use shadcn/ui (base-ui/react). Installed components: Dialog, Button, Input, Popover, Tabs, Badge, Sonner, Accordion, ScrollArea, Separator, Alert, Card, Sheet. New frontend work should use shadcn primitives via `npx shadcn@latest add <component>`.
 - **Personas**: Frontend-defined system prompts (Frontend, Full-stack, Security, DevOps, Data, Architect, Writer, Researcher) sent with each chat request to shape LLM behavior.
-- **PostgreSQL persistence**: All conversations, memories, feedback, message queue, and usage logs stored in PostgreSQL (production) via SQLModel ORM. Schema managed by Alembic migrations — the Docker entrypoint runs `alembic upgrade head` on every container start. SQLite is used for dev/tests (tables created by `SQLModel.metadata.create_all()`). Backups use `pg_dump`/`psql` for Postgres, file copy for SQLite.
+- **PostgreSQL persistence**: All conversations, memories, feedback, message queue, and usage logs stored in PostgreSQL (production) via SQLModel ORM. Schema managed by Alembic migrations — the Docker entrypoint runs `alembic upgrade head` on every container start. SQLite is used for dev/tests (tables created by `SQLModel.metadata.create_all()`). Backups use `pg_dump`/`psql` for Postgres, file copy for SQLite. Database password is stored in SSM Parameter Store (`/deathstar/database/password`) and injected via `render-runtime-env.sh` at boot.
 - **Server-side message queue**: Users can queue messages while the agent is busy. A background asyncio worker (`services/queue_worker.py`) processes queued items using the Claude Agent SDK in headless mode. Persisted in the database (`web/queue_store.py`).
 - **Event bus**: Real-time pub/sub for repo events (`services/event_bus.py`). GitHub webhooks and a poller feed push, PR update, and CI status events. Local git operations emit checkout, commit, and dirty-state events. Events are forwarded to connected WebSocket clients for live UI updates.
 - **Memory Bank**: Thumbs-up responses are saved as persistent context per repo. Injected into future prompts within a token budget (~4K chars).
@@ -139,7 +139,6 @@ Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "share
 - `server/deathstar_server/db/models.py` — SQLModel table definitions for all database tables.
 - `server/deathstar_server/db/engine.py` — SQLAlchemy engine creation (PostgreSQL production, SQLite dev/test).
 - `server/deathstar_server/db/session.py` — Session factory and FastAPI dependency.
-- `server/deathstar_server/web/database.py` — Legacy SQLite schema (kept for migration tests).
 - `server/deathstar_server/web/conversations.py` — Conversation store (SQLModel ORM).
 - `server/deathstar_server/web/memory_bank.py` — Memory bank store (thumbs-up responses per repo).
 - `server/deathstar_server/web/feedback.py` — Feedback store (thumbs up/down per message).

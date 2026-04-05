@@ -35,6 +35,7 @@ def build_config(tmp_path) -> CLIConfig:
         git_author_email="deathstar@local",
         enable_tailscale=True,
         enable_tailscale_ssh=True,
+        db_password_parameter_name="/deathstar/database/password",
         tailscale_auth_parameter_name="/deathstar/integrations/tailscale/auth_key",
         tailscale_hostname="deathstar",
         tailscale_advertise_tags=[],
@@ -95,6 +96,21 @@ def test_bootstrap_targets_follow_supported_order(tmp_path) -> None:
     param_names = [target.parameter_name for target in targets]
     # After provider removal, Anthropic should be present
     assert "/deathstar/providers/anthropic/api_key" in param_names
+    # Database password should be included by default
+    assert "/deathstar/database/password" in param_names
     # Integration targets should still be present when requested
     assert "/deathstar/integrations/tailscale/auth_key" in param_names
     assert "/deathstar/integrations/github/token" in param_names
+
+
+def test_bootstrap_targets_excludes_database_when_disabled(tmp_path) -> None:
+    config = build_config(tmp_path)
+
+    targets = bootstrap_targets(
+        config, include_tailscale=True, include_github=True, include_database=False,
+    )
+
+    param_names = [target.parameter_name for target in targets]
+    assert "/deathstar/database/password" not in param_names
+    # Other targets should still be present
+    assert "/deathstar/providers/anthropic/api_key" in param_names
