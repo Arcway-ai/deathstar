@@ -8,6 +8,18 @@ set -euo pipefail
 #   - Initial deploy (cloud-init): built from source via sync-runtime.sh + docker build
 #   - Subsequent deploys (redeploy/upgrade): pre-loaded via `docker load`
 
+# ── Load runtime.env into the shell ────────────────────────────────
+# render-runtime-env.sh (ExecStartPre) writes secrets from SSM into
+# this file.  We must source it *before* any docker-compose call so
+# that shell variables like DEATHSTAR_DB_PASSWORD are available for
+# docker-compose.yml variable substitution.
+if [ -f /opt/deathstar/runtime.env ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source /opt/deathstar/runtime.env
+  set +a
+fi
+
 COMPOSE_FILE="/opt/deathstar/repo/docker/docker-compose.yml"
 SERVICE="control-api"
 IMAGE="deathstar-app:latest"
