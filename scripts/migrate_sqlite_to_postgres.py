@@ -96,10 +96,10 @@ def migrate(sqlite_path: str, postgres_url: str, dry_run: bool = False) -> None:
             total_rows += len(rows)
             continue
 
-        # Batch insert
+        # Batch insert (quote column names to handle Postgres reserved words like "user")
         placeholders = ", ".join(["%s"] * len(columns))
-        col_names = ", ".join(columns)
-        insert_sql = f"INSERT INTO {table} ({col_names}) VALUES ({placeholders})"  # noqa: S608
+        col_names = ", ".join(f'"{c}"' for c in columns)
+        insert_sql = f'INSERT INTO {table} ({col_names}) VALUES ({placeholders})'  # noqa: S608
 
         batch = []
         for row in rows:
