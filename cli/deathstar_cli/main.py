@@ -143,32 +143,75 @@ def _validate_transport(transport: str) -> str:
     return normalized
 
 
+_HYPERSPACE_FRAMES = [
+    "⠋ Entering hyperspace...",
+    "⠙ Navigating asteroid field...",
+    "⠹ Powering up the reactor core...",
+    "⠸ Aligning deflector shields...",
+    "⠼ Calibrating targeting systems...",
+    "⠴ Loading proton torpedoes...",
+    "⠦ Establishing uplink to command...",
+    "⠧ Syncing star charts...",
+    "⠇ Initializing droid protocols...",
+    "⠏ Charging the superlaser...",
+]
+
+_HYPERSPACE_READY = [
+    "The Death Star is fully operational.",
+    "All systems nominal. The galaxy awaits.",
+    "That's no moon... it's a space station. And it's ready.",
+    "The Force is strong with this deployment.",
+    "Now witness the power of this fully armed and operational battle station.",
+]
+
+
 def _wait_for_healthy(
     config: CLIConfig,
     region: str,
     transport: str,
-    timeout_seconds: int = 300,
+    timeout_seconds: int = 600,
     poll_interval: int = 10,
 ) -> dict | None:
-    """Poll the remote health endpoint until it responds or timeout is reached."""
+    """Poll the remote health endpoint with a Star Wars loading animation."""
+    import random
+    import sys
+
     deadline = time.monotonic() + timeout_seconds
     last_err = ""
+    frame_idx = 0
+
     try:
         client = RemoteAPIClient(config, region, transport=transport)
     except (RuntimeError, httpx.HTTPError) as exc:
-        typer.echo(f"        Could not create API client: {exc}", err=True)
+        typer.echo(f"  Could not create API client: {exc}", err=True)
         return None
+
     while time.monotonic() < deadline:
         try:
-            return client._request("GET", "/v1/health")
+            result = client._request("GET", "/v1/health")
+            # Clear the line and print success
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+            quote = random.choice(_HYPERSPACE_READY)
+            typer.echo(f"\n  ✦ {quote}")
+            version = result.get("version", "unknown") if isinstance(result, dict) else "unknown"
+            typer.echo(f"  Version: {version}")
+            return result
         except (RuntimeError, httpx.HTTPError) as exc:
             last_err = str(exc)
             remaining = int(deadline - time.monotonic())
             if remaining <= 0:
                 break
-            typer.echo(f"        Waiting for instance to become healthy... ({remaining}s remaining)")
+            frame = _HYPERSPACE_FRAMES[frame_idx % len(_HYPERSPACE_FRAMES)]
+            elapsed = timeout_seconds - remaining
+            sys.stderr.write(f"\r\033[K  {frame} [{elapsed}s / {timeout_seconds}s]")
+            sys.stderr.flush()
+            frame_idx += 1
             time.sleep(min(poll_interval, remaining))
-    typer.echo(f"        Timed out after {timeout_seconds}s. Last error: {last_err[:200]}", err=True)
+
+    sys.stderr.write("\r\033[K")
+    sys.stderr.flush()
+    typer.echo(f"  ✗ Timed out after {timeout_seconds}s. Last error: {last_err[:200]}", err=True)
     return None
 
 
@@ -1048,6 +1091,13 @@ def deploy(
 
     terraform_apply(config, effective_region, auto_approve=yes)
     _display_terraform_summary(effective_region)
+
+    # Wait for the instance to become healthy (cloud-init + Docker build)
+    typer.echo("\n  Waiting for Death Star to come online...")
+    effective_transport = _validate_transport(
+        transport if transport != "auto" else config.remote_transport,
+    )
+    _wait_for_healthy(config, effective_region, effective_transport)
 
 
 def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
