@@ -35,6 +35,7 @@ def build_config(tmp_path) -> CLIConfig:
         git_author_email="deathstar@local",
         enable_tailscale=True,
         enable_tailscale_ssh=True,
+        db_password_parameter_name="/deathstar/database/password",
         tailscale_auth_parameter_name="/deathstar/integrations/tailscale/auth_key",
         tailscale_hostname="deathstar",
         tailscale_advertise_tags=[],

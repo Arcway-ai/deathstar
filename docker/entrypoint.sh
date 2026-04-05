@@ -12,7 +12,7 @@ set -euo pipefail
 
 if [ -n "${DEATHSTAR_DATABASE_URL:-}" ]; then
   case "$DEATHSTAR_DATABASE_URL" in
-    postgresql://*|postgres://*)
+    postgresql://*|postgresql+*|postgres://*|postgres+*)
       echo "[entrypoint] Running Alembic migrations..."
       alembic upgrade head
       echo "[entrypoint] Migrations complete."

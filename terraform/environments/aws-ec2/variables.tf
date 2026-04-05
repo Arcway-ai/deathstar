@@ -103,6 +103,12 @@ variable "tailscale_auth_key_parameter_name" {
   default = "/deathstar/integrations/tailscale/auth_key"
 }
 
+variable "db_password_parameter_name" {
+  type        = string
+  default     = "/deathstar/database/password"
+  description = "SSM parameter name for the PostgreSQL database password."
+}
+
 variable "enable_tailscale" {
   type    = bool
   default = true

@@ -73,6 +73,7 @@ class CLIConfig:
     git_author_email: str
     enable_tailscale: bool
     enable_tailscale_ssh: bool
+    db_password_parameter_name: str
     tailscale_auth_parameter_name: str
     tailscale_hostname: str
     tailscale_advertise_tags: list[str]
@@ -134,6 +135,10 @@ class CLIConfig:
             enable_tailscale=_parse_bool(os.getenv("DEATHSTAR_ENABLE_TAILSCALE"), default=True),
             enable_tailscale_ssh=_parse_bool(
                 os.getenv("DEATHSTAR_ENABLE_TAILSCALE_SSH"), default=True
+            ),
+            db_password_parameter_name=os.getenv(
+                "DEATHSTAR_DB_PASSWORD_PARAMETER_NAME",
+                "/deathstar/database/password",
             ),
             tailscale_auth_parameter_name=os.getenv(
                 "DEATHSTAR_TAILSCALE_AUTH_PARAMETER_NAME",
