@@ -146,6 +146,8 @@ class BackupService:
                     "--port", pg_env["port"],
                     "--username", pg_env["user"],
                     "--dbname", pg_env["dbname"],
+                    "--clean",
+                    "--if-exists",
                     "--no-owner",
                     "--no-acl",
                     "--file", str(dump_path),
