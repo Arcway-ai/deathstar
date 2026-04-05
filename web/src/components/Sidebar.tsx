@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import type { SidebarView } from "../types";
 
@@ -95,7 +94,7 @@ function ConversationList() {
                 <span className="text-[10px] text-text-muted">
                   {c.message_count} msg{c.message_count !== 1 ? "s" : ""}
                 </span>
-                {branches.length > 0 && <BranchPills branches={branches} />}
+                {branches.length > 0 && <BranchIndicator branches={branches} />}
               </div>
             </div>
             <button
@@ -114,33 +113,40 @@ function ConversationList() {
   );
 }
 
-function BranchPills({ branches }: { branches: string[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const MAX_VISIBLE = 2;
-  const visible = expanded ? branches : branches.slice(0, MAX_VISIBLE);
-  const overflow = branches.length - MAX_VISIBLE;
+function BranchIndicator({ branches }: { branches: string[] }) {
+  const [open, setOpen] = useState(false);
+
+  if (branches.length === 1) {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-[10px] text-text-muted" title={branches[0]}>
+        <GitBranch size={9} className="shrink-0" />
+        <span className="max-w-[90px] truncate">{branches[0]}</span>
+      </span>
+    );
+  }
 
   return (
-    <span className="inline-flex items-center gap-0.5 min-w-0">
-      <GitBranch size={9} className="shrink-0 text-text-muted/60" />
-      {visible.map((b) => (
-        <Badge
-          key={b}
-          variant="secondary"
-          className="h-3.5 max-w-[80px] truncate px-1 text-[8px] font-normal text-text-muted"
-          title={b}
-        >
-          {b}
-        </Badge>
-      ))}
-      {!expanded && overflow > 0 && (
-        <button
-          onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
-          className="h-3.5 rounded px-0.5 text-[8px] text-text-muted hover:text-accent transition-colors"
-          title={branches.slice(MAX_VISIBLE).join(", ")}
-        >
-          +{overflow}
-        </button>
+    <span className="relative inline-flex items-center">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        className="inline-flex items-center gap-0.5 text-[10px] text-text-muted hover:text-accent transition-colors"
+        title={branches.join(", ")}
+      >
+        <GitBranch size={9} className="shrink-0" />
+        {branches.length} branches
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setOpen(false); }} />
+          <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-md border border-border-subtle bg-bg-surface py-1 shadow-lg">
+            {branches.map((b) => (
+              <div key={b} className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-text-secondary">
+                <GitBranch size={10} className="shrink-0 text-text-muted" />
+                <span className="truncate">{b}</span>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </span>
   );
