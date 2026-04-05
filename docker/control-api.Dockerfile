@@ -20,6 +20,7 @@ WORKDIR /app
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
      ca-certificates git curl zsh ripgrep fd-find unzip vim ncurses-term \
+     postgresql-client \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -85,4 +86,8 @@ RUN git config --global --add safe.directory '*' \
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "cd /app && alembic upgrade head && uvicorn deathstar_server.main:app --host 0.0.0.0 --port 8080"]
+# Entrypoint runs Alembic migrations (idempotent) before starting the app.
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["uvicorn", "deathstar_server.main:app", "--host", "0.0.0.0", "--port", "8080"]
