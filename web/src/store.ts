@@ -481,7 +481,13 @@ export const useStore = create<Store>()(persist((set, get) => ({
   selectConversation: async (id) => {
     try {
       const detail = await api.fetchConversation(id);
-      set({ activeConversation: detail, conversationId: detail.id });
+      set({
+        activeConversation: detail,
+        conversationId: detail.id,
+        streamingText: "",
+        streamingProgress: null,
+        agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
+      });
       // If this conversation isn't in the sidebar list, refresh it
       const { conversations, selectedRepo } = get();
       if (!conversations.some((c) => c.id === detail.id)) {
@@ -1101,14 +1107,23 @@ export const useStore = create<Store>()(persist((set, get) => ({
 // ---------------------------------------------------------------------------
 
 let _agentSocket: AgentSocket | null = null;
+/** The conversation currently receiving streamed events. */
+let _streamingConversationId: string | null = null;
+
+/** Returns true if stream events should be rendered in the UI. */
+function _isStreamForCurrentConversation(): boolean {
+  if (!_streamingConversationId) return true;
+  const current = useStore.getState().conversationId;
+  return current === _streamingConversationId;
+}
 
 function _ensureAgentSocket(): void {
   if (_agentSocket) return;
 
   _agentSocket = new AgentSocket({
     onTextDelta: (text) => {
+      if (!_isStreamForCurrentConversation()) return;
       const s = useStore.getState();
-      // Append text to both streamingText (for StreamingBubble compat) and agent blocks
       const blocks = [...s.agentStream.blocks];
       const last = blocks[blocks.length - 1];
       if (last && last.type === "text") {
@@ -1123,12 +1138,14 @@ function _ensureAgentSocket(): void {
     },
 
     onThinking: (text) => {
+      if (!_isStreamForCurrentConversation()) return;
       const s = useStore.getState();
       const blocks = [...s.agentStream.blocks, { type: "thinking" as const, text }];
       useStore.setState({ agentStream: { ...s.agentStream, blocks } });
     },
 
     onThinkingDelta: (text) => {
+      if (!_isStreamForCurrentConversation()) return;
       const s = useStore.getState();
       const blocks = [...s.agentStream.blocks];
       const last = blocks[blocks.length - 1];
@@ -1141,6 +1158,7 @@ function _ensureAgentSocket(): void {
     },
 
     onToolUse: (id, tool, input) => {
+      if (!_isStreamForCurrentConversation()) return;
       const s = useStore.getState();
       const blocks = [...s.agentStream.blocks, { type: "tool_use" as const, id, tool, input }];
       useStore.setState({
@@ -1150,6 +1168,7 @@ function _ensureAgentSocket(): void {
     },
 
     onToolResult: (toolUseId, content, isError) => {
+      if (!_isStreamForCurrentConversation()) return;
       const s = useStore.getState();
       const blocks = [...s.agentStream.blocks, { type: "tool_result" as const, toolUseId, content, isError }];
       useStore.setState({
@@ -1159,6 +1178,7 @@ function _ensureAgentSocket(): void {
     },
 
     onPermissionRequest: (tool, input) => {
+      if (!_isStreamForCurrentConversation()) return;
       useStore.setState((s) => ({
         agentStream: {
           ...s.agentStream,
@@ -1169,13 +1189,16 @@ function _ensureAgentSocket(): void {
     },
 
     onStarted: (conversationId) => {
+      _streamingConversationId = conversationId;
       useStore.setState({ conversationId });
     },
 
     onResult: (data: AgentResult) => {
+      const forCurrentConvo = _isStreamForCurrentConversation();
+      _streamingConversationId = null;
       const s = useStore.getState();
       // Capture agent blocks (thinking, tool calls, etc.) for history display
-      const blocks = s.agentStream.blocks.length > 0 ? s.agentStream.blocks : undefined;
+      const blocks = forCurrentConvo && s.agentStream.blocks.length > 0 ? s.agentStream.blocks : undefined;
       const assistantMsg: ConversationMessage = {
         id: data.message_id,
         role: "assistant",
@@ -1194,11 +1217,14 @@ function _ensureAgentSocket(): void {
         streamingText: "",
         streamingProgress: null,
         abortStream: null,
-        conversationId: data.conversation_id,
         agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
-        activeConversation: prev.activeConversation
-          ? { ...prev.activeConversation, id: data.conversation_id, messages: [...prev.activeConversation.messages, assistantMsg] }
-          : null,
+        // Only update conversation UI if the result is for the conversation being viewed
+        ...(forCurrentConvo ? {
+          conversationId: data.conversation_id,
+          activeConversation: prev.activeConversation
+            ? { ...prev.activeConversation, id: data.conversation_id, messages: [...prev.activeConversation.messages, assistantMsg] }
+            : null,
+        } : {}),
       }));
 
       useStore.getState().loadConversations(s.selectedRepo ?? undefined);
@@ -1232,6 +1258,7 @@ function _ensureAgentSocket(): void {
     },
 
     onError: (code, message) => {
+      _streamingConversationId = null;
       // Find the last user message so we can offer retry
       const conv = useStore.getState().activeConversation;
       const lastUserMsg = conv?.messages
@@ -1267,6 +1294,7 @@ function _ensureAgentSocket(): void {
     },
 
     onStatus: (event: AgentStatusEvent) => {
+      if (!_isStreamForCurrentConversation()) return;
       useStore.setState((s) => ({
         agentStream: { ...s.agentStream, statusMessage: event.message },
       }));
