@@ -120,7 +120,7 @@ function BranchIndicator({ branches }: { branches: string[] }) {
     return (
       <span className="inline-flex items-center gap-0.5 text-[10px] text-text-muted" title={branches[0]}>
         <GitBranch size={9} className="shrink-0" />
-        <span className="max-w-[90px] truncate">{branches[0]}</span>
+        1 branch
       </span>
     );
   }
