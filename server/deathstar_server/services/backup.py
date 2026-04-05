@@ -73,8 +73,10 @@ class BackupService:
         if self._is_postgres():
             pg_dump_path = self.settings.workspace_root / "deathstar" / "pgdump.sql"
             if pg_dump_path.exists():
-                self._restore_postgres(pg_dump_path)
-                pg_dump_path.unlink()  # Clean up the dump file after restore
+                try:
+                    self._restore_postgres(pg_dump_path)
+                finally:
+                    pg_dump_path.unlink(missing_ok=True)
 
         return RestoreResponse(
             backup_id=resolved_backup_id,
