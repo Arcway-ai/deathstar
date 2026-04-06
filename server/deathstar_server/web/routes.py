@@ -1294,7 +1294,7 @@ def list_feedback(
 @web_router.get("/documents", response_model=list[DocumentResponse])
 def list_documents(
     repo: str | None = Query(default=None),
-    document_type: str | None = Query(default=None),
+    document_type: str | None = Query(default=None, pattern="^(tech_spec|design_doc|bug_analysis|plan|notes)$"),
 ) -> list[dict[str, object]]:
     return _get_document_store().list_documents(repo=repo, document_type=document_type)
 

@@ -363,9 +363,6 @@ class DocumentResponse(DeathStarModel):
     updated_at: datetime
 
 
-VALID_DOCUMENT_TYPES = {"tech_spec", "design_doc", "bug_analysis", "plan", "notes"}
-
-
 class CreateDocumentRequest(DeathStarModel):
     repo: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9_./ -]+$")
     title: str = Field(min_length=1, max_length=500)
