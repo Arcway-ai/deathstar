@@ -51,48 +51,6 @@ class ErrorEnvelope(DeathStarModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
-class WorkflowRequest(DeathStarModel):
-    workflow: WorkflowKind = WorkflowKind.PROMPT
-    provider: ProviderName
-    prompt: str = Field(min_length=1, max_length=200_000)
-    workspace_subpath: str = Field(default=".", pattern=r"^[a-zA-Z0-9_./ -]+$|^\.$")
-
-    @field_validator("workspace_subpath")
-    @classmethod
-    def _reject_path_traversal(cls, value: str) -> str:
-        if value == "..":
-            raise ValueError("workspace_subpath must not be '..'")
-        if value.startswith("../"):
-            raise ValueError("workspace_subpath must not start with '../'")
-        if "/../" in value or value.endswith("/.."):
-            raise ValueError("workspace_subpath must not contain path traversal")
-        if value.startswith("/"):
-            raise ValueError("workspace_subpath must not be an absolute path")
-        return value
-    model: str | None = Field(default=None, max_length=200)
-    system: str | None = Field(default=None, max_length=200_000)
-    timeout_seconds: int = Field(default=180, ge=5, le=900)
-    write_changes: bool = False
-    base_branch: str = Field(default="main", pattern=r"^[a-zA-Z0-9_./-]+$", max_length=200)
-    head_branch: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_./-]+$", max_length=200)
-    open_pr: bool = False
-    draft_pr: bool = False
-
-
-class WorkflowResponse(DeathStarModel):
-    request_id: str
-    workflow: WorkflowKind
-    status: Literal["succeeded", "failed"]
-    provider: ProviderName
-    model: str
-    content: str | None = None
-    workspace_subpath: str
-    duration_ms: int
-    usage: UsageMetrics | None = None
-    error: ErrorEnvelope | None = None
-    artifacts: dict[str, Any] = Field(default_factory=dict)
-
-
 class ProviderStatus(DeathStarModel):
     configured: bool
     default_model: str

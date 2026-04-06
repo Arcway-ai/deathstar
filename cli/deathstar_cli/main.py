@@ -15,7 +15,6 @@ from deathstar_cli.output import (
     emit_logs,
     emit_restore,
     emit_status,
-    emit_workflow,
     validate_output_format,
 )
 from deathstar_cli.remote import RemoteAPIClient
@@ -39,8 +38,6 @@ from deathstar_shared.models import (
     BackupRequest,
     ProviderName,
     RestoreRequest,
-    WorkflowKind,
-    WorkflowRequest,
 )
 from deathstar_shared.version import VERSION, full_version
 
@@ -1620,65 +1617,6 @@ def connect(
             typer.echo("  Tailscale SSH failed — falling back to SSM...", err=True)
 
     start_shell_session(config, effective_region, str(outputs["instance_id"]))
-
-
-@app.command()
-def run(
-    provider: ProviderName = typer.Option(..., "--provider"),
-    prompt: str = typer.Option(..., "--prompt"),
-    workflow: WorkflowKind = typer.Option(WorkflowKind.PROMPT, "--workflow"),
-    workspace_subpath: str = typer.Option(".", "--workspace-subpath"),
-    model: str | None = typer.Option(None, "--model"),
-    system: str | None = typer.Option(None, "--system"),
-    timeout_seconds: int = typer.Option(180, "--timeout-seconds"),
-    write: bool = typer.Option(False, "--write", help="Apply a returned patch to the remote repo."),
-    base_branch: str = typer.Option("main", "--base-branch"),
-    head_branch: str | None = typer.Option(None, "--head-branch"),
-    open_pr: bool = typer.Option(False, "--open-pr"),
-    draft_pr: bool = typer.Option(False, "--draft-pr"),
-    region: str | None = typer.Option(None, "--region"),
-    transport: Literal["auto", "tailscale", "ssm"] = typer.Option("auto", "--transport"),
-    output: str = typer.Option("text", "--output"),
-) -> None:
-    config = _config()
-    normalized_output = validate_output_format(output)
-
-    if workflow != WorkflowKind.PATCH and write:
-        raise typer.BadParameter("--write can only be used with --workflow patch")
-
-    if ".." in workspace_subpath.split("/") or workspace_subpath.startswith("/"):
-        raise typer.BadParameter(
-            "workspace_subpath must be a relative path without '..' components"
-        )
-
-    request = WorkflowRequest(
-        workflow=workflow,
-        provider=provider,
-        prompt=prompt,
-        workspace_subpath=workspace_subpath,
-        model=model,
-        system=system,
-        timeout_seconds=timeout_seconds,
-        write_changes=write,
-        base_branch=base_branch,
-        head_branch=head_branch,
-        open_pr=open_pr,
-        draft_pr=draft_pr,
-    )
-
-    try:
-        response = RemoteAPIClient(
-            config,
-            region or config.region,
-            transport=_validate_transport(transport if transport != "auto" else config.remote_transport),
-        ).run(request)
-    except httpx.HTTPStatusError as exc:
-        typer.echo(exc.response.text, err=True)
-        raise typer.Exit(code=1) from exc
-
-    emit_workflow(response, normalized_output)
-    if response.status == "failed":
-        raise typer.Exit(code=1)
 
 
 @app.command()

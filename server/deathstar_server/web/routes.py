@@ -1118,6 +1118,7 @@ def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
                 "state": row.pr_state,
                 "draft": row.draft,
                 "user": row.user,
+                "head_branch": branch,
                 "base_branch": row.base_branch,
                 "additions": row.additions,
                 "deletions": row.deletions,

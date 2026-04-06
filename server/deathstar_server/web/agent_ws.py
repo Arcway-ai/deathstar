@@ -85,6 +85,7 @@ _EVENT_TO_WS_TYPE = {
     AgentEventType.ERROR: "error",
     AgentEventType.STATUS: "status",
     AgentEventType.COMPACT_DONE: "compact_done",
+    AgentEventType.PR_CREATED: "pr_created",
 }
 
 
