@@ -330,8 +330,8 @@ class CreateDocumentRequest(DeathStarModel):
 
 
 class UpdateDocumentRequest(DeathStarModel):
-    title: str | None = Field(default=None, max_length=500)
-    content: str | None = Field(default=None, max_length=200_000)
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    content: str | None = Field(default=None, min_length=1, max_length=200_000)
     document_type: Literal["tech_spec", "design_doc", "bug_analysis", "plan", "notes"] | None = None
 
 
