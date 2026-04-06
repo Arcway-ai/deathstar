@@ -11,6 +11,20 @@ def ensure_ssh_binary() -> None:
     raise RuntimeError("OpenSSH client is required for Tailscale SSH connect")
 
 
+def clear_known_host(hostname: str) -> None:
+    """Remove stale SSH host keys for a hostname.
+
+    After `deathstar deploy` replaces the EC2 instance, the host key changes.
+    Clearing it prevents SSH from rejecting the new instance.
+    """
+    if not shutil.which("ssh-keygen"):
+        return
+    subprocess.run(
+        ["ssh-keygen", "-R", hostname],
+        capture_output=True,
+    )
+
+
 def resolve_peer_target(hostname: str) -> str:
     if shutil.which("tailscale"):
         status = _tailscale_status()
@@ -34,6 +48,7 @@ def push_image_via_tailscale(hostname: str, ssh_user: str, image_tag: str) -> No
     """
     ensure_ssh_binary()
     target = resolve_peer_target(hostname)
+    clear_known_host(target)
     ssh_dest = f"{ssh_user}@{target}"
 
     # Pipeline: docker save → gzip → ssh docker load
@@ -78,6 +93,7 @@ def push_image_via_tailscale(hostname: str, ssh_user: str, image_tag: str) -> No
 def run_via_tailscale(hostname: str, ssh_user: str, command: str) -> str:
     ensure_ssh_binary()
     target = resolve_peer_target(hostname)
+    clear_known_host(target)
     try:
         result = subprocess.run(
             ["ssh", "-o", "StrictHostKeyChecking=accept-new", f"{ssh_user}@{target}", command],

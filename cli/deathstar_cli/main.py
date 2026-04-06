@@ -28,7 +28,7 @@ from deathstar_cli.secrets import (
     resolve_secret_target,
 )
 from deathstar_cli.ssm import run_via_ssm, start_shell_session
-from deathstar_cli.tailscale import connect_via_tailscale, push_image_via_tailscale, run_via_tailscale
+from deathstar_cli.tailscale import clear_known_host, connect_via_tailscale, push_image_via_tailscale, run_via_tailscale
 from deathstar_cli.terraform import (
     terraform_apply,
     terraform_destroy,
@@ -1165,6 +1165,7 @@ def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:
         push_image_via_tailscale(tailscale_hostname, ssh_user, image_tag)
         # Also push the updated docker-compose.yml and start-runtime.sh
         # Use ssh + sudo tee since the target dirs are root-owned
+        clear_known_host(tailscale_hostname)
         ssh_opts = ["-o", "StrictHostKeyChecking=accept-new"]
         compose_file = config.project_root / "docker" / "docker-compose.yml"
         start_script = config.project_root / "bootstrap" / "files" / "start-runtime.sh"
