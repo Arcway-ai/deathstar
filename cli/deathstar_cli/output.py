@@ -10,7 +10,6 @@ from deathstar_shared.models import (
     LogsResponse,
     RestoreResponse,
     StatusResponse,
-    WorkflowResponse,
 )
 
 
@@ -23,34 +22,6 @@ def validate_output_format(output: str) -> str:
 
 def emit_json(payload: Any) -> None:
     typer.echo(json.dumps(payload, indent=2, sort_keys=True, default=str))
-
-
-def emit_workflow(response: WorkflowResponse, output: str) -> None:
-    if output == "json":
-        emit_json(response.model_dump(mode="json"))
-        return
-
-    if response.status == "failed" and response.error:
-        typer.echo(f"error: {response.error.code} - {response.error.message}")
-        if response.error.details:
-            for key, value in response.error.details.items():
-                typer.echo(f"{key}: {value}")
-        typer.echo("")
-
-    if response.content:
-        typer.echo(response.content.rstrip())
-        typer.echo("")
-
-    typer.echo(f"workflow: {response.workflow}")
-    typer.echo(f"provider: {response.provider}")
-    typer.echo(f"model: {response.model}")
-    typer.echo(f"request_id: {response.request_id}")
-    typer.echo(f"status: {response.status}")
-    typer.echo(f"duration_ms: {response.duration_ms}")
-
-    if response.artifacts:
-        for key, value in response.artifacts.items():
-            typer.echo(f"{key}: {value}")
 
 
 def emit_status(response: StatusResponse, output: str) -> None:

@@ -13,8 +13,6 @@ from deathstar_shared.models import (
     RestoreRequest,
     RestoreResponse,
     StatusResponse,
-    WorkflowRequest,
-    WorkflowResponse,
 )
 
 
@@ -88,9 +86,6 @@ class RemoteAPIClient:
             )
             response.raise_for_status()
             return response.json()
-
-    def run(self, request: WorkflowRequest) -> WorkflowResponse:
-        return WorkflowResponse.model_validate(self._request("POST", "/v1/run", request.model_dump()))
 
     def status(self) -> StatusResponse:
         return StatusResponse.model_validate(self._request("GET", "/v1/status"))
