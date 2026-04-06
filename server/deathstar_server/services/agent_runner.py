@@ -37,7 +37,10 @@ from claude_agent_sdk.types import (
     ThinkingBlock,
 )
 
+from sqlmodel import Session
+
 from deathstar_server.config import Settings
+from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
 from deathstar_server.services.agent import _MODE_CONFIGS
 from deathstar_server.services.event_bus import EventBus
@@ -1105,8 +1108,6 @@ class AgentRunner:
             # Cache BranchPR immediately so it persists across refreshes
             try:
                 from deathstar_server.app_state import engine as db_engine
-                from deathstar_server.db.models import BranchPR
-                from sqlmodel import Session
 
                 with Session(db_engine) as session:
                     session.merge(BranchPR(
@@ -1137,6 +1138,7 @@ class AgentRunner:
                     "branch": branch_name,
                     "base_branch": pr_data["base_branch"],
                     "draft": pr_data["draft"],
+                    "user": pr_data.get("user", ""),
                 },
             ))
 

@@ -1424,7 +1424,7 @@ function _ensureAgentSocket(): void {
         base_branch: data.base_branch,
         draft: data.draft,
         state: "open",
-        user: "",
+        user: data.user || "",
         updated_at: new Date().toISOString(),
         additions: null,
         deletions: null,
