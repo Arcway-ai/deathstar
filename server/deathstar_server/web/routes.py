@@ -33,6 +33,8 @@ from deathstar_shared.models import (
     CloneRequest,
     ConversationDetail,
     ConversationSummary,
+    CreateDocumentRequest,
+    DocumentResponse,
     ErrorCode,
     FeedbackRequest,
     FeedbackResponse,
@@ -46,6 +48,7 @@ from deathstar_shared.models import (
     QueueItemResponse,
     RepoInfo,
     SaveMemoryRequest,
+    UpdateDocumentRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,6 +101,11 @@ def _get_memory_bank():
 def _get_feedback_store():
     from deathstar_server.app_state import feedback_store
     return feedback_store
+
+
+def _get_document_store():
+    from deathstar_server.app_state import document_store
+    return document_store
 
 
 # ---------------------------------------------------------------------------
@@ -1222,10 +1230,18 @@ def list_memories(repo: str | None = Query(default=None)) -> list[dict[str, obje
 
 
 @web_router.post("/memory", response_model=MemoryEntryResponse)
-def save_memory(request: SaveMemoryRequest) -> dict[str, object]:
+async def save_memory(request: SaveMemoryRequest) -> dict[str, object]:
+    content = request.content
+    if settings.anthropic_api_key:
+        from deathstar_server.services.memory_distiller import distill_memory
+        content = await distill_memory(
+            prompt=request.source_prompt,
+            response=request.content,
+            api_key=settings.anthropic_api_key,
+        )
     return _get_memory_bank().save_memory(
         repo=request.repo,
-        content=request.content,
+        content=content,
         source_message_id=request.source_message_id,
         source_prompt=request.source_prompt,
         tags=request.tags,
@@ -1268,6 +1284,59 @@ def list_feedback(
     kind: str | None = Query(default=None, pattern="^(thumbs_up|thumbs_down)$"),
 ) -> list[dict[str, object]]:
     return _get_feedback_store().list_feedback(repo=repo, kind=kind)
+
+
+# ---------------------------------------------------------------------------
+# Documents
+# ---------------------------------------------------------------------------
+
+
+@web_router.get("/documents", response_model=list[DocumentResponse])
+def list_documents(
+    repo: str | None = Query(default=None),
+    document_type: str | None = Query(default=None),
+) -> list[dict[str, object]]:
+    return _get_document_store().list_documents(repo=repo, document_type=document_type)
+
+
+@web_router.get("/documents/{document_id}", response_model=DocumentResponse)
+def get_document(document_id: str) -> dict[str, object]:
+    doc = _get_document_store().get_document(document_id)
+    if not doc:
+        raise AppError(ErrorCode.INVALID_REQUEST, "document not found", status_code=404)
+    return doc
+
+
+@web_router.post("/documents", response_model=DocumentResponse)
+def create_document(request: CreateDocumentRequest) -> dict[str, object]:
+    return _get_document_store().create_document(
+        repo=request.repo,
+        title=request.title,
+        content=request.content,
+        document_type=request.document_type,
+        source_conversation_id=request.source_conversation_id,
+    )
+
+
+@web_router.put("/documents/{document_id}", response_model=DocumentResponse)
+def update_document(document_id: str, request: UpdateDocumentRequest) -> dict[str, object]:
+    doc = _get_document_store().update_document(
+        document_id,
+        title=request.title,
+        content=request.content,
+        document_type=request.document_type,
+    )
+    if not doc:
+        raise AppError(ErrorCode.INVALID_REQUEST, "document not found", status_code=404)
+    return doc
+
+
+@web_router.delete("/documents/{document_id}")
+def delete_document(document_id: str) -> dict[str, bool]:
+    deleted = _get_document_store().delete_document(document_id)
+    if not deleted:
+        raise AppError(ErrorCode.INVALID_REQUEST, "document not found", status_code=404)
+    return {"deleted": True}
 
 
 # ---------------------------------------------------------------------------

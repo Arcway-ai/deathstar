@@ -14,6 +14,7 @@ from deathstar_server.services.gitops import GitService
 from deathstar_server.services.worktree import WorktreeManager
 from deathstar_server.web.conversations import ConversationStore
 from deathstar_server.services.event_bus import EventBus
+from deathstar_server.web.document_store import DocumentStore
 from deathstar_server.web.feedback import FeedbackStore
 from deathstar_server.web.memory_bank import MemoryBank
 from deathstar_server.web.queue_store import QueueStore
@@ -48,6 +49,7 @@ if settings.database_url.startswith("sqlite"):
 conversation_store = ConversationStore(engine)
 memory_bank = MemoryBank(engine)
 feedback_store = FeedbackStore(engine)
+document_store = DocumentStore(engine)
 event_bus = EventBus()
 queue_store = QueueStore(engine)
 agent_runner = AgentRunner(conversation_store, worktree_manager, event_bus, settings, git_service, github_service)

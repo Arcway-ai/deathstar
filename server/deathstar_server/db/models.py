@@ -193,6 +193,27 @@ class MessageQueue(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Documents
+# ---------------------------------------------------------------------------
+
+
+class Document(SQLModel, table=True):
+    __tablename__ = "documents"
+    __table_args__ = (
+        Index("idx_documents_repo", "repo", "updated_at"),
+    )
+
+    id: str = Field(primary_key=True)
+    repo: str = Field(nullable=False)
+    title: str = Field(nullable=False)
+    content: str = Field(sa_column=Column(Text, nullable=False))
+    document_type: str = Field(nullable=False, default="tech_spec")
+    source_conversation_id: Optional[str] = Field(default=None)
+    created_at: str = Field(nullable=False, default_factory=_utcnow)
+    updated_at: str = Field(nullable=False, default_factory=_utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Branch PRs (cached GitHub PR state)
 # ---------------------------------------------------------------------------
 
