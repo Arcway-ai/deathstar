@@ -481,6 +481,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
   selectConversation: async (id) => {
     try {
       const detail = await api.fetchConversation(id);
+      // Clear stale stream state from the previous conversation
       set({
         activeConversation: detail,
         conversationId: detail.id,
@@ -495,6 +496,31 @@ export const useStore = create<Store>()(persist((set, get) => ({
       if (!conversations.some((c) => c.id === detail.id)) {
         get().loadConversations(selectedRepo ?? detail.repo);
       }
+      // If the target conversation has a running agent, re-subscribe to its
+      // event stream so the UI resumes showing live output immediately.
+      _ensureAgentSocket();
+      try {
+        const sessions = await api.fetchAgentSessions();
+        const running = sessions.find(
+          (s) => s.conversation_id === detail.id
+            && (s.status === "running" || s.status === "waiting_permission" || s.status === "starting"),
+        );
+        // Guard: only apply if the user is still on this conversation
+        if (running && get().conversationId === detail.id) {
+          _streamingConversationId = detail.id;
+          _agentSocket!.subscribeAgent(detail.id);
+          set({
+            sending: true,
+            agentStream: {
+              blocks: [],
+              pendingPermission: null,
+              isStreaming: true,
+              startedAt: Date.now(),
+              statusMessage: "Reconnecting to agent…",
+            },
+          });
+        }
+      } catch { /* agent session check failed — non-critical */ }
     } catch { /* ignore */ }
   },
 
@@ -572,6 +598,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
         // Agent is still running on the server — re-subscribe to its events.
         // The server will send an agent_snapshot with accumulated state.
         if (_agentSocket && conversationId) {
+          _streamingConversationId = conversationId;
           _agentSocket.subscribeAgent(conversationId);
         }
         // Mark as sending so the UI shows the active state
@@ -1476,6 +1503,14 @@ function _ensureAgentSocket(): void {
       // Restore agent state from a server-side snapshot (after reconnecting
       // to a still-running agent).  Cast blocks from the server format to
       // AgentContentBlock[].
+
+      // Track this snapshot's conversation so subsequent deltas are scoped correctly.
+      if (snapshot.conversation_id) {
+        _streamingConversationId = snapshot.conversation_id;
+      }
+      // If the user navigated away before the snapshot arrived, discard it.
+      if (!_isStreamForCurrentConversation()) return;
+
       const blocks = (snapshot.blocks || []).map((b: Record<string, unknown>) => {
         switch (b.type) {
           case "text": return { type: "text" as const, text: b.text as string };
