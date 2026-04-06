@@ -484,6 +484,8 @@ export const useStore = create<Store>()(persist((set, get) => ({
       set({
         activeConversation: detail,
         conversationId: detail.id,
+        sending: false,
+        abortStream: null,
         streamingText: "",
         streamingProgress: null,
         agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
@@ -1110,7 +1112,11 @@ let _agentSocket: AgentSocket | null = null;
 /** The conversation currently receiving streamed events. */
 let _streamingConversationId: string | null = null;
 
-/** Returns true if stream events should be rendered in the UI. */
+/**
+ * Returns true if stream events should be rendered in the UI.
+ * When _streamingConversationId is null (before onStarted fires),
+ * we allow events through to avoid dropping the first delta.
+ */
 function _isStreamForCurrentConversation(): boolean {
   if (!_streamingConversationId) return true;
   const current = useStore.getState().conversationId;
@@ -1190,7 +1196,11 @@ function _ensureAgentSocket(): void {
 
     onStarted: (conversationId) => {
       _streamingConversationId = conversationId;
-      useStore.setState({ conversationId });
+      // Only set conversationId if the user hasn't navigated away already
+      const current = useStore.getState().conversationId;
+      if (!current || current === conversationId) {
+        useStore.setState({ conversationId });
+      }
     },
 
     onResult: (data: AgentResult) => {
@@ -1213,13 +1223,14 @@ function _ensureAgentSocket(): void {
       };
 
       useStore.setState((prev) => ({
-        sending: false,
-        streamingText: "",
-        streamingProgress: null,
-        abortStream: null,
         agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
-        // Only update conversation UI if the result is for the conversation being viewed
+        // Only update conversation-specific UI state if the result is for the conversation being viewed.
+        // Otherwise a background result would clear sending/streaming state for an active send on another conversation.
         ...(forCurrentConvo ? {
+          sending: false,
+          streamingText: "",
+          streamingProgress: null,
+          abortStream: null,
           conversationId: data.conversation_id,
           activeConversation: prev.activeConversation
             ? { ...prev.activeConversation, id: data.conversation_id, messages: [...prev.activeConversation.messages, assistantMsg] }
@@ -1258,28 +1269,36 @@ function _ensureAgentSocket(): void {
     },
 
     onError: (code, message) => {
+      const forCurrentConvo = _isStreamForCurrentConversation();
       _streamingConversationId = null;
-      // Find the last user message so we can offer retry
-      const conv = useStore.getState().activeConversation;
-      const lastUserMsg = conv?.messages
-        ?.filter((m) => m.role === "user")
-        .at(-1)?.content ?? null;
 
-      // Remove the optimistic user message that failed
-      const cleaned = conv
-        ? { ...conv, messages: conv.messages.filter((m) => !(m.role === "user" && m.id.startsWith("pending-") && m.content === lastUserMsg)) }
-        : null;
-
+      // Always clear agent stream blocks
       useStore.setState({
-        sending: false,
-        sendError: message,
-        lastFailedMessage: lastUserMsg,
-        streamingText: "",
-        streamingProgress: null,
-        abortStream: null,
         agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
-        activeConversation: cleaned,
       });
+
+      if (forCurrentConvo) {
+        // Find the last user message so we can offer retry
+        const conv = useStore.getState().activeConversation;
+        const lastUserMsg = conv?.messages
+          ?.filter((m) => m.role === "user")
+          .at(-1)?.content ?? null;
+
+        // Remove the optimistic user message that failed
+        const cleaned = conv
+          ? { ...conv, messages: conv.messages.filter((m) => !(m.role === "user" && m.id.startsWith("pending-") && m.content === lastUserMsg)) }
+          : null;
+
+        useStore.setState({
+          sending: false,
+          sendError: message,
+          lastFailedMessage: lastUserMsg,
+          streamingText: "",
+          streamingProgress: null,
+          abortStream: null,
+          activeConversation: cleaned,
+        });
+      }
 
       if (code === "AUTH_REQUIRED" || code === "AUTH_EXPIRED") {
         // Refresh auth state so the Claude indicator turns red
@@ -1301,6 +1320,7 @@ function _ensureAgentSocket(): void {
     },
 
     onCompactDone: (summary) => {
+      if (!_isStreamForCurrentConversation()) return;
       const COMPACTOR_QUOTES = [
         "One thing's for sure — we're all going to be a lot thinner.",
         "Shut down all the garbage mashers on the detention level!",
