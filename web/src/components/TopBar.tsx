@@ -67,7 +67,10 @@ export default function TopBar() {
       {selectedRepo && <PersonaSelector />}
       {selectedRepo && (
         <button
-          onClick={() => navigate(`/${encodeURIComponent(selectedRepo)}`)}
+          onClick={() => {
+            useStore.getState().newConversation();
+            navigate(`/${encodeURIComponent(selectedRepo)}`);
+          }}
           className="flex h-7 items-center gap-1 rounded-md border border-border-subtle px-2 text-xs font-medium text-text-secondary hover:border-border-default hover:text-text-primary transition-colors"
           title="New conversation"
         >
