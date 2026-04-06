@@ -49,6 +49,7 @@ def _build_var_flags(config: CLIConfig, region: str) -> list[str]:
         f"-var=enable_tailscale_ssh={str(config.enable_tailscale_ssh).lower()}",
         f"-var=tailscale_auth_key_parameter_name={config.tailscale_auth_parameter_name}",
         f"-var=tailscale_hostname={config.tailscale_hostname}",
+        f"-var=db_password_parameter_name={config.db_password_parameter_name}",
     ]
 
     if config.web_ui_allowed_cidrs:

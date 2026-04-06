@@ -143,32 +143,75 @@ def _validate_transport(transport: str) -> str:
     return normalized
 
 
+_HYPERSPACE_FRAMES = [
+    "⠋ Entering hyperspace...",
+    "⠙ Navigating asteroid field...",
+    "⠹ Powering up the reactor core...",
+    "⠸ Aligning deflector shields...",
+    "⠼ Calibrating targeting systems...",
+    "⠴ Loading proton torpedoes...",
+    "⠦ Establishing uplink to command...",
+    "⠧ Syncing star charts...",
+    "⠇ Initializing droid protocols...",
+    "⠏ Charging the superlaser...",
+]
+
+_HYPERSPACE_READY = [
+    "The Death Star is fully operational.",
+    "All systems nominal. The galaxy awaits.",
+    "That's no moon... it's a space station. And it's ready.",
+    "The Force is strong with this deployment.",
+    "Now witness the power of this fully armed and operational battle station.",
+]
+
+
 def _wait_for_healthy(
     config: CLIConfig,
     region: str,
     transport: str,
-    timeout_seconds: int = 300,
+    timeout_seconds: int = 600,
     poll_interval: int = 10,
 ) -> dict | None:
-    """Poll the remote health endpoint until it responds or timeout is reached."""
+    """Poll the remote health endpoint with a Star Wars loading animation."""
+    import random
+    import sys
+
     deadline = time.monotonic() + timeout_seconds
     last_err = ""
+    frame_idx = 0
+
     try:
         client = RemoteAPIClient(config, region, transport=transport)
     except (RuntimeError, httpx.HTTPError) as exc:
-        typer.echo(f"        Could not create API client: {exc}", err=True)
+        typer.echo(f"  Could not create API client: {exc}", err=True)
         return None
+
     while time.monotonic() < deadline:
         try:
-            return client._request("GET", "/v1/health")
+            result = client._request("GET", "/v1/health")
+            # Clear the line and print success
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+            quote = random.choice(_HYPERSPACE_READY)
+            typer.echo(f"\n  ✦ {quote}")
+            version = result.get("version", "unknown") if isinstance(result, dict) else "unknown"
+            typer.echo(f"  Version: {version}")
+            return result
         except (RuntimeError, httpx.HTTPError) as exc:
             last_err = str(exc)
             remaining = int(deadline - time.monotonic())
             if remaining <= 0:
                 break
-            typer.echo(f"        Waiting for instance to become healthy... ({remaining}s remaining)")
+            frame = _HYPERSPACE_FRAMES[frame_idx % len(_HYPERSPACE_FRAMES)]
+            elapsed = timeout_seconds - remaining
+            sys.stderr.write(f"\r\033[K  {frame} [{elapsed}s / {timeout_seconds}s]")
+            sys.stderr.flush()
+            frame_idx += 1
             time.sleep(min(poll_interval, remaining))
-    typer.echo(f"        Timed out after {timeout_seconds}s. Last error: {last_err[:200]}", err=True)
+
+    sys.stderr.write("\r\033[K")
+    sys.stderr.flush()
+    typer.echo(f"  ✗ Timed out after {timeout_seconds}s. Last error: {last_err[:200]}", err=True)
     return None
 
 
@@ -403,6 +446,9 @@ def init() -> None:
         "DEATHSTAR_TAILSCALE_HOSTNAME=",
         "DEATHSTAR_TAILSCALE_ADVERTISE_TAGS=",
         "",
+        "# Database",
+        f"DEATHSTAR_DB_PASSWORD_PARAMETER_NAME=/{callsign}/database/password",
+        "",
         "# API authentication",
         f"DEATHSTAR_API_TOKEN={api_token}",
         "",
@@ -509,6 +555,11 @@ def secrets_bootstrap(
         "--include-github/--no-include-github",
         help="Prompt for the optional GitHub token as part of the bootstrap flow.",
     ),
+    include_database: bool = typer.Option(
+        True,
+        "--include-database/--no-include-database",
+        help="Prompt for the PostgreSQL database password.",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -521,6 +572,7 @@ def secrets_bootstrap(
         config,
         include_tailscale=include_tailscale,
         include_github=include_github,
+        include_database=include_database,
     )
 
     typer.echo(
@@ -997,6 +1049,10 @@ def _tailscale_cleanup(
 def deploy(
     region: str | None = typer.Option(None, "--region", help="AWS region override."),
     yes: bool = typer.Option(False, "--yes", help="Skip interactive confirmation."),
+    skip_backup: bool = typer.Option(
+        False, "--skip-backup", help="Skip pre-deploy backup of the remote instance.",
+    ),
+    transport: Literal["auto", "tailscale", "ssm"] = typer.Option("auto", "--transport"),
 ) -> None:
     config = _config()
     effective_region = region or config.region
@@ -1005,6 +1061,26 @@ def deploy(
 
     if not yes and not typer.confirm(f"Deploy DeathStar into {effective_region}?"):
         raise typer.Exit(code=1)
+
+    # Pre-deploy backup: if an instance is already running, back up before
+    # Terraform potentially replaces it.  The EBS data volume survives
+    # instance replacement, but an explicit backup is a safety net.
+    if not skip_backup:
+        typer.echo("  Creating pre-deploy backup...")
+        try:
+            client = RemoteAPIClient(
+                config,
+                effective_region,
+                transport=_validate_transport(
+                    transport if transport != "auto" else config.remote_transport
+                ),
+            )
+            backup_response = client.backup(BackupRequest(label="pre-deploy"))
+            typer.echo(f"  Backup: {backup_response.backup_id}")
+        except (RuntimeError, httpx.HTTPError):
+            typer.echo("  Skipping backup — remote instance not reachable (first deploy?).")
+    else:
+        typer.echo("  Skipping backup (--skip-backup).")
 
     # Clean up stale Tailscale nodes before deploy so the new instance gets a clean hostname.
     if config.enable_tailscale and config.tailscale_oauth_client_id and config.tailscale_oauth_client_secret:
@@ -1015,6 +1091,13 @@ def deploy(
 
     terraform_apply(config, effective_region, auto_approve=yes)
     _display_terraform_summary(effective_region)
+
+    # Wait for the instance to become healthy (cloud-init + Docker build)
+    typer.echo("\n  Waiting for Death Star to come online...")
+    effective_transport = _validate_transport(
+        transport if transport != "auto" else config.remote_transport,
+    )
+    _wait_for_healthy(config, effective_region, effective_transport)
 
 
 def _build_and_push_image(config: CLIConfig, effective_region: str) -> None:

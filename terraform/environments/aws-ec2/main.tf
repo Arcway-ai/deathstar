@@ -107,6 +107,7 @@ locals {
       google_api_key_parameter_name    = var.google_api_key_parameter_name
       vertex_sa_key_parameter_name     = var.vertex_service_account_key_parameter_name
       github_token_parameter_name      = var.github_token_parameter_name
+      db_password_parameter_name       = var.db_password_parameter_name
     },
   )
 
@@ -171,6 +172,7 @@ module "iam" {
     var.google_api_key_parameter_name,
     var.vertex_service_account_key_parameter_name,
     var.github_token_parameter_name,
+    var.db_password_parameter_name,
     var.enable_tailscale ? var.tailscale_auth_key_parameter_name : "",
   ])
   artifact_bucket_name = module.storage.artifact_bucket_name
