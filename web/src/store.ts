@@ -128,7 +128,7 @@ interface Store {
 
   /* ── Memory Bank ────────────────────────────────────────────── */
   memories: MemoryEntry[];
-  memoryDistilling: boolean;
+  memoryDistillingId: string | null;
   loadMemories: (repo?: string) => Promise<void>;
   thumbsUp: (messageId: string, content: string, prompt: string) => Promise<void>;
   thumbsDown: (messageId: string, content: string, prompt: string) => Promise<void>;
@@ -931,7 +931,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
 
   /* ── Memory Bank ─────────────────────────────────────────────── */
   memories: [],
-  memoryDistilling: false,
+  memoryDistillingId: null,
   messageFeedback: {},
 
   loadMemories: async (repo) => {
@@ -944,7 +944,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
   thumbsUp: async (messageId, content, prompt) => {
     const { selectedRepo, conversationId } = get();
     if (!selectedRepo) return;
-    set({ memoryDistilling: true });
+    set({ memoryDistillingId: messageId });
     try {
       const entry = await api.saveMemory({
         repo: selectedRepo,
@@ -954,7 +954,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
         tags: [],
       });
       set((s) => ({
-        memoryDistilling: false,
+        memoryDistillingId: null,
         memories: [...s.memories, entry],
         messageFeedback: { ...s.messageFeedback, [messageId]: "thumbs_up" as const },
       }));
@@ -969,7 +969,8 @@ export const useStore = create<Store>()(persist((set, get) => ({
         prompt: prompt.slice(0, 500),
       });
     } catch {
-      set({ memoryDistilling: false });
+      set({ memoryDistillingId: null });
+      toast.error("Failed to save memory", "Distillation failed — please try again");
     }
   },
 
@@ -1009,7 +1010,12 @@ export const useStore = create<Store>()(persist((set, get) => ({
     set({ documentsLoading: true });
     try {
       const documents = await api.fetchDocuments(repo);
-      set({ documents, documentsLoading: false });
+      const validIds = new Set(documents.map((d) => d.id));
+      set((s) => ({
+        documents,
+        documentsLoading: false,
+        pinnedDocumentIds: s.pinnedDocumentIds.filter((id) => validIds.has(id)),
+      }));
     } catch {
       set({ documentsLoading: false });
     }

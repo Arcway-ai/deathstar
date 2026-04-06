@@ -363,18 +363,21 @@ class DocumentResponse(DeathStarModel):
     updated_at: datetime
 
 
+VALID_DOCUMENT_TYPES = {"tech_spec", "design_doc", "bug_analysis", "plan", "notes"}
+
+
 class CreateDocumentRequest(DeathStarModel):
     repo: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9_./ -]+$")
     title: str = Field(min_length=1, max_length=500)
     content: str = Field(min_length=1, max_length=200_000)
-    document_type: str = Field(default="tech_spec", max_length=50)
+    document_type: Literal["tech_spec", "design_doc", "bug_analysis", "plan", "notes"] = "tech_spec"
     source_conversation_id: str | None = Field(default=None, max_length=200)
 
 
 class UpdateDocumentRequest(DeathStarModel):
     title: str | None = Field(default=None, max_length=500)
     content: str | None = Field(default=None, max_length=200_000)
-    document_type: str | None = Field(default=None, max_length=50)
+    document_type: Literal["tech_spec", "design_doc", "bug_analysis", "plan", "notes"] | None = None
 
 
 # ---------------------------------------------------------------------------

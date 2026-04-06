@@ -39,6 +39,7 @@ async def distill_memory(prompt: str, response: str, api_key: str) -> str:
         )
         distilled = message.content[0].text[:_MAX_DISTILLED_CHARS]
         return distilled
-    except Exception:
-        logger.warning("Memory distillation failed, saving raw content", exc_info=True)
+    except (anthropic.APIError, anthropic.APIConnectionError, anthropic.AuthenticationError,
+            IndexError, AttributeError, TypeError) as exc:
+        logger.warning("Memory distillation failed (%s), saving raw content", type(exc).__name__, exc_info=True)
         return response[:_MAX_DISTILLED_CHARS]

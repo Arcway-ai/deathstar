@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anthropic
 import pytest
 
 from deathstar_server.services.memory_distiller import distill_memory
@@ -15,8 +16,7 @@ async def test_distill_returns_content() -> None:
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock(return_value=mock_message)
 
-    with patch("deathstar_server.services.memory_distiller.anthropic") as mock_anthropic:
-        mock_anthropic.AsyncAnthropic.return_value = mock_client
+    with patch("deathstar_server.services.memory_distiller.anthropic.AsyncAnthropic", return_value=mock_client):
         result = await distill_memory(
             prompt="How do I handle async?",
             response="Here's a long explanation about async...",
@@ -27,9 +27,30 @@ async def test_distill_returns_content() -> None:
 
 
 @pytest.mark.asyncio
-async def test_distill_falls_back_on_error() -> None:
-    with patch("deathstar_server.services.memory_distiller.anthropic") as mock_anthropic:
-        mock_anthropic.AsyncAnthropic.side_effect = Exception("API down")
+async def test_distill_falls_back_on_api_error() -> None:
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(
+        side_effect=anthropic.APIConnectionError(request=MagicMock()),
+    )
+
+    with patch("deathstar_server.services.memory_distiller.anthropic.AsyncAnthropic", return_value=mock_client):
+        result = await distill_memory(
+            prompt="prompt",
+            response="raw response content",
+            api_key="test-key",
+        )
+    assert result == "raw response content"
+
+
+@pytest.mark.asyncio
+async def test_distill_falls_back_on_empty_content() -> None:
+    mock_message = MagicMock()
+    mock_message.content = []  # empty content list → IndexError
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_message)
+
+    with patch("deathstar_server.services.memory_distiller.anthropic.AsyncAnthropic", return_value=mock_client):
         result = await distill_memory(
             prompt="prompt",
             response="raw response content",
@@ -46,8 +67,7 @@ async def test_distill_truncates_output() -> None:
     mock_client = AsyncMock()
     mock_client.messages.create = AsyncMock(return_value=mock_message)
 
-    with patch("deathstar_server.services.memory_distiller.anthropic") as mock_anthropic:
-        mock_anthropic.AsyncAnthropic.return_value = mock_client
+    with patch("deathstar_server.services.memory_distiller.anthropic.AsyncAnthropic", return_value=mock_client):
         result = await distill_memory(
             prompt="p",
             response="r",

@@ -61,9 +61,12 @@ export default function PlanPanel({ plan }: { plan: StructuredPlan }) {
 
   const handleSaveAsDocument = async () => {
     setSaving(true);
-    const md = planToMarkdown(plan);
-    await createDocument(plan.title, md, "plan");
-    setSaving(false);
+    try {
+      const md = planToMarkdown(plan);
+      await createDocument(plan.title, md, "plan");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (

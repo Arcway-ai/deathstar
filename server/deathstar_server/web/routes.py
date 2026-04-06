@@ -18,6 +18,7 @@ from sqlmodel import Session, select
 from deathstar_server.app_state import engine as db_engine, event_bus, git_service, settings
 from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
+from deathstar_server.services.memory_distiller import distill_memory
 from deathstar_server.services.event_bus import (
     EVENT_BRANCH_UPDATE,
     EVENT_LOCAL_CHECKOUT,
@@ -1233,7 +1234,6 @@ def list_memories(repo: str | None = Query(default=None)) -> list[dict[str, obje
 async def save_memory(request: SaveMemoryRequest) -> dict[str, object]:
     content = request.content
     if settings.anthropic_api_key:
-        from deathstar_server.services.memory_distiller import distill_memory
         content = await distill_memory(
             prompt=request.source_prompt,
             response=request.content,
