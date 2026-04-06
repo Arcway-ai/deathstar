@@ -109,6 +109,8 @@ Pytest config is in `pyproject.toml` with `pythonpath = ["cli", "server", "share
 
 **All tests must pass before committing.** If any test is failing — regardless of when it broke — fix it before committing. Never dismiss failures as pre-existing or unrelated.
 
+**Never suggest deleting data.** Do not recommend `rm -rf` on data directories (pgdata, database files, backups, workspace volumes) or any command that wipes a database. If a database issue needs fixing (password mismatch, schema conflict, corruption), find a non-destructive fix (reset credentials, patch config, run a migration). If a destructive operation is truly the only option, explicitly list what data will be lost and require confirmation before proceeding.
+
 ## CLI Command Groups
 
 - `deathstar deploy / destroy` — Terraform infrastructure management.
