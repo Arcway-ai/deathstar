@@ -67,6 +67,20 @@ export default function Sidebar() {
   );
 }
 
+/* ── Destructive action button ──────────────────────────────────
+   Always visible (works on mobile), but very subtle until interacted with.
+   Shared pattern across conversations, memories, and documents. */
+function DestructiveButton({ onClick, size = 12 }: { onClick: () => void; size?: number }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted/40 hover:bg-error/20 hover:text-error active:bg-error/30 transition-colors"
+    >
+      <Trash2 size={size} />
+    </button>
+  );
+}
+
 function ConversationList() {
   const navigate = useNavigate();
   const conversations = useStore((s) => s.conversations);
@@ -86,12 +100,13 @@ function ConversationList() {
   return (
     <div className="space-y-0.5">
       {conversations.map((c) => {
+        const isActive = c.id === conversationId;
         const branches = c.branches?.length > 0 ? c.branches : (c.branch && c.branch !== "main" && c.branch !== "master" ? [c.branch] : []);
         return (
           <div
             key={c.id}
-            className={`group flex items-center gap-2 rounded-md px-2 py-2 cursor-pointer transition-colors ${
-              c.id === conversationId
+            className={`flex items-start gap-2 rounded-md px-2 py-2 cursor-pointer transition-colors ${
+              isActive
                 ? "bg-accent-muted text-accent"
                 : "text-text-secondary hover:bg-bg-hover"
             }`}
@@ -104,22 +119,16 @@ function ConversationList() {
           >
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-medium">{c.title}</p>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="text-[10px] text-text-muted">
                   {c.message_count} msg{c.message_count !== 1 ? "s" : ""}
                 </span>
-                {branches.length > 0 && <BranchIndicator branches={branches} />}
               </div>
+              {branches.length > 0 && (
+                <BranchPills branches={branches} isActive={isActive} />
+              )}
             </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                deleteConversation(c.id);
-              }}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted hover:bg-error/20 hover:text-error md:invisible md:group-hover:visible"
-            >
-              <Trash2 size={12} />
-            </button>
+            <DestructiveButton onClick={() => deleteConversation(c.id)} />
           </div>
         );
       })}
@@ -127,45 +136,56 @@ function ConversationList() {
   );
 }
 
-function BranchIndicator({ branches }: { branches: string[] }) {
-  const [open, setOpen] = useState(false);
+const MAX_VISIBLE_BRANCHES = 2;
 
-  if (branches.length === 1) {
-    return (
-      <span className="inline-flex items-center gap-0.5 text-[10px] text-text-muted" title={branches[0]}>
-        <GitBranch size={9} className="shrink-0" />
-        1 branch
-      </span>
-    );
-  }
+function BranchPills({ branches, isActive }: { branches: string[]; isActive: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? branches : branches.slice(0, MAX_VISIBLE_BRANCHES);
+  const overflow = branches.length - MAX_VISIBLE_BRANCHES;
 
   return (
-    <span className="relative inline-flex items-center">
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        className="inline-flex items-center gap-0.5 text-[10px] text-text-muted hover:text-accent transition-colors"
-        title={branches.join(", ")}
-      >
-        <GitBranch size={9} className="shrink-0" />
-        {branches.length} branches
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setOpen(false); }} />
-          <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-md border border-border-subtle bg-bg-surface py-1 shadow-lg">
-            {branches.map((b) => (
-              <div key={b} className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-text-secondary">
-                <GitBranch size={10} className="shrink-0 text-text-muted" />
-                <span className="truncate">{b}</span>
-              </div>
-            ))}
-          </div>
-        </>
+    <div className="flex flex-wrap items-center gap-1 mt-1">
+      {visible.map((b) => (
+        <span
+          key={b}
+          className={`inline-flex items-center gap-0.5 rounded-sm px-1 py-px text-[9px] font-mono leading-tight ${
+            isActive
+              ? "bg-accent/15 text-accent/80"
+              : "bg-bg-elevated text-text-muted"
+          }`}
+          title={b}
+        >
+          <GitBranch size={7} className="shrink-0" />
+          <span className="truncate max-w-[7rem]">{b}</span>
+        </span>
+      ))}
+      {overflow > 0 && !expanded && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+          className={`rounded-sm px-1 py-px text-[9px] font-mono leading-tight transition-colors ${
+            isActive
+              ? "text-accent/60 hover:text-accent"
+              : "text-text-muted/60 hover:text-text-muted"
+          }`}
+        >
+          +{overflow} more
+        </button>
       )}
-    </span>
+      {expanded && overflow > 0 && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
+          className={`rounded-sm px-1 py-px text-[9px] font-mono leading-tight transition-colors ${
+            isActive
+              ? "text-accent/60 hover:text-accent"
+              : "text-text-muted/60 hover:text-text-muted"
+          }`}
+        >
+          show less
+        </button>
+      )}
+    </div>
   );
 }
-
 
 function MemoryPanel() {
   const memories = useStore((s) => s.memories);
@@ -195,7 +215,7 @@ function MemoryPanel() {
   return (
     <div className="space-y-2">
       {memories.map((m) => (
-        <Card key={m.id} size="sm" className="group ring-0 rounded-md border border-border-subtle bg-bg-surface">
+        <Card key={m.id} size="sm" className="ring-0 rounded-md border border-border-subtle bg-bg-surface">
           <CardContent className="p-2">
             <p className="text-xs text-text-secondary line-clamp-3">
               {m.content}
@@ -204,12 +224,7 @@ function MemoryPanel() {
               <span className="text-[10px] text-text-muted">
                 {new Date(m.created_at).toLocaleDateString()}
               </span>
-              <button
-                onClick={() => deleteMemory(m.id)}
-                className="invisible text-text-muted hover:text-error group-hover:visible"
-              >
-                <Trash2 size={10} />
-              </button>
+              <DestructiveButton onClick={() => deleteMemory(m.id)} size={10} />
             </div>
           </CardContent>
         </Card>
@@ -251,7 +266,7 @@ function DocumentsPanel() {
       {documents.map((d) => {
         const isPinned = pinnedDocumentIds.includes(d.id);
         return (
-          <Card key={d.id} size="sm" className="group ring-0 rounded-md border border-border-subtle bg-bg-surface">
+          <Card key={d.id} size="sm" className="ring-0 rounded-md border border-border-subtle bg-bg-surface">
             <CardContent className="p-2">
               <div className="flex items-center gap-1.5">
                 <Badge variant="secondary" className="h-4 px-1.5 text-[9px] shrink-0">
@@ -268,20 +283,19 @@ function DocumentsPanel() {
                 <span className="text-[10px] text-text-muted">
                   {new Date(d.updated_at).toLocaleDateString()}
                 </span>
-                <div className="flex gap-1">
+                <div className="flex items-center gap-0.5">
                   <button
-                    onClick={() => isPinned ? unpinDocument(d.id) : pinDocument(d.id)}
-                    className={`text-text-muted hover:text-accent transition-colors ${isPinned ? "!visible text-accent" : "invisible group-hover:visible"}`}
+                    onClick={(e) => { e.stopPropagation(); isPinned ? unpinDocument(d.id) : pinDocument(d.id); }}
+                    className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
+                      isPinned
+                        ? "text-accent hover:text-accent-hover"
+                        : "text-text-muted/40 hover:text-accent"
+                    }`}
                     title={isPinned ? "Unpin from context" : "Pin to context"}
                   >
                     {isPinned ? <PinOff size={10} /> : <Pin size={10} />}
                   </button>
-                  <button
-                    onClick={() => deleteDocument(d.id)}
-                    className="invisible text-text-muted hover:text-error group-hover:visible"
-                  >
-                    <Trash2 size={10} />
-                  </button>
+                  <DestructiveButton onClick={() => deleteDocument(d.id)} size={10} />
                 </div>
               </div>
             </CardContent>
