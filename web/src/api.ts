@@ -177,6 +177,16 @@ export async function fetchPullRequests(
   );
 }
 
+export async function fetchBranchPR(
+  repo: string,
+  branch: string,
+): Promise<PullRequestSummary | null> {
+  const data = await request<{ pr: PullRequestSummary | null }>(
+    `/repos/${encodeURIComponent(repo)}/branch-pr?branch=${encodeURIComponent(branch)}`,
+  );
+  return data.pr;
+}
+
 /* ── Conversations ─────────────────────────────────────────────── */
 
 export async function fetchConversations(repo?: string, branch?: string): Promise<ConversationSummary[]> {

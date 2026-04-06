@@ -334,6 +334,14 @@ export const useStore = create<Store>()(persist((set, get) => ({
     } catch { /* ignore */ }
     await get().loadBranches();
     await get().loadConversations(selectedRepo);
+    // Load branch PR for the new branch
+    api.fetchBranchPR(selectedRepo, branch).then((pr) => {
+      if (pr) {
+        set((s) => ({
+          pullRequests: [...s.pullRequests.filter((p) => p.number !== pr.number), pr],
+        }));
+      }
+    }).catch(() => {});
   },
 
   createAndSwitchBranch: async (branch) => {
@@ -346,14 +354,24 @@ export const useStore = create<Store>()(persist((set, get) => ({
       toast.error("Failed to create branch", e instanceof Error ? e.message : undefined);
       return;
     }
+    // Clear active conversation — new branch starts fresh (same as switchBranch)
+    set({
+      conversationId: null,
+      activeConversation: null,
+      sending: false,
+      compacting: false,
+      agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
+    });
     try {
-      const [context, repos] = await Promise.all([
+      const [context, repos, commits] = await Promise.all([
         api.fetchRepoContext(selectedRepo),
         api.fetchRepos(),
+        api.fetchCommits(selectedRepo),
       ]);
-      set({ repoContext: context, repos });
+      set({ repoContext: context, repos, commits });
     } catch { /* ignore */ }
     await get().loadBranches();
+    await get().loadConversations(selectedRepo);
   },
 
   deleteBranch: async (branch) => {
@@ -521,6 +539,17 @@ export const useStore = create<Store>()(persist((set, get) => ({
           });
         }
       } catch { /* agent session check failed — non-critical */ }
+
+      // Load branch PR if conversation has a branch
+      if (detail.branch) {
+        api.fetchBranchPR(detail.repo, detail.branch).then((pr) => {
+          if (pr && get().conversationId === detail.id) {
+            set((s) => ({
+              pullRequests: [...s.pullRequests.filter((p) => p.number !== pr.number), pr],
+            }));
+          }
+        }).catch(() => {});
+      }
     } catch { /* ignore */ }
   },
 
@@ -1384,6 +1413,26 @@ function _ensureAgentSocket(): void {
 
       // Refresh server queue
       setTimeout(() => useStore.getState().loadQueue(), 100);
+    },
+
+    onPRCreated: (data) => {
+      const pr: PullRequestSummary = {
+        number: data.pr_number,
+        title: data.pr_title,
+        url: data.pr_url,
+        head_branch: data.branch,
+        base_branch: data.base_branch,
+        draft: data.draft,
+        state: "open",
+        user: "",
+        updated_at: new Date().toISOString(),
+        additions: null,
+        deletions: null,
+        changed_files: null,
+      };
+      useStore.setState((s) => ({
+        pullRequests: [...s.pullRequests.filter((p) => p.number !== pr.number), pr],
+      }));
     },
 
     onRepoEvent: (event: RepoEventData) => {

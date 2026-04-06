@@ -142,7 +142,7 @@ class GitHubService:
         head_branch: str,
         base_branch: str,
         draft: bool,
-    ) -> str:
+    ) -> dict:
         owner, repo = self._parse_remote(self._origin_url(repo_root))
         gh = self._client()
         try:
@@ -152,7 +152,20 @@ class GitHubService:
             )
         except RequestFailed as exc:
             _raise_for_github_error(exc, "PR creation failed")
-        return str(resp.parsed_data.html_url)
+        pr = resp.parsed_data
+        return {
+            "number": pr.number,
+            "url": str(pr.html_url),
+            "title": pr.title,
+            "state": pr.state.value if hasattr(pr.state, "value") else pr.state,
+            "user": pr.user.login if pr.user else "unknown",
+            "head_branch": head_branch,
+            "base_branch": base_branch,
+            "draft": getattr(pr, "draft", False) or False,
+            "additions": getattr(pr, "additions", None),
+            "deletions": getattr(pr, "deletions", None),
+            "changed_files": getattr(pr, "changed_files", None),
+        }
 
     async def list_pull_requests(
         self,

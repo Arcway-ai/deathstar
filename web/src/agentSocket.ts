@@ -78,6 +78,7 @@ export interface AgentCallbacks {
   onStatus?: (event: AgentStatusEvent) => void;
   onRepoEvent?: (event: RepoEventData) => void;
   onSnapshot?: (data: AgentSnapshotData) => void;
+  onPRCreated?: (data: { pr_url: string; pr_number: number; pr_title: string; branch: string; base_branch: string; draft: boolean }) => void;
 }
 
 export interface AgentResult {
@@ -315,6 +316,9 @@ export class AgentSocket {
         this.callbacks.onCompactDone?.(
           (msg.summary as string) ?? "Context compacted",
         );
+        break;
+      case "pr_created":
+        this.callbacks.onPRCreated?.(msg as unknown as { pr_url: string; pr_number: number; pr_title: string; branch: string; base_branch: string; draft: boolean });
         break;
       case "repo_event":
         this.callbacks.onRepoEvent?.(msg as unknown as RepoEventData);
