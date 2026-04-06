@@ -1,0 +1,6 @@
+{
+  "triggerOnUpdates": true,
+  "triggerOnDrafts": false,
+  "strictness": 3,
+  "statusCheck": true
+}

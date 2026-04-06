@@ -3,6 +3,7 @@ import type {
   CommitInfo,
   ConversationDetail,
   ConversationSummary,
+  DocumentEntry,
   FeedbackRequest,
   FeedbackResponse,
   GitHubRepo,
@@ -254,6 +255,47 @@ export async function saveMemory(entry: {
 
 export async function deleteMemory(id: string): Promise<void> {
   await request(`/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/* ── Documents ────────────────────────────────────────────────── */
+
+export async function fetchDocuments(repo?: string, documentType?: string): Promise<DocumentEntry[]> {
+  const parts: string[] = [];
+  if (repo) parts.push(`repo=${encodeURIComponent(repo)}`);
+  if (documentType) parts.push(`document_type=${encodeURIComponent(documentType)}`);
+  const params = parts.length ? `?${parts.join("&")}` : "";
+  return request<DocumentEntry[]>(`/documents${params}`);
+}
+
+export async function fetchDocument(id: string): Promise<DocumentEntry> {
+  return request<DocumentEntry>(`/documents/${encodeURIComponent(id)}`);
+}
+
+export async function createDocument(doc: {
+  repo: string;
+  title: string;
+  content: string;
+  document_type: string;
+  source_conversation_id?: string | null;
+}): Promise<DocumentEntry> {
+  return request<DocumentEntry>("/documents", {
+    method: "POST",
+    body: JSON.stringify(doc),
+  });
+}
+
+export async function updateDocument(
+  id: string,
+  updates: { title?: string; content?: string; document_type?: string },
+): Promise<DocumentEntry> {
+  return request<DocumentEntry>(`/documents/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  await request(`/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 /* ── Feedback ─────────────────────────────────────────────────── */

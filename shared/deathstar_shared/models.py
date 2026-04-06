@@ -306,6 +306,36 @@ class SaveMemoryRequest(DeathStarModel):
 
 
 # ---------------------------------------------------------------------------
+# Documents
+# ---------------------------------------------------------------------------
+
+
+class DocumentResponse(DeathStarModel):
+    id: str
+    repo: str
+    title: str
+    content: str
+    document_type: str
+    source_conversation_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreateDocumentRequest(DeathStarModel):
+    repo: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9_./ -]+$")
+    title: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1, max_length=200_000)
+    document_type: Literal["tech_spec", "design_doc", "bug_analysis", "plan", "notes"] = "tech_spec"
+    source_conversation_id: str | None = Field(default=None, max_length=200)
+
+
+class UpdateDocumentRequest(DeathStarModel):
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    content: str | None = Field(default=None, min_length=1, max_length=200_000)
+    document_type: Literal["tech_spec", "design_doc", "bug_analysis", "plan", "notes"] | None = None
+
+
+# ---------------------------------------------------------------------------
 # Feedback
 # ---------------------------------------------------------------------------
 

@@ -7,8 +7,10 @@ import {
   FileCode,
   HelpCircle,
   Layers,
+  Save,
   Zap,
 } from "lucide-react";
+import { useStore } from "../store";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -41,6 +43,8 @@ const effortConfig: Record<TaskEffort, { color: string; label: string }> = {
 
 export default function PlanPanel({ plan }: { plan: StructuredPlan }) {
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const createDocument = useStore((s) => s.createDocument);
   const complexity = complexityConfig[plan.complexity];
 
   const totalTasks = plan.phases.reduce((sum, p) => sum + p.tasks.length, 0);
@@ -53,6 +57,16 @@ export default function PlanPanel({ plan }: { plan: StructuredPlan }) {
     await navigator.clipboard.writeText(md);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSaveAsDocument = async () => {
+    setSaving(true);
+    try {
+      const md = planToMarkdown(plan);
+      await createDocument(plan.title, md, "plan");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -68,6 +82,14 @@ export default function PlanPanel({ plan }: { plan: StructuredPlan }) {
             <Badge variant="secondary" className={`h-5 ${complexity.color} ${complexity.bg}`}>
               {complexity.label}
             </Badge>
+            <button
+              onClick={handleSaveAsDocument}
+              disabled={saving}
+              className="rounded-md p-1 text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors disabled:opacity-50"
+              title="Save as document"
+            >
+              <Save size={13} className={saving ? "animate-pulse" : ""} />
+            </button>
             <button
               onClick={handleCopyMarkdown}
               className="rounded-md p-1 text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors"
@@ -230,7 +252,7 @@ function TaskItem({ task }: { task: PlanTask }) {
 
 /* ── Markdown export ──────────────────────────────────────────── */
 
-function planToMarkdown(plan: StructuredPlan): string {
+export function planToMarkdown(plan: StructuredPlan): string {
   const lines: string[] = [
     `# ${plan.title}`,
     "",

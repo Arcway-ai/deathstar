@@ -143,6 +143,8 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
   const [copied, setCopied] = useState(false);
   const thumbsUp = useStore((s) => s.thumbsUp);
   const thumbsDown = useStore((s) => s.thumbsDown);
+  const memoryDistillingId = useStore((s) => s.memoryDistillingId);
+  const isDistilling = memoryDistillingId === message.id;
   const messageFeedback = useStore((s) => s.messageFeedback);
   const setActiveReview = useStore((s) => s.setActiveReview);
   const activeConversation = useStore((s) => s.activeConversation);
@@ -293,9 +295,9 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
           </button>
           <button
             onClick={handleThumbsUp}
-            disabled={!!feedback}
-            className={`rounded p-1 hover:bg-bg-hover ${feedback === "thumbs_up" ? "text-success" : ""}`}
-            title="Save to memory bank"
+            disabled={!!feedback || isDistilling}
+            className={`rounded p-1 hover:bg-bg-hover ${feedback === "thumbs_up" ? "text-success" : ""} ${isDistilling ? "animate-pulse" : ""}`}
+            title={isDistilling ? "Distilling memory..." : "Save to memory bank"}
           >
             <ThumbsUp size={12} />
           </button>

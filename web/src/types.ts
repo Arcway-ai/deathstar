@@ -194,6 +194,21 @@ export interface MemoryEntry {
   created_at: string;
 }
 
+/* ── Documents ────────────────────────────────────────────────── */
+
+export type DocumentType = "tech_spec" | "design_doc" | "bug_analysis" | "plan" | "notes";
+
+export interface DocumentEntry {
+  id: string;
+  repo: string;
+  title: string;
+  content: string;
+  document_type: DocumentType;
+  source_conversation_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /* ── Feedback ──────────────────────────────────────────────────── */
 
 export type FeedbackKind = "thumbs_up" | "thumbs_down";
@@ -259,7 +274,7 @@ export interface ServerQueueItem {
 
 /* ── View state ────────────────────────────────────────────────── */
 
-export type SidebarView = "conversations" | "memory";
+export type SidebarView = "conversations" | "memory" | "documents";
 export type RightPanelView = "files" | "commits";
 
 export interface CommitInfo {

@@ -49,6 +49,7 @@ class Settings:
     max_worktrees_per_repo: int
     max_total_worktrees: int
     database_url: str
+    anthropic_api_key: str | None = None
 
 
 def load_settings() -> Settings:
@@ -87,4 +88,5 @@ def load_settings() -> Settings:
             "DEATHSTAR_DATABASE_URL",
             "sqlite:///deathstar.db",
         ),
+        anthropic_api_key=_optional(os.getenv("ANTHROPIC_API_KEY")),
     )

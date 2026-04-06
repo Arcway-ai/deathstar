@@ -13,6 +13,7 @@ import type {
   ConversationDetail,
   ConversationMessage,
   ConversationSummary,
+  DocumentEntry,
   FindingAction,
   GitHubRepo,
   MemoryEntry,
@@ -127,11 +128,23 @@ interface Store {
 
   /* ── Memory Bank ────────────────────────────────────────────── */
   memories: MemoryEntry[];
+  memoryDistillingId: string | null;
   loadMemories: (repo?: string) => Promise<void>;
   thumbsUp: (messageId: string, content: string, prompt: string) => Promise<void>;
   thumbsDown: (messageId: string, content: string, prompt: string) => Promise<void>;
   messageFeedback: Record<string, "thumbs_up" | "thumbs_down">;
   deleteMemory: (id: string) => Promise<void>;
+
+  /* ── Documents ─────────────────────────────────────────────── */
+  documents: DocumentEntry[];
+  documentsLoading: boolean;
+  pinnedDocumentIds: string[];
+  loadDocuments: (repo?: string) => Promise<void>;
+  createDocument: (title: string, content: string, documentType: string) => Promise<DocumentEntry | null>;
+  updateDocument: (id: string, updates: { title?: string; content?: string; document_type?: string }) => Promise<void>;
+  deleteDocument: (id: string) => Promise<void>;
+  pinDocument: (id: string) => void;
+  unpinDocument: (id: string) => void;
 
   /* ── Review Actions ────────────────────────────────────────── */
   activeReview: StructuredReview | null;
@@ -671,7 +684,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
   },
 
   sendMessage: async (message) => {
-    const { selectedRepo, sending, compacting, workflow, persona, conversationId, selectedModel, repoContext, memories, selectedPR } = get();
+    const { selectedRepo, sending, compacting, workflow, persona, conversationId, selectedModel, repoContext, memories, documents, pinnedDocumentIds, selectedPR } = get();
     if (!selectedRepo) return;
 
     // Queue the message server-side if the agent is busy
@@ -690,6 +703,13 @@ export const useStore = create<Store>()(persist((set, get) => ({
         }
         if (memories.length > 0) {
           system += `\n\n## Memory Bank (approved learnings for this repo)\n${memories.slice(0, 5).map((m) => `- ${m.content.slice(0, 300)}`).join("\n")}`;
+        }
+        const qPinnedDocs = documents.filter((d) => pinnedDocumentIds.includes(d.id));
+        if (qPinnedDocs.length > 0) {
+          system += `\n\n## Pinned Documents`;
+          for (const doc of qPinnedDocs.slice(0, 5)) {
+            system += `\n\n### ${doc.title} (${doc.document_type})\n${doc.content.slice(0, 5000)}`;
+          }
         }
 
         const item = await api.enqueueMessage({
@@ -764,6 +784,15 @@ export const useStore = create<Store>()(persist((set, get) => ({
     if (memories.length > 0) {
       const relevantMemories = memories.slice(0, 5);
       system += `\n\n## Memory Bank (approved learnings for this repo)\n${relevantMemories.map((m) => `- ${m.content.slice(0, 300)}`).join("\n")}`;
+    }
+
+    // Inject pinned documents
+    const pinnedDocs = documents.filter((d) => pinnedDocumentIds.includes(d.id));
+    if (pinnedDocs.length > 0) {
+      system += `\n\n## Pinned Documents`;
+      for (const doc of pinnedDocs.slice(0, 5)) {
+        system += `\n\n### ${doc.title} (${doc.document_type})\n${doc.content.slice(0, 5000)}`;
+      }
     }
 
     // Optimistic UI: append user message immediately
@@ -931,6 +960,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
 
   /* ── Memory Bank ─────────────────────────────────────────────── */
   memories: [],
+  memoryDistillingId: null,
   messageFeedback: {},
 
   loadMemories: async (repo) => {
@@ -943,6 +973,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
   thumbsUp: async (messageId, content, prompt) => {
     const { selectedRepo, conversationId } = get();
     if (!selectedRepo) return;
+    set({ memoryDistillingId: messageId });
     try {
       const entry = await api.saveMemory({
         repo: selectedRepo,
@@ -952,9 +983,11 @@ export const useStore = create<Store>()(persist((set, get) => ({
         tags: [],
       });
       set((s) => ({
+        memoryDistillingId: null,
         memories: [...s.memories, entry],
         messageFeedback: { ...s.messageFeedback, [messageId]: "thumbs_up" as const },
       }));
+      toast.success("Memory saved", "Response distilled and saved to memory bank");
       // Also record as feedback for analytics
       await api.saveFeedback({
         message_id: messageId,
@@ -964,7 +997,10 @@ export const useStore = create<Store>()(persist((set, get) => ({
         content: content.slice(0, 500),
         prompt: prompt.slice(0, 500),
       });
-    } catch { /* ignore */ }
+    } catch {
+      set({ memoryDistillingId: null });
+      toast.error("Failed to save memory", "Distillation failed — please try again");
+    }
   },
 
   thumbsDown: async (messageId, content, prompt) => {
@@ -993,6 +1029,75 @@ export const useStore = create<Store>()(persist((set, get) => ({
       toast.error("Failed to delete memory", e instanceof Error ? e.message : undefined);
     }
   },
+
+  /* ── Documents ─────────────────────────────────────────────── */
+  documents: [],
+  documentsLoading: false,
+  pinnedDocumentIds: [],
+
+  loadDocuments: async (repo) => {
+    set({ documentsLoading: true });
+    try {
+      const documents = await api.fetchDocuments(repo);
+      const validIds = new Set(documents.map((d) => d.id));
+      set((s) => ({
+        documents,
+        documentsLoading: false,
+        pinnedDocumentIds: s.pinnedDocumentIds.filter((id) => validIds.has(id)),
+      }));
+    } catch {
+      set({ documentsLoading: false });
+    }
+  },
+
+  createDocument: async (title, content, documentType) => {
+    const { selectedRepo, conversationId } = get();
+    if (!selectedRepo) return null;
+    try {
+      const doc = await api.createDocument({
+        repo: selectedRepo,
+        title,
+        content,
+        document_type: documentType,
+        source_conversation_id: conversationId,
+      });
+      set((s) => ({ documents: [doc, ...s.documents] }));
+      toast.success("Document saved", doc.title);
+      return doc;
+    } catch (e) {
+      toast.error("Failed to save document", e instanceof Error ? e.message : undefined);
+      return null;
+    }
+  },
+
+  updateDocument: async (id, updates) => {
+    try {
+      const doc = await api.updateDocument(id, updates);
+      set((s) => ({ documents: s.documents.map((d) => d.id === id ? doc : d) }));
+    } catch (e) {
+      toast.error("Failed to update document", e instanceof Error ? e.message : undefined);
+    }
+  },
+
+  deleteDocument: async (id) => {
+    try {
+      await api.deleteDocument(id);
+      set((s) => ({
+        documents: s.documents.filter((d) => d.id !== id),
+        pinnedDocumentIds: s.pinnedDocumentIds.filter((pid) => pid !== id),
+      }));
+    } catch (e) {
+      toast.error("Failed to delete document", e instanceof Error ? e.message : undefined);
+    }
+  },
+
+  pinDocument: (id) => set((s) => ({
+    pinnedDocumentIds: s.pinnedDocumentIds.includes(id) ? s.pinnedDocumentIds : [...s.pinnedDocumentIds, id],
+  })),
+
+  unpinDocument: (id) => set((s) => ({
+    pinnedDocumentIds: s.pinnedDocumentIds.filter((pid) => pid !== id),
+  })),
 
   /* ── Review Actions ─────────────────────────────────────────── */
   activeReview: null,
