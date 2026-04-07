@@ -536,3 +536,75 @@ class TestAgentSessionsEndpoint:
         finally:
             app_state_mod.agent_runner._agents.clear()
             app_state_mod.agent_runner._agents.update(original)
+
+
+# ---------------------------------------------------------------------------
+# POST /memory/suggest
+# ---------------------------------------------------------------------------
+
+
+class TestSuggestMemoriesEndpoint:
+    def test_suggest_returns_suggestions(self, web_client):
+        client, _, _ = web_client
+        import deathstar_server.app_state as app_state_mod  # noqa: PLC0415
+        app_state_mod.settings.anthropic_api_key = "test-key"
+
+        from unittest.mock import patch, AsyncMock  # noqa: PLC0415
+        from deathstar_server.services.memory_distiller import SuggestedMemory  # noqa: PLC0415
+
+        suggestions = [
+            SuggestedMemory(content="Use frozen dataclasses for config.", tags=["convention"]),
+            SuggestedMemory(content="Auth middleware skips /health.", tags=["auth", "gotcha"]),
+        ]
+
+        with patch("deathstar_server.web.routes.suggest_memories", new_callable=AsyncMock, return_value=suggestions):
+            resp = client.post("/web/api/memory/suggest", json={
+                "repo": "my-project",
+                "messages": [
+                    {"role": "user", "content": "How should config work?"},
+                    {"role": "assistant", "content": "Use frozen dataclasses..."},
+                ],
+            })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["suggestions"]) == 2
+        assert data["suggestions"][0]["content"] == "Use frozen dataclasses for config."
+        assert data["suggestions"][0]["tags"] == ["convention"]
+
+    def test_suggest_returns_503_without_api_key(self, web_client):
+        client, _, _ = web_client
+        import deathstar_server.app_state as app_state_mod  # noqa: PLC0415
+        app_state_mod.settings.anthropic_api_key = None
+
+        resp = client.post("/web/api/memory/suggest", json={
+            "repo": "my-project",
+            "messages": [{"role": "user", "content": "test"}],
+        })
+        assert resp.status_code == 503
+        assert "not configured" in resp.json()["message"]
+
+    def test_suggest_returns_empty_on_no_suggestions(self, web_client):
+        client, _, _ = web_client
+        import deathstar_server.app_state as app_state_mod  # noqa: PLC0415
+        app_state_mod.settings.anthropic_api_key = "test-key"
+
+        from unittest.mock import patch, AsyncMock  # noqa: PLC0415
+
+        with patch("deathstar_server.web.routes.suggest_memories", new_callable=AsyncMock, return_value=[]):
+            resp = client.post("/web/api/memory/suggest", json={
+                "repo": "my-project",
+                "messages": [{"role": "user", "content": "test"}],
+            })
+        assert resp.status_code == 200
+        assert resp.json()["suggestions"] == []
+
+    def test_suggest_validates_empty_messages(self, web_client):
+        client, _, _ = web_client
+        import deathstar_server.app_state as app_state_mod  # noqa: PLC0415
+        app_state_mod.settings.anthropic_api_key = "test-key"
+
+        resp = client.post("/web/api/memory/suggest", json={
+            "repo": "my-project",
+            "messages": [],
+        })
+        assert resp.status_code == 422

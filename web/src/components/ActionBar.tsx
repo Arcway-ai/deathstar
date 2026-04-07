@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Archive, GitMerge, GitPullRequest, Loader2, RefreshCw, ScanSearch, Square, X, Zap } from "lucide-react";
+import { Archive, Brain, GitMerge, GitPullRequest, Loader2, RefreshCw, ScanSearch, Square, X, Zap } from "lucide-react";
 import { useStore } from "../store";
+import SuggestMemoriesDialog from "./SuggestMemoriesDialog";
 import type { ServerQueueItem } from "../types";
 
 /**
@@ -23,6 +24,9 @@ export default function ActionBar() {
   const pokeAgent = useStore((s) => s.pokeAgent);
   const interruptAgent = useStore((s) => s.interruptAgent);
   const pullRequests = useStore((s) => s.pullRequests);
+  const fetchMemorySuggestions = useStore((s) => s.fetchMemorySuggestions);
+  const suggestingMemories = useStore((s) => s.suggestingMemories);
+  const activeConversation = useStore((s) => s.activeConversation);
 
   const currentBranch = repoContext?.branch;
   const isOnFeatureBranch = currentBranch && currentBranch !== "main" && currentBranch !== "master";
@@ -35,6 +39,7 @@ export default function ActionBar() {
     : null;
 
   const canCompact = !!conversationId && !compacting;
+  const canSuggestMemories = !!conversationId && !suggestingMemories && !!activeConversation?.messages?.length;
   const canMakePR = !!(workflow === "patch" && isOnFeatureBranch && conversationId && !sending);
   const canMerge = !!(branchPR && conversationId && !sending);
   const canStartReview = !!(workflow === "review" && selectedPR !== null && !sending);
@@ -53,6 +58,16 @@ export default function ActionBar() {
       >
         <Archive size={12} />
         Compact
+      </button>
+
+      <button
+        onClick={fetchMemorySuggestions}
+        disabled={!canSuggestMemories}
+        className={`${btnBase} border border-border-subtle text-text-secondary hover:border-accent/30 hover:text-accent hover:bg-accent/10`}
+        title="Extract reusable memories from this conversation"
+      >
+        {suggestingMemories ? <Loader2 size={12} className="animate-spin" /> : <Brain size={12} />}
+        Memories
       </button>
 
       <button
@@ -136,6 +151,8 @@ export default function ActionBar() {
           </span>
         )}
       </div>
+
+      <SuggestMemoriesDialog />
     </div>
   );
 }
