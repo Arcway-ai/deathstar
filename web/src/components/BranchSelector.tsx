@@ -1,8 +1,11 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { GitBranch, Plus, Check, Loader2, Trash2, RefreshCw, GitPullRequest, ExternalLink } from "lucide-react";
+import { GitBranch, Plus, Check, Loader2, Trash2, RefreshCw, GitPullRequest, ExternalLink, Cloud } from "lucide-react";
 import { useStore } from "../store";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import type { BranchInfo } from "../types";
 
 export default function BranchSelector() {
   const repoContext = useStore((s) => s.repoContext);
@@ -35,6 +38,7 @@ export default function BranchSelector() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<BranchInfo | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const inlineInputRef = useRef<HTMLInputElement>(null);
 
@@ -81,12 +85,13 @@ export default function BranchSelector() {
     }
   };
 
-  const handleDelete = async (branch: string) => {
-    if (!confirm(`Delete branch "${branch}"? This cannot be undone.`)) return;
-    setDeleting(branch);
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(deleteTarget.name);
+    setDeleteTarget(null);
     setError(null);
     try {
-      await deleteBranch(branch);
+      await deleteBranch(deleteTarget.name);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete branch");
     } finally {
@@ -98,7 +103,7 @@ export default function BranchSelector() {
     setSyncing(true);
     setError(null);
     try {
-      const defaultBranch = branches.find((b) => b === "main" || b === "master") ?? "main";
+      const defaultBranch = branches.find((b) => b.name === "main" || b.name === "master")?.name ?? "main";
       await syncBranch(defaultBranch);
       if (isDefault(currentBranch)) {
         setOpen(false);
@@ -117,6 +122,33 @@ export default function BranchSelector() {
 
   return (
     <div className="flex items-center gap-1">
+      {/* Delete confirmation dialog */}
+      <Dialog open={deleteTarget !== null} onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}>
+        <DialogContent showCloseButton={false} className="bg-bg-surface border-border-subtle">
+          <DialogHeader>
+            <DialogTitle className="text-text-primary">Delete branch</DialogTitle>
+            <DialogDescription className="text-text-secondary text-xs">
+              Are you sure you want to delete{" "}
+              <span className="font-mono font-medium text-text-primary">{deleteTarget?.name}</span>?
+              This will remove the local branch and cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="bg-transparent border-0">
+            <DialogClose render={<Button variant="outline" size="sm" className="text-xs" />}>
+              Cancel
+            </DialogClose>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="text-xs"
+              onClick={confirmDelete}
+            >
+              Delete branch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Main branch dropdown */}
       <Popover
         open={open}
@@ -132,7 +164,7 @@ export default function BranchSelector() {
           </span>
         </PopoverTrigger>
 
-        <PopoverContent align="start" className="w-64 gap-0 p-0 border-border-subtle bg-bg-surface">
+        <PopoverContent align="start" className="w-72 gap-0 p-0 border-border-subtle bg-bg-surface">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2">
             <span className="text-xs font-medium text-text-secondary">Branches</span>
@@ -203,64 +235,78 @@ export default function BranchSelector() {
             ) : branches.length === 0 ? (
               <p className="px-3 py-2 text-xs text-text-muted">No branches found</p>
             ) : (
-              branches.map((branch) => (
-                <div
-                  key={branch}
-                  className={`group flex items-center rounded-md transition-colors ${
-                    branch === currentBranch
-                      ? "bg-accent-muted text-accent"
-                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                  }`}
-                >
-                  <button
-                    onClick={() => handleSwitch(branch)}
-                    disabled={switching !== null || deleting !== null}
-                    className="flex flex-1 items-center gap-2 px-3 py-1.5 text-left text-xs min-w-0 disabled:cursor-not-allowed"
+              branches.map((branch) => {
+                const isRemoteOnly = branch.location === "remote";
+                const isCurrent = branch.name === currentBranch;
+                return (
+                  <div
+                    key={branch.name}
+                    className={`group flex items-center rounded-md transition-colors ${
+                      isCurrent
+                        ? "bg-accent-muted text-accent"
+                        : isRemoteOnly
+                          ? "text-text-muted hover:bg-bg-hover hover:text-text-secondary"
+                          : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                    }`}
                   >
-                    {switching === branch ? (
-                      <Loader2 size={12} className="animate-spin shrink-0" />
-                    ) : branch === currentBranch ? (
-                      <Check size={12} className="shrink-0" />
-                    ) : (
-                      <span className="w-3 shrink-0" />
-                    )}
-                    <span className="font-mono truncate">{branch}</span>
-                    {branchPRMap.has(branch) && (
-                      <a
-                        href={branchPRMap.get(branch)!.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="ml-auto shrink-0 flex items-center gap-0.5 rounded bg-accent/15 px-1 py-0.5 text-[10px] text-accent hover:bg-accent/25 transition-colors"
-                        title={`Open PR #${branchPRMap.get(branch)!.number}${branchPRMap.get(branch)!.draft ? " (draft)" : ""}`}
-                      >
-                        <GitPullRequest size={9} />
-                        #{branchPRMap.get(branch)!.number}
-                        <ExternalLink size={8} />
-                      </a>
-                    )}
-                    {isDefault(branch) && (
-                      <Badge variant="secondary" className={`${branchPRMap.has(branch) ? "" : "ml-auto "}h-4 shrink-0 px-1 text-[10px] text-text-muted`}>
-                        default
-                      </Badge>
-                    )}
-                  </button>
-                  {!isDefault(branch) && branch !== currentBranch && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleDelete(branch); }}
-                      disabled={deleting !== null || switching !== null}
-                      className="shrink-0 px-2 py-1.5 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-error transition-all"
-                      title={`Delete ${branch}`}
+                      onClick={() => handleSwitch(branch.name)}
+                      disabled={switching !== null || deleting !== null}
+                      className="flex flex-1 items-center gap-2 px-3 py-1.5 text-left text-xs min-w-0 disabled:cursor-not-allowed"
                     >
-                      {deleting === branch ? (
-                        <Loader2 size={11} className="animate-spin" />
+                      {switching === branch.name ? (
+                        <Loader2 size={12} className="animate-spin shrink-0" />
+                      ) : isCurrent ? (
+                        <Check size={12} className="shrink-0" />
                       ) : (
-                        <Trash2 size={11} />
+                        <span className="w-3 shrink-0" />
+                      )}
+                      <span className={`font-mono truncate ${isRemoteOnly ? "italic" : ""}`}>
+                        {branch.name}
+                      </span>
+                      {isRemoteOnly && (
+                        <span title="Remote only (origin)">
+                          <Cloud size={10} className="shrink-0 text-text-muted" />
+                        </span>
+                      )}
+                      {branchPRMap.has(branch.name) && (
+                        <a
+                          href={branchPRMap.get(branch.name)!.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="ml-auto shrink-0 flex items-center gap-0.5 rounded bg-accent/15 px-1 py-0.5 text-[10px] text-accent hover:bg-accent/25 transition-colors"
+                          title={`Open PR #${branchPRMap.get(branch.name)!.number}${branchPRMap.get(branch.name)!.draft ? " (draft)" : ""}`}
+                        >
+                          <GitPullRequest size={9} />
+                          #{branchPRMap.get(branch.name)!.number}
+                          <ExternalLink size={8} />
+                        </a>
+                      )}
+                      {isDefault(branch.name) && (
+                        <Badge variant="secondary" className={`${branchPRMap.has(branch.name) ? "" : "ml-auto "}h-4 shrink-0 px-1 text-[10px] text-text-muted`}>
+                          default
+                        </Badge>
                       )}
                     </button>
-                  )}
-                </div>
-              ))
+                    {/* Only show delete for non-default, non-current, locally checked out branches */}
+                    {!isDefault(branch.name) && !isCurrent && !isRemoteOnly && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(branch); }}
+                        disabled={deleting !== null || switching !== null}
+                        className="shrink-0 px-2 py-1.5 text-text-muted md:opacity-0 md:group-hover:opacity-100 hover:text-error transition-all"
+                        title={`Delete ${branch.name}`}
+                      >
+                        {deleting === branch.name ? (
+                          <Loader2 size={11} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={11} />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </PopoverContent>

@@ -307,6 +307,11 @@ async def _handle_start(
         )
         # Subscribe to the agent's event stream
         await subscribe_fn(agent.conversation_id)
+        # The STARTED event was published inside start_agent() before the
+        # subscription existed, so the subscriber above never saw it.  Send
+        # it directly to the WebSocket so the frontend learns the real
+        # conversation_id and can update the URL immediately.
+        await _send(websocket, "started", conversation_id=agent.conversation_id)
     except AppError as exc:
         error_code = getattr(exc, "code", "INTERNAL_ERROR")
         if isinstance(error_code, str):

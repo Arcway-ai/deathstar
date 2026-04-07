@@ -9,6 +9,14 @@ export interface RepoInfo {
   dirty: boolean;
 }
 
+/** Where a branch exists: local checkout, remote origin, or both. */
+export type BranchLocation = "local" | "remote" | "both";
+
+export interface BranchInfo {
+  name: string;
+  location: BranchLocation;
+}
+
 export interface GitHubRepo {
   full_name: string;
   name: string;
