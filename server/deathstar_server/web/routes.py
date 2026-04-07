@@ -657,6 +657,15 @@ def sync_branch(name: str, body: SyncBranchRequest) -> dict:
     # Agent sessions run in isolated worktrees, so syncing the primary
     # checkout is safe and should never be blocked by an active agent.
 
+    # Rebase rewrites commits and needs a committer identity.  Read from
+    # the env vars that Terraform injects via render-runtime-env.sh, or
+    # fall back to safe defaults so the operation never fails on identity.
+    git_env = os.environ.copy()
+    git_env.setdefault("GIT_AUTHOR_NAME", os.getenv("DEATHSTAR_GIT_AUTHOR_NAME", "DeathStar"))
+    git_env.setdefault("GIT_AUTHOR_EMAIL", os.getenv("DEATHSTAR_GIT_AUTHOR_EMAIL", "deathstar@local"))
+    git_env.setdefault("GIT_COMMITTER_NAME", git_env["GIT_AUTHOR_NAME"])
+    git_env.setdefault("GIT_COMMITTER_EMAIL", git_env["GIT_AUTHOR_EMAIL"])
+
     def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", *args],
@@ -664,6 +673,7 @@ def sync_branch(name: str, body: SyncBranchRequest) -> dict:
             capture_output=True,
             text=True,
             check=check,
+            env=git_env,
         )
 
     # Fetch latest
