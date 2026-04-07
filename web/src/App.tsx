@@ -143,7 +143,6 @@ export default function App() {
   const repos = useStore((s) => s.repos);
   const branches = useStore((s) => s.branches);
   const repoContext = useStore((s) => s.repoContext);
-  const conversations = useStore((s) => s.conversations);
 
   const repoItems: CommandPaletteItem[] = useMemo(
     () =>
@@ -181,29 +180,24 @@ export default function App() {
     (item: CommandPaletteItem) => {
       setRepoPaletteOpen(false);
       if (item.id === selectedRepo) return;
-      // Navigate to most recent conversation for this repo
-      const repoConversations = conversations
-        .filter((c) => c.repo === item.id)
-        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-      const mostRecent = repoConversations[0];
-      if (mostRecent) {
-        navigate(`/${encodeURIComponent(item.id)}/c/${encodeURIComponent(mostRecent.id)}`);
-      } else {
-        // No conversations yet — try to load them, then navigate
-        api.fetchConversations(item.id).then((convos) => {
-          const sorted = [...convos].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-          const first = sorted[0];
-          if (first) {
-            navigate(`/${encodeURIComponent(item.id)}/c/${encodeURIComponent(first.id)}`);
-          } else {
-            navigate(`/${encodeURIComponent(item.id)}`);
-          }
-        }).catch(() => {
+      // Fetch conversations for the target repo, then navigate to the most
+      // recent one.  The store's `conversations` array only holds entries for
+      // the *current* repo, so we must always hit the API for the new repo.
+      api.fetchConversations(item.id).then((convos) => {
+        const sorted = [...convos].sort(
+          (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+        );
+        const first = sorted[0];
+        if (first) {
+          navigate(`/${encodeURIComponent(item.id)}/c/${encodeURIComponent(first.id)}`);
+        } else {
           navigate(`/${encodeURIComponent(item.id)}`);
-        });
-      }
+        }
+      }).catch(() => {
+        navigate(`/${encodeURIComponent(item.id)}`);
+      });
     },
-    [selectedRepo, conversations, navigate],
+    [selectedRepo, navigate],
   );
 
   const handleBranchSelect = useCallback(
@@ -215,14 +209,14 @@ export default function App() {
     [repoContext?.branch],
   );
 
-  // Global keyboard shortcuts: Cmd+S, Cmd+R, Cmd+B, Cmd+N
+  // Global keyboard shortcuts: Cmd+S, Cmd+E, Cmd+J
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
 
       const key = e.key.toLowerCase();
 
-      // Cmd+S → quick save
+      // Cmd+S → quick save (allowed even when focused in inputs)
       if (key === "s") {
         e.preventDefault();
         const { selectedRepo, quickSave } = useStore.getState();
@@ -230,8 +224,13 @@ export default function App() {
         return;
       }
 
-      // Cmd+R → repo switcher (only when authenticated with repos)
-      if (key === "r") {
+      // Skip palette shortcuts when the user is typing in an input/textarea
+      // to avoid hijacking text-editing key combos.
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      if (tag === "input" || tag === "textarea") return;
+
+      // Cmd+E → repo switcher (only when authenticated with repos)
+      if (key === "e") {
         e.preventDefault();
         const { claudeAuth } = useStore.getState();
         if (!claudeAuth.authenticated) return;
@@ -243,8 +242,8 @@ export default function App() {
         return;
       }
 
-      // Cmd+B → branch switcher (only when a repo is selected)
-      if (key === "b") {
+      // Cmd+J → branch switcher (only when a repo is selected)
+      if (key === "j") {
         e.preventDefault();
         const { selectedRepo, claudeAuth } = useStore.getState();
         if (!claudeAuth.authenticated || !selectedRepo) return;
@@ -256,20 +255,10 @@ export default function App() {
         }
         return;
       }
-
-      // Cmd+N → new conversation
-      if (key === "n") {
-        e.preventDefault();
-        const { selectedRepo, claudeAuth, newConversation } = useStore.getState();
-        if (!claudeAuth.authenticated || !selectedRepo) return;
-        newConversation();
-        navigate(`/${encodeURIComponent(selectedRepo)}`);
-        return;
-      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [navigate, repoPaletteOpen, branchPaletteOpen]);
+  }, [repoPaletteOpen, branchPaletteOpen]);
 
   return (
     <div className="flex h-full flex-col bg-bg-deep">
@@ -303,7 +292,7 @@ export default function App() {
         onClose={() => setRepoPaletteOpen(false)}
         items={repoItems}
         onSelect={handleRepoSelect}
-        triggerKey="r"
+        triggerKey="e"
         title="Switch Repository"
         placeholder="Search repos..."
         emptyMessage="No repos found"
@@ -313,7 +302,7 @@ export default function App() {
         onClose={() => setBranchPaletteOpen(false)}
         items={branchItems}
         onSelect={handleBranchSelect}
-        triggerKey="b"
+        triggerKey="j"
         title="Switch Branch"
         placeholder="Search branches..."
         emptyMessage="No branches found"

@@ -73,13 +73,10 @@ export default function TopBar() {
             navigate(`/${encodeURIComponent(selectedRepo)}`);
           }}
           className="flex h-7 items-center gap-1 rounded-md border border-border-subtle px-2 text-xs font-medium text-text-secondary hover:border-border-default hover:text-text-primary transition-colors"
-          title="New conversation (Cmd+N)"
+          title="New conversation"
         >
           <Plus size={14} />
           <span className="hidden sm:inline">New</span>
-          <kbd className="hidden lg:inline ml-0.5 rounded border border-border-subtle bg-bg-primary px-1 py-0.5 font-mono text-[10px] text-text-muted">
-            {navigator.platform.toUpperCase().includes("MAC") ? "\u2318" : "^"}N
-          </kbd>
         </button>
       )}
 
@@ -118,9 +115,9 @@ export default function TopBar() {
       {/* Keyboard shortcut hints */}
       {selectedRepo && (
         <div className="hidden xl:flex items-center gap-1 text-[10px] text-text-muted">
-          <kbd className="rounded border border-border-subtle bg-bg-primary px-1 py-0.5 font-mono">{isMac ? "\u2318" : "^"}R</kbd>
+          <kbd className="rounded border border-border-subtle bg-bg-primary px-1 py-0.5 font-mono">{isMac ? "\u2318" : "^"}E</kbd>
           <span>repo</span>
-          <kbd className="ml-1 rounded border border-border-subtle bg-bg-primary px-1 py-0.5 font-mono">{isMac ? "\u2318" : "^"}B</kbd>
+          <kbd className="ml-1 rounded border border-border-subtle bg-bg-primary px-1 py-0.5 font-mono">{isMac ? "\u2318" : "^"}J</kbd>
           <span>branch</span>
         </div>
       )}

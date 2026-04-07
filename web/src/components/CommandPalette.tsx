@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 
 export interface CommandPaletteItem {
   id: string;
@@ -36,9 +36,13 @@ export default function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const filtered = items.filter((item) =>
-    item.label.toLowerCase().includes(query.toLowerCase()) ||
-    item.sublabel?.toLowerCase().includes(query.toLowerCase()),
+  const filtered = useMemo(
+    () =>
+      items.filter((item) =>
+        item.label.toLowerCase().includes(query.toLowerCase()) ||
+        item.sublabel?.toLowerCase().includes(query.toLowerCase()),
+      ),
+    [items, query],
   );
 
   // Reset state when opened
