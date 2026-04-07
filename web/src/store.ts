@@ -827,8 +827,8 @@ export const useStore = create<Store>()(persist((set, get) => ({
       timestamp: new Date().toISOString(),
     };
 
-    set((s) => ({
-      activeConversation: s.activeConversation
+    set((s) => {
+      const activeConversation = s.activeConversation
         ? { ...s.activeConversation, messages: [...s.activeConversation.messages, optimisticMsg] }
         : {
             id: "pending",
@@ -839,8 +839,16 @@ export const useStore = create<Store>()(persist((set, get) => ({
             updated_at: new Date().toISOString(),
             branch: repoContext?.branch ?? null,
             branches: [],
-          },
-    }));
+          };
+      // Optimistic sidebar: bump message_count for the active conversation
+      const convoId = s.conversationId;
+      const conversations = convoId
+        ? s.conversations.map((c) =>
+            c.id === convoId ? { ...c, message_count: c.message_count + 1, updated_at: new Date().toISOString() } : c,
+          )
+        : s.conversations;
+      return { activeConversation, conversations };
+    });
 
     // Use the singleton agent socket
     _ensureAgentSocket();
@@ -1386,6 +1394,10 @@ function _ensureAgentSocket(): void {
       if (!current || current === conversationId) {
         useStore.setState({ conversationId });
       }
+      // Refresh sidebar so the new conversation (and its message count)
+      // appears immediately — the user message is already persisted at this point.
+      const repo = useStore.getState().selectedRepo;
+      useStore.getState().loadConversations(repo ?? undefined);
     },
 
     onResult: (data: AgentResult) => {

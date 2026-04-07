@@ -167,6 +167,43 @@ class GitHubService:
             "changed_files": getattr(pr, "changed_files", None),
         }
 
+    async def find_pull_request_for_branch(
+        self,
+        *,
+        repo_root: Path,
+        branch: str,
+    ) -> dict | None:
+        """Find an open PR whose head matches *branch*, or ``None``."""
+        owner, repo = self._parse_remote(self._origin_url(repo_root))
+        gh = self._client()
+        try:
+            resp = await gh.rest.pulls.async_list(
+                owner, repo,
+                state="open",
+                head=f"{owner}:{branch}",
+                per_page=1,
+            )
+        except RequestFailed as exc:
+            logger.warning("failed to look up PR for branch %s: %s", branch, exc)
+            return None
+        if not resp.parsed_data:
+            return None
+        pr = resp.parsed_data[0]
+        return {
+            "number": pr.number,
+            "title": pr.title,
+            "state": pr.state.value if hasattr(pr.state, "value") else pr.state,
+            "user": pr.user.login if pr.user else "unknown",
+            "head_branch": pr.head.ref,
+            "base_branch": pr.base.ref,
+            "updated_at": pr.updated_at.isoformat() if pr.updated_at else "",
+            "additions": getattr(pr, "additions", None),
+            "deletions": getattr(pr, "deletions", None),
+            "changed_files": getattr(pr, "changed_files", None),
+            "draft": getattr(pr, "draft", False) or False,
+            "url": str(pr.html_url),
+        }
+
     async def list_pull_requests(
         self,
         *,
