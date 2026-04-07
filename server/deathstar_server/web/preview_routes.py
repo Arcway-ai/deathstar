@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -64,12 +65,34 @@ async def create_preview(name: str, body: CreatePreviewRequest):
     repo_root = git_service.resolve_target(name)
     provider = _get_provider(body.provider)
 
+    # Guard: reject if an active preview already exists for this repo+branch+provider
+    with Session(db_engine) as session:
+        existing = session.exec(
+            select(PreviewDeployment)
+            .where(PreviewDeployment.repo == name)
+            .where(PreviewDeployment.branch == body.branch)
+            .where(PreviewDeployment.provider == body.provider)
+            .where(PreviewDeployment.status.notin_([  # type: ignore[union-attr]
+                PreviewStatus.DESTROYED.value,
+                PreviewStatus.FAILED.value,
+            ]))
+        ).first()
+        if existing:
+            raise AppError(
+                ErrorCode.INVALID_REQUEST,
+                f"An active preview already exists for {name}/{body.branch} "
+                f"(id={existing.id}, status={existing.status})",
+                status_code=409,
+            )
+
     # Resolve GitHub owner/repo from the local git remote
     repo_full_name = github_service.get_repo_full_name(repo_root)
 
-    # Generate a short, unique service name for the preview
+    # Generate a short, unique service name for the preview.
+    # Sanitize branch name: Render requires alphanumeric + hyphens only.
+    safe_branch = re.sub(r"[^a-zA-Z0-9-]", "-", body.branch)
     short_id = uuid.uuid4().hex[:6]
-    service_name = f"preview-{name}-{body.branch}-{short_id}"[:50]
+    service_name = f"preview-{name}-{safe_branch}-{short_id}"[:50]
 
     result = await provider.create_preview(
         repo_full_name=repo_full_name,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import httpx
@@ -37,6 +38,7 @@ class RenderPreviewProvider(PreviewProvider):
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._owner_id = settings.render_owner_id
 
     def _require_key(self) -> str:
         if not self._settings.render_api_key:
@@ -76,6 +78,8 @@ class RenderPreviewProvider(PreviewProvider):
             "branch": branch,
             "autoDeploy": "yes",
         }
+        if self._owner_id:
+            payload["ownerId"] = self._owner_id
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -114,18 +118,20 @@ class RenderPreviewProvider(PreviewProvider):
     async def get_status(self, provider_service_id: str) -> PreviewResult:
         """Fetch the latest deploy status for a Render service."""
         async with httpx.AsyncClient() as client:
-            # Get service info for the URL
-            svc_resp = await client.get(
-                f"{RENDER_BASE_URL}/services/{provider_service_id}",
-                headers=self._headers(),
-                timeout=15.0,
-            )
-            # Get latest deploy for status
-            deploy_resp = await client.get(
-                f"{RENDER_BASE_URL}/services/{provider_service_id}/deploys",
-                headers=self._headers(),
-                params={"limit": "1"},
-                timeout=15.0,
+            headers = self._headers()
+            # Fetch service info and latest deploy in parallel
+            svc_resp, deploy_resp = await asyncio.gather(
+                client.get(
+                    f"{RENDER_BASE_URL}/services/{provider_service_id}",
+                    headers=headers,
+                    timeout=15.0,
+                ),
+                client.get(
+                    f"{RENDER_BASE_URL}/services/{provider_service_id}/deploys",
+                    headers=headers,
+                    params={"limit": "1"},
+                    timeout=15.0,
+                ),
             )
 
         if svc_resp.status_code == 404:
