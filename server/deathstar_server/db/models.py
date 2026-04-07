@@ -237,6 +237,8 @@ class BranchPR(SQLModel, table=True):
     additions: Optional[int] = Field(default=None)
     deletions: Optional[int] = Field(default=None)
     changed_files: Optional[int] = Field(default=None)
+    mergeable: Optional[bool] = Field(default=None)
+    mergeable_state: Optional[str] = Field(default=None)
     updated_at: str = Field(nullable=False, default_factory=_utcnow)
 
 

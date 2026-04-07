@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Archive, Brain, ExternalLink, GitMerge, GitPullRequest, Globe, Loader2, RefreshCw, ScanSearch, Square, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, Archive, Brain, ExternalLink, GitMerge, GitPullRequest, Globe, Loader2, RefreshCw, ScanSearch, Square, Trash2, X, Zap } from "lucide-react";
 import { useStore } from "../store";
 import SuggestMemoriesDialog from "./SuggestMemoriesDialog";
 import type { PreviewDeployment, ServerQueueItem } from "../types";
@@ -38,6 +38,8 @@ export default function ActionBar() {
   const deletePreview = useStore((s) => s.deletePreview);
   const refreshPreview = useStore((s) => s.refreshPreview);
   const previewProvidersConfigured = useStore((s) => s.previewProvidersConfigured);
+  const syncBranch = useStore((s) => s.syncBranch);
+  const setWorkflow = useStore((s) => s.setWorkflow);
 
   const currentBranch = repoContext?.branch;
   const isOnFeatureBranch = currentBranch && currentBranch !== "main" && currentBranch !== "master";
@@ -60,6 +62,12 @@ export default function ActionBar() {
   const canMakePR = !!(workflow === "patch" && isOnFeatureBranch && conversationId && !sending);
   const canMerge = !!(branchPR && conversationId && !sending);
 
+  // Conflict detection — both local (git index) and GitHub PR-level
+  const localConflicts = repoContext?.conflict_files ?? [];
+  const hasLocalConflicts = localConflicts.length > 0;
+  const prHasConflicts = branchPR?.mergeable === false && branchPR.mergeable_state === "dirty";
+  const hasAnyConflicts = hasLocalConflicts || prHasConflicts;
+
   // Preview deployments — check if any provider is configured
   const hasPreviewProvider = Object.values(previewProvidersConfigured).some(Boolean);
   const branchPreviews = previews.filter(
@@ -69,7 +77,7 @@ export default function ActionBar() {
   const canDeployPreview = !!(isOnFeatureBranch && hasPreviewProvider && !hasActiveBranchPreview);
 
   // Do we have any visible GitHub/Deploy buttons?
-  const hasGitHubActions = canMakePR || canMerge || branchPR || hasPreviewProvider;
+  const hasGitHubActions = canMakePR || canMerge || branchPR || hasPreviewProvider || hasAnyConflicts;
 
   const btnBase = "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
 
@@ -171,6 +179,37 @@ export default function ActionBar() {
         <GitMerge size={12} />
         Merge
       </button>
+
+      {/* Conflict indicators + actions */}
+      {hasLocalConflicts && (
+        <button
+          onClick={() => {
+            setWorkflow("patch");
+            const fileList = localConflicts.map((f) => `- ${f}`).join("\n");
+            sendMessage(
+              `Resolve the merge conflicts in the following files. For each file, read it, understand both sides of the conflict, choose the best resolution that preserves intended functionality from both branches, remove all conflict markers, and then save the file.\n\nConflicted files:\n${fileList}\n\nAfter resolving all conflicts, run \`git add\` on each resolved file.`,
+            );
+          }}
+          disabled={sending}
+          className={`${btnBase} border border-error/30 text-error hover:bg-error/10`}
+          title={`Local merge conflicts in ${localConflicts.length} file(s): ${localConflicts.join(", ")}`}
+        >
+          <AlertTriangle size={12} />
+          Resolve {localConflicts.length} Conflict{localConflicts.length > 1 ? "s" : ""}
+        </button>
+      )}
+
+      {prHasConflicts && !hasLocalConflicts && (
+        <button
+          onClick={() => syncBranch(branchPR?.base_branch)}
+          disabled={sending}
+          className={`${btnBase} border border-error/30 text-error hover:bg-error/10`}
+          title={`PR #${branchPR?.number} has merge conflicts on GitHub — sync with ${branchPR?.base_branch || "main"} to resolve`}
+        >
+          <AlertTriangle size={12} />
+          PR Conflicts
+        </button>
+      )}
 
       {hasPreviewProvider && (
         hasActiveBranchPreview ? (

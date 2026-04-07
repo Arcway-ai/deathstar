@@ -182,7 +182,11 @@ class GitHubService:
         repo_root: Path,
         branch: str,
     ) -> dict | None:
-        """Find an open PR whose head matches *branch*, or ``None``."""
+        """Find an open PR whose head matches *branch*, or ``None``.
+
+        Uses the single-PR GET endpoint so that ``mergeable`` and
+        ``mergeable_state`` are included (the list endpoint omits them).
+        """
         owner, repo = self._parse_remote(self._origin_url(repo_root))
         gh = self._client()
         try:
@@ -198,7 +202,7 @@ class GitHubService:
         if not resp.parsed_data:
             return None
         pr = resp.parsed_data[0]
-        return {
+        result = {
             "number": pr.number,
             "title": pr.title,
             "state": pr.state.value if hasattr(pr.state, "value") else pr.state,
@@ -212,6 +216,20 @@ class GitHubService:
             "draft": getattr(pr, "draft", False) or False,
             "url": str(pr.html_url),
         }
+
+        # The list endpoint doesn't include mergeable — fetch via GET for the
+        # single PR to get the merge-conflict state from GitHub.
+        try:
+            detail = await gh.rest.pulls.async_get(owner, repo, pr.number)
+            pr_detail = detail.parsed_data
+            result["mergeable"] = getattr(pr_detail, "mergeable", None)
+            result["mergeable_state"] = getattr(pr_detail, "mergeable_state", None)
+        except RequestFailed:
+            logger.debug("failed to fetch mergeable state for PR #%s", pr.number)
+            result["mergeable"] = None
+            result["mergeable_state"] = None
+
+        return result
 
     async def list_pull_requests(
         self,

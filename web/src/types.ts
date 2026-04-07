@@ -40,6 +40,10 @@ export interface PullRequestSummary {
   changed_files: number | null;
   draft: boolean;
   url: string;
+  /** Whether GitHub can auto-merge this PR. `null` = still computing. `false` = has conflicts. */
+  mergeable: boolean | null;
+  /** GitHub merge state: 'clean', 'dirty', 'blocked', 'behind', 'unknown', etc. */
+  mergeable_state: string | null;
 }
 
 /* ── Structured Review ────────────────────────────────────────── */

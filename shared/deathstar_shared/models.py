@@ -174,6 +174,8 @@ class GitHubPullRequestSummary(DeathStarModel):
     changed_files: int | None = None
     draft: bool = False
     url: str
+    mergeable: bool | None = None
+    mergeable_state: str | None = None
 
 
 class ChatRequest(DeathStarModel):

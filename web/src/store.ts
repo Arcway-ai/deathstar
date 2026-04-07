@@ -1706,6 +1706,8 @@ function _ensureAgentSocket(): void {
         additions: null,
         deletions: null,
         changed_files: null,
+        mergeable: null,
+        mergeable_state: null,
       };
       useStore.setState((s) => ({
         pullRequests: [...s.pullRequests.filter((p) => p.number !== pr.number), pr],
