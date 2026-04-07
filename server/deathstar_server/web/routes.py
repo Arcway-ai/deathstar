@@ -19,7 +19,7 @@ from deathstar_server.app_state import engine as db_engine, event_bus, git_servi
 from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
 from deathstar_server.services.github import GitHubService
-from deathstar_server.services.memory_distiller import distill_memory
+from deathstar_server.services.memory_distiller import distill_memory, suggest_memories
 from deathstar_server.services.event_bus import (
     EVENT_BRANCH_UPDATE,
     EVENT_LOCAL_CHECKOUT,
@@ -50,6 +50,8 @@ from deathstar_shared.models import (
     QueueItemResponse,
     RepoInfo,
     SaveMemoryRequest,
+    SuggestMemoriesRequest,
+    SuggestMemoriesResponse,
     UpdateDocumentRequest,
 )
 
@@ -1299,12 +1301,18 @@ def list_memories(repo: str | None = Query(default=None)) -> list[dict[str, obje
 @web_router.post("/memory", response_model=MemoryEntryResponse)
 async def save_memory(request: SaveMemoryRequest) -> dict[str, object]:
     content = request.content
-    if settings.anthropic_api_key:
-        content = await distill_memory(
-            prompt=request.source_prompt,
-            response=request.content,
-            api_key=settings.anthropic_api_key,
-        )
+    if settings.anthropic_api_key and not request.tags:
+        # Only distill if no tags — tagged saves come from the suggest flow
+        # and are already curated.
+        try:
+            content = await distill_memory(
+                prompt=request.source_prompt or "",
+                response=request.content,
+                api_key=settings.anthropic_api_key,
+            )
+        except Exception:
+            logger.warning("Memory distillation failed, saving raw content", exc_info=True)
+            content = request.content[:2000]
     return _get_memory_bank().save_memory(
         repo=request.repo,
         content=content,
@@ -1312,6 +1320,27 @@ async def save_memory(request: SaveMemoryRequest) -> dict[str, object]:
         source_prompt=request.source_prompt,
         tags=request.tags,
     )
+
+
+@web_router.post("/memory/suggest", response_model=SuggestMemoriesResponse)
+async def suggest_memories_route(
+    request: SuggestMemoriesRequest,
+) -> dict[str, object]:
+    if not settings.anthropic_api_key:
+        raise AppError(
+            ErrorCode.PROVIDER_AUTH,
+            "Anthropic API key not configured — cannot suggest memories",
+            status_code=503,
+        )
+    suggestions = await suggest_memories(
+        messages=request.messages,
+        api_key=settings.anthropic_api_key,
+    )
+    return {
+        "suggestions": [
+            {"content": s.content, "tags": s.tags} for s in suggestions
+        ],
+    }
 
 
 @web_router.delete("/memory/{memory_id}")

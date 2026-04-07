@@ -305,6 +305,20 @@ class SaveMemoryRequest(DeathStarModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class SuggestMemoriesRequest(DeathStarModel):
+    repo: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9_./ -]+$")
+    messages: list[dict[str, str]] = Field(min_length=1, max_length=30)
+
+
+class SuggestedMemoryItem(DeathStarModel):
+    content: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class SuggestMemoriesResponse(DeathStarModel):
+    suggestions: list[SuggestedMemoryItem]
+
+
 # ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------

@@ -132,9 +132,17 @@ interface Store {
   memoryDistillingId: string | null;
   loadMemories: (repo?: string) => Promise<void>;
   thumbsUp: (messageId: string, content: string, prompt: string) => Promise<void>;
-  thumbsDown: (messageId: string, content: string, prompt: string) => Promise<void>;
-  messageFeedback: Record<string, "thumbs_up" | "thumbs_down">;
+  messageFeedback: Record<string, "thumbs_up">;
   deleteMemory: (id: string) => Promise<void>;
+
+  /* ── Memory Suggestions ────────────────────────────────────── */
+  suggestedMemories: { content: string; tags: string[] }[];
+  suggestingMemories: boolean;
+  suggestMemoriesOpen: boolean;
+  setSuggestMemoriesOpen: (open: boolean) => void;
+  fetchMemorySuggestions: () => Promise<void>;
+  approveMemorySuggestion: (index: number) => Promise<void>;
+  dismissMemorySuggestion: (index: number) => void;
 
   /* ── Documents ─────────────────────────────────────────────── */
   documents: DocumentEntry[];
@@ -995,6 +1003,12 @@ export const useStore = create<Store>()(persist((set, get) => ({
   memoryDistillingId: null,
   messageFeedback: {},
 
+  /* ── Memory Suggestions ──────────────────────────────────────── */
+  suggestedMemories: [],
+  suggestingMemories: false,
+  suggestMemoriesOpen: false,
+  setSuggestMemoriesOpen: (open) => set({ suggestMemoriesOpen: open }),
+
   loadMemories: async (repo) => {
     try {
       const memories = await api.fetchMemories(repo);
@@ -1006,21 +1020,8 @@ export const useStore = create<Store>()(persist((set, get) => ({
     const { selectedRepo, conversationId } = get();
     if (!selectedRepo) return;
     set({ memoryDistillingId: messageId });
+    // Record feedback for analytics
     try {
-      const entry = await api.saveMemory({
-        repo: selectedRepo,
-        content,
-        source_message_id: messageId,
-        source_prompt: prompt,
-        tags: [],
-      });
-      set((s) => ({
-        memoryDistillingId: null,
-        memories: [...s.memories, entry],
-        messageFeedback: { ...s.messageFeedback, [messageId]: "thumbs_up" as const },
-      }));
-      toast.success("Memory saved", "Response distilled and saved to memory bank");
-      // Also record as feedback for analytics
       await api.saveFeedback({
         message_id: messageId,
         conversation_id: conversationId ?? undefined,
@@ -1029,28 +1030,29 @@ export const useStore = create<Store>()(persist((set, get) => ({
         content: content.slice(0, 500),
         prompt: prompt.slice(0, 500),
       });
-    } catch {
-      set({ memoryDistillingId: null });
-      toast.error("Failed to save memory", "Distillation failed — please try again");
-    }
-  },
-
-  thumbsDown: async (messageId, content, prompt) => {
-    const { selectedRepo, conversationId } = get();
-    if (!selectedRepo) return;
-    try {
-      await api.saveFeedback({
-        message_id: messageId,
-        conversation_id: conversationId ?? undefined,
-        kind: "thumbs_down",
-        repo: selectedRepo,
-        content: content.slice(0, 500),
-        prompt: prompt.slice(0, 500),
-      });
       set((s) => ({
-        messageFeedback: { ...s.messageFeedback, [messageId]: "thumbs_down" as const },
+        messageFeedback: { ...s.messageFeedback, [messageId]: "thumbs_up" as const },
       }));
-    } catch { /* ignore */ }
+    } catch { /* ignore feedback failure */ }
+    // Send the prompt+response through the suggest flow so the user
+    // can approve individual memories instead of saving a raw blob.
+    const msgs: { role: string; content: string }[] = [];
+    if (prompt) msgs.push({ role: "user", content: prompt.slice(0, 3000) });
+    msgs.push({ role: "assistant", content: content.slice(0, 3000) });
+    set({ suggestingMemories: true, suggestedMemories: [], suggestMemoriesOpen: true });
+    try {
+      const res = await api.suggestMemories({ repo: selectedRepo, messages: msgs });
+      set({ memoryDistillingId: null, suggestingMemories: false });
+      if (res.suggestions.length === 0) {
+        toast.info("No suggestions", "No memorable patterns found in this response");
+        set({ suggestMemoriesOpen: false });
+        return;
+      }
+      set({ suggestedMemories: res.suggestions });
+    } catch (e) {
+      set({ memoryDistillingId: null, suggestingMemories: false, suggestMemoriesOpen: false });
+      toast.error("Failed to suggest memories", e instanceof Error ? e.message : "Please try again");
+    }
   },
 
   deleteMemory: async (id) => {
@@ -1060,6 +1062,60 @@ export const useStore = create<Store>()(persist((set, get) => ({
     } catch (e) {
       toast.error("Failed to delete memory", e instanceof Error ? e.message : undefined);
     }
+  },
+
+  fetchMemorySuggestions: async () => {
+    const { selectedRepo, activeConversation } = get();
+    if (!selectedRepo || !activeConversation?.messages?.length) {
+      toast.error("No conversation", "Start a conversation first to suggest memories");
+      return;
+    }
+    set({ suggestingMemories: true, suggestedMemories: [], suggestMemoriesOpen: true });
+    try {
+      const msgs = activeConversation.messages.slice(-20).map((m) => ({
+        role: m.role,
+        content: m.content.slice(0, 3000),
+      }));
+      const res = await api.suggestMemories({ repo: selectedRepo, messages: msgs });
+      if (res.suggestions.length === 0) {
+        toast.info("No suggestions", "No memorable patterns found in this conversation");
+        set({ suggestingMemories: false, suggestMemoriesOpen: false });
+        return;
+      }
+      set({ suggestedMemories: res.suggestions, suggestingMemories: false });
+    } catch (e) {
+      set({ suggestingMemories: false, suggestMemoriesOpen: false });
+      toast.error("Failed to suggest memories", e instanceof Error ? e.message : "Please try again");
+    }
+  },
+
+  approveMemorySuggestion: async (index) => {
+    const { selectedRepo, suggestedMemories } = get();
+    if (!selectedRepo) return;
+    const suggestion = suggestedMemories[index];
+    if (!suggestion) return;
+    try {
+      const entry = await api.saveMemory({
+        repo: selectedRepo,
+        content: suggestion.content,
+        source_message_id: "",
+        source_prompt: "",
+        tags: suggestion.tags,
+      });
+      set((s) => ({
+        memories: [...s.memories, entry],
+        suggestedMemories: s.suggestedMemories.filter((_, i) => i !== index),
+      }));
+      toast.success("Memory saved");
+    } catch (e) {
+      toast.error("Failed to save", e instanceof Error ? e.message : undefined);
+    }
+  },
+
+  dismissMemorySuggestion: (index) => {
+    set((s) => ({
+      suggestedMemories: s.suggestedMemories.filter((_, i) => i !== index),
+    }));
   },
 
   /* ── Documents ─────────────────────────────────────────────── */

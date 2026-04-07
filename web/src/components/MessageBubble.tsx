@@ -6,7 +6,6 @@ import {
   Copy,
   Check,
   ThumbsUp,
-  ThumbsDown,
   Clock,
   Cpu,
   Coins,
@@ -142,7 +141,6 @@ function tryParsePlan(content: string): StructuredPlan | null {
 function AssistantMessage({ message }: { message: ConversationMessage }) {
   const [copied, setCopied] = useState(false);
   const thumbsUp = useStore((s) => s.thumbsUp);
-  const thumbsDown = useStore((s) => s.thumbsDown);
   const memoryDistillingId = useStore((s) => s.memoryDistillingId);
   const isDistilling = memoryDistillingId === message.id;
   const messageFeedback = useStore((s) => s.messageFeedback);
@@ -192,10 +190,6 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
 
   const handleThumbsUp = async () => {
     await thumbsUp(message.id, message.content, getPrecedingPrompt());
-  };
-
-  const handleThumbsDown = async () => {
-    await thumbsDown(message.id, message.content, getPrecedingPrompt());
   };
 
   // Filter out text blocks from agent_blocks — the text is already in message.content
@@ -297,17 +291,9 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
             onClick={handleThumbsUp}
             disabled={!!feedback || isDistilling}
             className={`rounded p-1 hover:bg-bg-hover ${feedback === "thumbs_up" ? "text-success" : ""} ${isDistilling ? "animate-pulse" : ""}`}
-            title={isDistilling ? "Distilling memory..." : "Save to memory bank"}
+            title={isDistilling ? "Extracting memories..." : "Extract memories from this response"}
           >
             <ThumbsUp size={12} />
-          </button>
-          <button
-            onClick={handleThumbsDown}
-            disabled={!!feedback}
-            className={`rounded p-1 hover:bg-bg-hover ${feedback === "thumbs_down" ? "text-red-400" : ""}`}
-            title="Bad response"
-          >
-            <ThumbsDown size={12} />
           </button>
         </div>
       </div>

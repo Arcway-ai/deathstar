@@ -257,6 +257,16 @@ export async function deleteMemory(id: string): Promise<void> {
   await request(`/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export async function suggestMemories(req: {
+  repo: string;
+  messages: { role: string; content: string }[];
+}): Promise<{ suggestions: { content: string; tags: string[] }[] }> {
+  return request("/memory/suggest", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 /* ── Documents ────────────────────────────────────────────────── */
 
 export async function fetchDocuments(repo?: string, documentType?: string): Promise<DocumentEntry[]> {
