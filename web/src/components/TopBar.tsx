@@ -32,6 +32,7 @@ export default function TopBar() {
 
   const currentRepo = repos.find((r) => r.name === selectedRepo);
   const isDirty = currentRepo?.dirty ?? false;
+  const isMac = navigator.platform.toUpperCase().includes("MAC");
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border-subtle bg-bg-primary px-2 sm:gap-2 sm:px-3">
@@ -72,10 +73,13 @@ export default function TopBar() {
             navigate(`/${encodeURIComponent(selectedRepo)}`);
           }}
           className="flex h-7 items-center gap-1 rounded-md border border-border-subtle px-2 text-xs font-medium text-text-secondary hover:border-border-default hover:text-text-primary transition-colors"
-          title="New conversation"
+          title="New conversation (Cmd+N)"
         >
           <Plus size={14} />
           <span className="hidden sm:inline">New</span>
+          <kbd className="hidden lg:inline ml-0.5 rounded border border-border-subtle bg-bg-primary px-1 py-0.5 font-mono text-[10px] text-text-muted">
+            {navigator.platform.toUpperCase().includes("MAC") ? "\u2318" : "^"}N
+          </kbd>
         </button>
       )}
 
@@ -109,6 +113,16 @@ export default function TopBar() {
             <span className="h-1.5 w-1.5 rounded-full bg-warning" title="Uncommitted changes" />
           )}
         </button>
+      )}
+
+      {/* Keyboard shortcut hints */}
+      {selectedRepo && (
+        <div className="hidden xl:flex items-center gap-1 text-[10px] text-text-muted">
+          <kbd className="rounded border border-border-subtle bg-bg-primary px-1 py-0.5 font-mono">{isMac ? "\u2318" : "^"}R</kbd>
+          <span>repo</span>
+          <kbd className="ml-1 rounded border border-border-subtle bg-bg-primary px-1 py-0.5 font-mono">{isMac ? "\u2318" : "^"}B</kbd>
+          <span>branch</span>
+        </div>
       )}
 
       {selectedRepo && (
