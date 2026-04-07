@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { FolderGit2, GitBranch } from "lucide-react";
 import { useStore } from "./store";
 import * as api from "./api";
 import { initSession } from "./api";
@@ -14,6 +15,8 @@ import RepoSelector from "./components/RepoSelector";
 import FileViewer from "./components/FileViewer";
 import TerminalPanel from "./components/Terminal";
 import Superlaser from "./components/Superlaser";
+import CommandPalette from "./components/CommandPalette";
+import type { CommandPaletteItem } from "./components/CommandPalette";
 import { Toaster } from "./components/ui/sonner";
 
 export default function App() {
@@ -133,18 +136,129 @@ export default function App() {
     }
   }, [selectedRepo, conversationId, workflow, navigate]);
 
-  // Cmd+S / Ctrl+S → quick save
+  // ── Command palette state ───────────────────────────────────
+  const [repoPaletteOpen, setRepoPaletteOpen] = useState(false);
+  const [branchPaletteOpen, setBranchPaletteOpen] = useState(false);
+
+  const repos = useStore((s) => s.repos);
+  const branches = useStore((s) => s.branches);
+  const repoContext = useStore((s) => s.repoContext);
+
+  const repoItems: CommandPaletteItem[] = useMemo(
+    () =>
+      repos.map((r) => ({
+        id: r.name,
+        label: r.name,
+        sublabel: r.branch,
+        icon: <FolderGit2 size={14} />,
+        isCurrent: r.name === selectedRepo,
+        badge: r.dirty ? (
+          <span className="h-1.5 w-1.5 rounded-full bg-warning" />
+        ) : undefined,
+      })),
+    [repos, selectedRepo],
+  );
+
+  const branchItems: CommandPaletteItem[] = useMemo(
+    () =>
+      branches
+        .filter((b) => b.location !== "remote")
+        .map((b) => ({
+          id: b.name,
+          label: b.name,
+          icon: <GitBranch size={14} />,
+          isCurrent: b.name === repoContext?.branch,
+          badge:
+            b.name === "main" || b.name === "master" ? (
+              <span className="rounded bg-bg-hover px-1 py-0.5 text-[10px] text-text-muted">default</span>
+            ) : undefined,
+        })),
+    [branches, repoContext?.branch],
+  );
+
+  const handleRepoSelect = useCallback(
+    (item: CommandPaletteItem) => {
+      setRepoPaletteOpen(false);
+      if (item.id === selectedRepo) return;
+      // Fetch conversations for the target repo, then navigate to the most
+      // recent one.  The store's `conversations` array only holds entries for
+      // the *current* repo, so we must always hit the API for the new repo.
+      api.fetchConversations(item.id).then((convos) => {
+        const sorted = [...convos].sort(
+          (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+        );
+        const first = sorted[0];
+        if (first) {
+          navigate(`/${encodeURIComponent(item.id)}/c/${encodeURIComponent(first.id)}`);
+        } else {
+          navigate(`/${encodeURIComponent(item.id)}`);
+        }
+      }).catch(() => {
+        navigate(`/${encodeURIComponent(item.id)}`);
+      });
+    },
+    [selectedRepo, navigate],
+  );
+
+  const handleBranchSelect = useCallback(
+    (item: CommandPaletteItem) => {
+      setBranchPaletteOpen(false);
+      if (item.id === repoContext?.branch) return;
+      useStore.getState().switchBranch(item.id);
+    },
+    [repoContext?.branch],
+  );
+
+  // Global keyboard shortcuts: Cmd+S, Cmd+E, Cmd+J
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+      if (!(e.metaKey || e.ctrlKey)) return;
+
+      const key = e.key.toLowerCase();
+
+      // Cmd+S → quick save (allowed even when focused in inputs)
+      if (key === "s") {
         e.preventDefault();
         const { selectedRepo, quickSave } = useStore.getState();
         if (selectedRepo) quickSave();
+        return;
+      }
+
+      // Skip palette shortcuts when the user is typing in an input/textarea
+      // to avoid hijacking text-editing key combos.
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      if (tag === "input" || tag === "textarea") return;
+
+      // Cmd+E → repo switcher (only when authenticated with repos)
+      if (key === "e") {
+        e.preventDefault();
+        const { claudeAuth } = useStore.getState();
+        if (!claudeAuth.authenticated) return;
+        if (!repoPaletteOpen) {
+          setRepoPaletteOpen(true);
+          setBranchPaletteOpen(false);
+        }
+        // cycling is handled inside CommandPalette via triggerKey
+        return;
+      }
+
+      // Cmd+J → branch switcher (only when a repo is selected)
+      if (key === "j") {
+        e.preventDefault();
+        const { selectedRepo, claudeAuth } = useStore.getState();
+        if (!claudeAuth.authenticated || !selectedRepo) return;
+        if (!branchPaletteOpen) {
+          // Refresh branches when opening
+          useStore.getState().loadBranches();
+          setBranchPaletteOpen(true);
+          setRepoPaletteOpen(false);
+        }
+        return;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [repoPaletteOpen, branchPaletteOpen]);
 
   return (
     <div className="flex h-full flex-col bg-bg-deep">
@@ -171,6 +285,28 @@ export default function App() {
       </div>
       <Superlaser />
       <Toaster />
+
+      {/* Command palettes */}
+      <CommandPalette
+        open={repoPaletteOpen}
+        onClose={() => setRepoPaletteOpen(false)}
+        items={repoItems}
+        onSelect={handleRepoSelect}
+        triggerKey="e"
+        title="Switch Repository"
+        placeholder="Search repos..."
+        emptyMessage="No repos found"
+      />
+      <CommandPalette
+        open={branchPaletteOpen}
+        onClose={() => setBranchPaletteOpen(false)}
+        items={branchItems}
+        onSelect={handleBranchSelect}
+        triggerKey="j"
+        title="Switch Branch"
+        placeholder="Search branches..."
+        emptyMessage="No branches found"
+      />
     </div>
   );
 }
