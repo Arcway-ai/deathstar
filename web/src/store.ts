@@ -223,6 +223,12 @@ export const useStore = create<Store>()(persist((set, get) => ({
       activeConversation: null,
       branches: [],
       commits: [],
+      // Clear PR + review state so Review mode refreshes for the new repo
+      pullRequests: [],
+      pullRequestsLoading: false,
+      selectedPR: null,
+      activeReview: null,
+      findingActions: {},
       // Reset streaming state when jumping to a different repo so the input
       // is immediately usable (the server agent keeps running in its worktree).
       sending: false,
@@ -251,6 +257,18 @@ export const useStore = create<Store>()(persist((set, get) => ({
           `"${context.branch_switched_from}" was deleted on remote (PR merged?). Switched to ${context.branch}.`,
         );
         await get().loadBranches();
+      }
+      // Fetch the branch PR so Review mode auto-selects it for the current branch
+      if (context.branch) {
+        api.fetchBranchPR(name, context.branch).then((pr) => {
+          if (pr && get().selectedRepo === name) {
+            set((s) => ({
+              pullRequests: [...s.pullRequests.filter((p) => p.number !== pr.number), pr],
+              // Auto-select if in review mode and no PR selected yet
+              selectedPR: s.workflow === "review" && !s.selectedPR ? pr : s.selectedPR,
+            }));
+          }
+        }).catch(() => {});
       }
     } catch {
       // context fetch may fail if endpoint not yet available — fall back to
@@ -330,9 +348,13 @@ export const useStore = create<Store>()(persist((set, get) => ({
     // Clear the active conversation — it belongs to the previous branch.
     // Also reset any in-progress streaming state so the input is usable on
     // the new branch (the server-side agent keeps running in its worktree).
+    // Clear PR selection and review state so Review mode refreshes for the new branch.
     set({
       conversationId: null,
       activeConversation: null,
+      selectedPR: null,
+      activeReview: null,
+      findingActions: {},
       sending: false,
       compacting: false,
       agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
@@ -347,11 +369,12 @@ export const useStore = create<Store>()(persist((set, get) => ({
     } catch { /* ignore */ }
     await get().loadBranches();
     await get().loadConversations(selectedRepo);
-    // Load branch PR for the new branch
+    // Load branch PR for the new branch and auto-select if in review mode
     api.fetchBranchPR(selectedRepo, branch).then((pr) => {
-      if (pr) {
+      if (pr && get().selectedRepo === selectedRepo && get().repoContext?.branch === branch) {
         set((s) => ({
           pullRequests: [...s.pullRequests.filter((p) => p.number !== pr.number), pr],
+          selectedPR: s.workflow === "review" && !s.selectedPR ? pr : s.selectedPR,
         }));
       }
     }).catch(() => {});
