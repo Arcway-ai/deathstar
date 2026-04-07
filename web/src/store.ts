@@ -1101,6 +1101,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
         source_message_id: "",
         source_prompt: "",
         tags: suggestion.tags,
+        skip_distill: true,
       });
       set((s) => ({
         memories: [...s.memories, entry],

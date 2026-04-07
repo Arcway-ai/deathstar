@@ -246,6 +246,7 @@ export async function saveMemory(entry: {
   source_message_id: string;
   source_prompt: string;
   tags: string[];
+  skip_distill?: boolean;
 }): Promise<MemoryEntry> {
   return request<MemoryEntry>("/memory", {
     method: "POST",

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Brain, Check, Loader2, X } from "lucide-react";
 import { useStore } from "../store";
 import {
@@ -17,8 +18,24 @@ export default function SuggestMemoriesDialog() {
   const loading = useStore((s) => s.suggestingMemories);
   const approve = useStore((s) => s.approveMemorySuggestion);
   const dismiss = useStore((s) => s.dismissMemorySuggestion);
+  const savingAll = useRef(false);
 
-  const handleClose = () => {
+  // Auto-close when all suggestions have been handled
+  useEffect(() => {
+    if (!loading && open && suggestions.length === 0 && !savingAll.current) {
+      // Small delay so the user sees the last item disappear
+      const timer = setTimeout(() => setOpen(false), 400);
+      return () => clearTimeout(timer);
+    }
+  }, [loading, open, suggestions.length, setOpen]);
+
+  const handleSaveAll = async () => {
+    savingAll.current = true;
+    const count = suggestions.length;
+    for (let i = 0; i < count; i++) {
+      await approve(0); // Always index 0 since the array shifts after each save
+    }
+    savingAll.current = false;
     setOpen(false);
   };
 
@@ -26,7 +43,7 @@ export default function SuggestMemoriesDialog() {
     <Dialog
       open={open}
       onOpenChange={(isOpen) => {
-        if (!isOpen) handleClose();
+        if (!isOpen) setOpen(false);
       }}
     >
       <DialogContent className="sm:max-w-lg bg-bg-surface border-border-subtle">
@@ -48,17 +65,10 @@ export default function SuggestMemoriesDialog() {
             </div>
           )}
 
-          {!loading && suggestions.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-8 gap-2 text-text-muted">
-              <Brain size={20} />
-              <p className="text-xs">No suggestions remaining</p>
-            </div>
-          )}
-
           {!loading &&
             suggestions.map((s, i) => (
               <div
-                key={i}
+                key={s.content}
                 className="group rounded-lg border border-border-subtle bg-bg-deep/50 p-3 transition-colors hover:border-accent/20"
               >
                 <p className="text-xs text-text-primary leading-relaxed mb-2">
@@ -101,19 +111,14 @@ export default function SuggestMemoriesDialog() {
         {!loading && suggestions.length > 0 && (
           <DialogFooter className="border-border-subtle bg-bg-deep/30">
             <button
-              onClick={async () => {
-                // Approve all remaining
-                for (let i = suggestions.length - 1; i >= 0; i--) {
-                  await approve(0); // Always approve index 0 since array shifts
-                }
-              }}
+              onClick={handleSaveAll}
               className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-medium bg-accent text-bg-deep hover:bg-accent-hover transition-colors"
             >
               <Check size={12} />
               Save All ({suggestions.length})
             </button>
             <button
-              onClick={handleClose}
+              onClick={() => setOpen(false)}
               className="rounded-md px-3 py-1.5 text-[11px] font-medium text-text-secondary hover:text-text-primary transition-colors"
             >
               Done

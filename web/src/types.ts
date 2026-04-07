@@ -202,15 +202,6 @@ export interface MemoryEntry {
   created_at: string;
 }
 
-export interface SuggestedMemoryItem {
-  content: string;
-  tags: string[];
-}
-
-export interface SuggestMemoriesResponse {
-  suggestions: SuggestedMemoryItem[];
-}
-
 /* ── Documents ────────────────────────────────────────────────── */
 
 export type DocumentType = "tech_spec" | "design_doc" | "bug_analysis" | "plan" | "notes";

@@ -303,6 +303,7 @@ class SaveMemoryRequest(DeathStarModel):
     source_message_id: str = Field(default="", max_length=200)
     source_prompt: str = Field(default="", max_length=2000)
     tags: list[str] = Field(default_factory=list)
+    skip_distill: bool = Field(default=False)
 
 
 class SuggestMemoriesRequest(DeathStarModel):

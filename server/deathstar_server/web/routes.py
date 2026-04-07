@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import anthropic
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from githubkit import GitHub, TokenAuthStrategy
@@ -1301,17 +1302,16 @@ def list_memories(repo: str | None = Query(default=None)) -> list[dict[str, obje
 @web_router.post("/memory", response_model=MemoryEntryResponse)
 async def save_memory(request: SaveMemoryRequest) -> dict[str, object]:
     content = request.content
-    if settings.anthropic_api_key and not request.tags:
-        # Only distill if no tags — tagged saves come from the suggest flow
-        # and are already curated.
+    if settings.anthropic_api_key and not request.skip_distill:
         try:
             content = await distill_memory(
                 prompt=request.source_prompt or "",
                 response=request.content,
                 api_key=settings.anthropic_api_key,
             )
-        except Exception:
-            logger.warning("Memory distillation failed, saving raw content", exc_info=True)
+        except (anthropic.APIError, anthropic.APIConnectionError,
+                anthropic.AuthenticationError, ValueError, RuntimeError) as exc:
+            logger.warning("Memory distillation failed (%s), saving raw content", type(exc).__name__, exc_info=True)
             content = request.content[:2000]
     return _get_memory_bank().save_memory(
         repo=request.repo,
@@ -1328,7 +1328,7 @@ async def suggest_memories_route(
 ) -> dict[str, object]:
     if not settings.anthropic_api_key:
         raise AppError(
-            ErrorCode.PROVIDER_AUTH,
+            ErrorCode.PROVIDER_NOT_CONFIGURED,
             "Anthropic API key not configured — cannot suggest memories",
             status_code=503,
         )
