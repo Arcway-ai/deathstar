@@ -437,14 +437,26 @@ def list_branches(name: str) -> dict[str, object]:
     except subprocess.CalledProcessError:
         pass
 
-    # Merge: all local + remote branches that aren't already local
-    all_branches = local | remote
+    # Build branch metadata with location info
+    all_names = local | remote
 
     # Filter out bot branches
-    branches = sorted(
-        b for b in all_branches
+    filtered = sorted(
+        b for b in all_names
         if not any(b.startswith(prefix) for prefix in _BOT_BRANCH_PREFIXES)
     )
+
+    branches = []
+    for name in filtered:
+        in_local = name in local
+        in_remote = name in remote
+        if in_local and in_remote:
+            location = "both"
+        elif in_local:
+            location = "local"
+        else:
+            location = "remote"
+        branches.append({"name": name, "location": location})
 
     try:
         current = git_service.current_branch(repo_root)

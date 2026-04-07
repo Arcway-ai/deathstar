@@ -10,6 +10,7 @@ import type { Theme } from "./themes";
 import type {
   AgentStreamState,
   ApplySuggestionsResponse,
+  BranchInfo,
   ConversationDetail,
   ConversationMessage,
   ConversationSummary,
@@ -50,7 +51,7 @@ interface Store {
   loadCommits: () => Promise<void>;
 
   /* ── Branches ─────────────────────────────────────────────── */
-  branches: string[];
+  branches: BranchInfo[];
   branchLoading: boolean;
   loadBranches: () => Promise<void>;
   switchBranch: (branch: string) => Promise<void>;
@@ -322,7 +323,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
     set({ branchLoading: true });
     try {
       const data = await api.fetchBranches(selectedRepo);
-      set({ branches: data.branches, branchLoading: false });
+      set({ branches: data.branches as BranchInfo[], branchLoading: false });
     } catch (e) {
       set({ branchLoading: false });
       toast.error("Failed to load branches", e instanceof Error ? e.message : undefined);

@@ -77,7 +77,7 @@ export async function fetchRepoContext(name: string): Promise<RepoContext> {
 
 export async function fetchBranches(
   name: string,
-): Promise<{ branches: string[]; current: string }> {
+): Promise<{ branches: { name: string; location: "local" | "remote" | "both" }[]; current: string }> {
   return request(`/repos/${encodeURIComponent(name)}/branches`);
 }
 
