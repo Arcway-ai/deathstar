@@ -1111,8 +1111,8 @@ async def list_pull_requests(
 
 
 @web_router.get("/repos/{name}/branch-pr")
-def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
-    """Get the cached PR for a specific branch (if any)."""
+async def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
+    """Get the PR for a specific branch — cache first, then GitHub fallback."""
     with Session(db_engine) as session:
         row = session.exec(
             select(BranchPR)
@@ -1120,24 +1120,77 @@ def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
             .where(BranchPR.branch == branch)
             .where(BranchPR.pr_state == "open")
         ).first()
-        if not row:
-            return {"pr": None}
-        return {
-            "pr": {
-                "number": row.pr_number,
-                "url": row.pr_url,
-                "title": row.pr_title,
-                "state": row.pr_state,
-                "draft": row.draft,
-                "user": row.user,
-                "head_branch": branch,
-                "base_branch": row.base_branch,
-                "additions": row.additions,
-                "deletions": row.deletions,
-                "changed_files": row.changed_files,
-                "updated_at": row.updated_at,
-            },
-        }
+        if row:
+            return {
+                "pr": {
+                    "number": row.pr_number,
+                    "url": row.pr_url,
+                    "title": row.pr_title,
+                    "state": row.pr_state,
+                    "draft": row.draft,
+                    "user": row.user,
+                    "head_branch": branch,
+                    "base_branch": row.base_branch,
+                    "additions": row.additions,
+                    "deletions": row.deletions,
+                    "changed_files": row.changed_files,
+                    "updated_at": row.updated_at,
+                },
+            }
+
+    # Cache miss — ask GitHub and persist the result for next time.
+    from deathstar_server.app_state import github_service
+
+    try:
+        repo_root = git_service.resolve_target(name)
+        pr_data = await github_service.find_pull_request_for_branch(
+            repo_root=repo_root, branch=branch,
+        )
+    except (AppError, ValueError):
+        logger.debug("GitHub PR lookup failed for %s/%s", name, branch, exc_info=True)
+        return {"pr": None}
+
+    if not pr_data:
+        return {"pr": None}
+
+    # Persist to BranchPR cache so subsequent loads are instant.
+    try:
+        with Session(db_engine) as session:
+            session.merge(BranchPR(
+                repo=name,
+                branch=branch,
+                pr_number=pr_data["number"],
+                pr_url=pr_data["url"],
+                pr_title=pr_data["title"],
+                pr_state=pr_data["state"],
+                draft=bool(pr_data.get("draft")),
+                user=pr_data.get("user", ""),
+                base_branch=pr_data.get("base_branch", "main"),
+                additions=pr_data.get("additions"),
+                deletions=pr_data.get("deletions"),
+                changed_files=pr_data.get("changed_files"),
+                updated_at=pr_data.get("updated_at", ""),
+            ))
+            session.commit()
+    except SQLAlchemyError:
+        logger.warning("failed to cache branch PR for %s/%s", name, branch, exc_info=True)
+
+    return {
+        "pr": {
+            "number": pr_data["number"],
+            "url": pr_data["url"],
+            "title": pr_data["title"],
+            "state": pr_data["state"],
+            "draft": pr_data.get("draft", False),
+            "user": pr_data.get("user", ""),
+            "head_branch": branch,
+            "base_branch": pr_data.get("base_branch", "main"),
+            "additions": pr_data.get("additions"),
+            "deletions": pr_data.get("deletions"),
+            "changed_files": pr_data.get("changed_files"),
+            "updated_at": pr_data.get("updated_at"),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
