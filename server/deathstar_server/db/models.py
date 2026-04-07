@@ -238,3 +238,27 @@ class BranchPR(SQLModel, table=True):
     deletions: Optional[int] = Field(default=None)
     changed_files: Optional[int] = Field(default=None)
     updated_at: str = Field(nullable=False, default_factory=_utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Preview Deployments
+# ---------------------------------------------------------------------------
+
+
+class PreviewDeployment(SQLModel, table=True):
+    __tablename__ = "preview_deployments"
+    __table_args__ = (
+        Index("idx_preview_repo_branch", "repo", "branch"),
+        Index("idx_preview_status", "status"),
+    )
+
+    id: str = Field(primary_key=True)
+    repo: str = Field(nullable=False)
+    branch: str = Field(nullable=False)
+    provider: str = Field(nullable=False)  # "render" | "vercel"
+    provider_service_id: str = Field(nullable=False)
+    status: str = Field(nullable=False, default="pending")
+    preview_url: Optional[str] = Field(default=None)
+    error_message: Optional[str] = Field(default=None)
+    created_at: str = Field(nullable=False, default_factory=_utcnow)
+    updated_at: str = Field(nullable=False, default_factory=_utcnow)

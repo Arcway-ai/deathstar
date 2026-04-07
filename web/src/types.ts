@@ -293,3 +293,25 @@ export interface CommitInfo {
   date: string;
 }
 export type SettingsTab = "general" | "providers" | "memory";
+
+/* ── Preview Deployments ─────────────────────────────────────── */
+
+export type PreviewProvider = "render" | "vercel";
+export type PreviewStatus = "pending" | "building" | "live" | "failed" | "destroyed";
+
+export interface PreviewDeployment {
+  id: string;
+  repo: string;
+  branch: string;
+  provider: PreviewProvider;
+  provider_service_id: string;
+  status: PreviewStatus;
+  preview_url: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PreviewProvidersStatus {
+  providers: Record<string, boolean>;
+}

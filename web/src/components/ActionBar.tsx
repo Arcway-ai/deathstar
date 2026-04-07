@@ -1,11 +1,17 @@
-import { useState } from "react";
-import { Archive, Brain, GitMerge, GitPullRequest, Loader2, RefreshCw, ScanSearch, Square, X, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Archive, Brain, ExternalLink, GitMerge, GitPullRequest, Globe, Loader2, RefreshCw, ScanSearch, Square, Trash2, X, Zap } from "lucide-react";
 import { useStore } from "../store";
 import SuggestMemoriesDialog from "./SuggestMemoriesDialog";
-import type { ServerQueueItem } from "../types";
+import type { PreviewDeployment, ServerQueueItem } from "../types";
 
 /**
  * Contextual action bar above the input.
+ *
+ * Buttons are grouped into two logical sections:
+ *   1. **Agent actions** — control the running agent (Compact, Memories, Nudge, Stop, Start Review)
+ *   2. **GitHub / Deploy actions** — repo-level operations (Make PR, Merge, Deploy Preview)
+ *
+ * A thin separator divides the groups visually.
  * All buttons are always visible but disabled when not applicable.
  */
 export default function ActionBar() {
@@ -27,6 +33,11 @@ export default function ActionBar() {
   const fetchMemorySuggestions = useStore((s) => s.fetchMemorySuggestions);
   const suggestingMemories = useStore((s) => s.suggestingMemories);
   const activeConversation = useStore((s) => s.activeConversation);
+  const createPreview = useStore((s) => s.createPreview);
+  const previews = useStore((s) => s.previews);
+  const deletePreview = useStore((s) => s.deletePreview);
+  const refreshPreview = useStore((s) => s.refreshPreview);
+  const previewProvidersConfigured = useStore((s) => s.previewProvidersConfigured);
 
   const currentBranch = repoContext?.branch;
   const isOnFeatureBranch = currentBranch && currentBranch !== "main" && currentBranch !== "master";
@@ -38,18 +49,33 @@ export default function ActionBar() {
     ? pullRequests.find((pr) => pr.state === "open" && pr.head_branch === currentBranch)
     : null;
 
+  // Agent action flags
   const canCompact = !!conversationId && !compacting;
   const canSuggestMemories = !!conversationId && !suggestingMemories && !!activeConversation?.messages?.length;
-  const canMakePR = !!(workflow === "patch" && isOnFeatureBranch && conversationId && !sending);
-  const canMerge = !!(branchPR && conversationId && !sending);
   const canStartReview = !!(workflow === "review" && selectedPR !== null && !sending);
   const canNudge = isAgentActive;
   const canStop = isAgentActive;
+
+  // GitHub / Deploy action flags
+  const canMakePR = !!(workflow === "patch" && isOnFeatureBranch && conversationId && !sending);
+  const canMerge = !!(branchPR && conversationId && !sending);
+
+  // Preview deployments — check if any provider is configured
+  const hasPreviewProvider = Object.values(previewProvidersConfigured).some(Boolean);
+  const branchPreviews = previews.filter(
+    (p) => p.branch === currentBranch && p.status !== "destroyed",
+  );
+  const hasActiveBranchPreview = branchPreviews.length > 0;
+  const canDeployPreview = !!(isOnFeatureBranch && hasPreviewProvider && !hasActiveBranchPreview);
+
+  // Do we have any visible GitHub/Deploy buttons?
+  const hasGitHubActions = canMakePR || canMerge || branchPR || hasPreviewProvider;
 
   const btnBase = "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
 
   return (
     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mb-1.5 px-0.5">
+      {/* ── Agent actions ─────────────────────────────────────────── */}
       <button
         onClick={fireSuperlaser}
         disabled={!canCompact}
@@ -70,6 +96,44 @@ export default function ActionBar() {
         Memories
       </button>
 
+      {workflow === "review" && (
+        <button
+          onClick={() => { if (canStartReview) sendMessage(""); }}
+          disabled={!canStartReview}
+          className={`${btnBase} bg-accent text-bg-deep hover:bg-accent-hover`}
+          title={!selectedPR ? "Select a PR first" : "Start code review"}
+        >
+          <ScanSearch size={12} />
+          Start Review
+        </button>
+      )}
+
+      <button
+        onClick={pokeAgent}
+        disabled={!canNudge}
+        className={`${btnBase} border border-warning/30 text-warning hover:bg-warning/10`}
+        title="Nudge the agent to continue"
+      >
+        <Zap size={12} />
+        Nudge
+      </button>
+
+      <button
+        onClick={interruptAgent}
+        disabled={!canStop}
+        className={`${btnBase} border border-error/30 text-error hover:bg-error/10`}
+        title="Stop the agent"
+      >
+        <Square size={10} fill="currentColor" />
+        Stop
+      </button>
+
+      {/* ── Separator between agent and GitHub/Deploy actions ───── */}
+      {hasGitHubActions && (
+        <div className="mx-0.5 h-5 w-px bg-border-subtle" />
+      )}
+
+      {/* ── GitHub / Deploy actions ───────────────────────────────── */}
       <button
         onClick={() => {
           if (canMakePR) {
@@ -108,39 +172,27 @@ export default function ActionBar() {
         Merge
       </button>
 
-      {workflow === "review" && (
-        <button
-          onClick={() => { if (canStartReview) sendMessage(""); }}
-          disabled={!canStartReview}
-          className={`${btnBase} bg-accent text-bg-deep hover:bg-accent-hover`}
-          title={!selectedPR ? "Select a PR first" : "Start code review"}
-        >
-          <ScanSearch size={12} />
-          Start Review
-        </button>
+      {hasPreviewProvider && (
+        hasActiveBranchPreview ? (
+          <PreviewBadge
+            previews={branchPreviews}
+            onTearDown={deletePreview}
+            onRefresh={refreshPreview}
+          />
+        ) : (
+          <button
+            onClick={createPreview}
+            disabled={!canDeployPreview}
+            className={`${btnBase} border border-info/30 text-info hover:bg-info/10`}
+            title={!isOnFeatureBranch ? "Switch to a feature branch first" : "Deploy a preview of this branch"}
+          >
+            <Globe size={12} />
+            Deploy Preview
+          </button>
+        )
       )}
 
-      <button
-        onClick={pokeAgent}
-        disabled={!canNudge}
-        className={`${btnBase} border border-warning/30 text-warning hover:bg-warning/10`}
-        title="Nudge the agent to continue"
-      >
-        <Zap size={12} />
-        Nudge
-      </button>
-
-      <button
-        onClick={interruptAgent}
-        disabled={!canStop}
-        className={`${btnBase} border border-error/30 text-error hover:bg-error/10`}
-        title="Stop the agent"
-      >
-        <Square size={10} fill="currentColor" />
-        Stop
-      </button>
-
-      {/* Right: queue + status — ml-auto pushes to end of whatever row it lands on */}
+      {/* ── Right: queue + status ─────────────────────────────────── */}
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {serverQueue.length > 0 && (
           <QueueBadge items={serverQueue} onCancel={cancelQueueItem} onClearAll={clearQueue} />
@@ -240,6 +292,119 @@ function QueueBadge({
                 </p>
               </div>
             )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Preview badge — shows active previews with status, URL, and tear-down
+// ---------------------------------------------------------------------------
+
+const STATUS_COLORS: Record<string, string> = {
+  pending: "bg-warning/60",
+  building: "bg-warning/60",
+  live: "bg-success/60",
+  failed: "bg-error/60",
+};
+
+function PreviewBadge({
+  previews,
+  onTearDown,
+  onRefresh,
+}: {
+  previews: PreviewDeployment[];
+  onTearDown: (id: string) => Promise<void>;
+  onRefresh: (id: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Auto-refresh previews that are still building
+  useEffect(() => {
+    const building = previews.filter(
+      (p) => p.status === "pending" || p.status === "building",
+    );
+    if (building.length === 0) return;
+    const interval = setInterval(() => {
+      building.forEach((p) => onRefresh(p.id));
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [previews, onRefresh]);
+
+  const primary = previews[0] as PreviewDeployment | undefined;
+  if (!primary) return null;
+  const isBuilding = primary.status === "pending" || primary.status === "building";
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 text-[11px] font-medium text-info hover:text-info/80 transition-colors h-7 px-2.5 rounded-md border border-info/30"
+        title="Preview deployment"
+      >
+        {isBuilding ? (
+          <Loader2 size={12} className="animate-spin" />
+        ) : (
+          <Globe size={12} />
+        )}
+        {primary.status === "live" ? "Preview" : primary.status === "building" ? "Building..." : primary.status === "pending" ? "Starting..." : "Preview"}
+        {primary.status === "live" && primary.preview_url && (
+          <ExternalLink size={10} />
+        )}
+      </button>
+
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setOpen(false)}
+          />
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-80 rounded-lg border border-border-subtle bg-bg-surface shadow-xl">
+            <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2">
+              <span className="text-[11px] font-medium text-text-secondary">
+                Preview Deployments
+              </span>
+            </div>
+            <div className="max-h-52 overflow-y-auto divide-y divide-border-subtle/50">
+              {previews.map((p) => (
+                <div key={p.id} className="px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <div className={`h-2 w-2 rounded-full shrink-0 ${STATUS_COLORS[p.status] || "bg-text-muted"}`} />
+                    <span className="flex-1 text-[11px] text-text-secondary truncate">
+                      {p.branch}
+                    </span>
+                    <span className="text-[10px] text-text-muted capitalize">
+                      {p.status}
+                    </span>
+                    <button
+                      onClick={() => { onTearDown(p.id); setOpen(false); }}
+                      className="shrink-0 text-text-muted hover:text-error transition-colors"
+                      title="Tear down preview"
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  </div>
+                  {p.preview_url && p.status === "live" && (
+                    <a
+                      href={p.preview_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 flex items-center gap-1 text-[10px] text-info hover:text-info/80 transition-colors truncate"
+                    >
+                      <ExternalLink size={8} />
+                      {p.preview_url}
+                    </a>
+                  )}
+                  {p.error_message && (
+                    <p className="mt-1 text-[10px] text-error truncate" title={p.error_message}>
+                      {p.error_message}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </>
       )}

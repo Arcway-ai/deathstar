@@ -11,6 +11,7 @@ from deathstar_server.services import agent as agent_service  # noqa: F401
 from deathstar_server.services.backup import BackupService
 from deathstar_server.services.github import GitHubService
 from deathstar_server.services.gitops import GitService
+from deathstar_server.services.preview.render import RenderPreviewProvider
 from deathstar_server.services.worktree import WorktreeManager
 from deathstar_server.web.conversations import ConversationStore
 from deathstar_server.services.event_bus import EventBus
@@ -35,6 +36,7 @@ git_service = GitService(settings)
 github_service = GitHubService(settings)
 backup_service = BackupService(settings)
 worktree_manager = WorktreeManager(settings)
+render_preview = RenderPreviewProvider(settings)
 
 # Database — SQLModel engine (PostgreSQL in production, SQLite for dev/tests)
 engine = create_db_engine(settings.database_url)

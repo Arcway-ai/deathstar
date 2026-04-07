@@ -130,6 +130,15 @@ class GitHubService:
             askpass_path.unlink(missing_ok=True)
 
     # ------------------------------------------------------------------
+    # Public helpers
+    # ------------------------------------------------------------------
+
+    def get_repo_full_name(self, repo_root: Path) -> str:
+        """Return ``owner/repo`` for a local git repository."""
+        owner, repo = self._parse_remote(self._origin_url(repo_root))
+        return f"{owner}/{repo}"
+
+    # ------------------------------------------------------------------
     # GitHub API operations via githubkit
     # ------------------------------------------------------------------
 

@@ -19,6 +19,7 @@ import type {
   GitHubRepo,
   MemoryEntry,
   Persona,
+  PreviewDeployment,
   ProviderName,
   ServerQueueItem,
   ProviderStatus,
@@ -186,6 +187,16 @@ interface Store {
   fireSuperlaser: () => void;
   stopSuperlaser: () => void;
 
+  /* ── Preview Deployments ────────────────────────────────────── */
+  previews: PreviewDeployment[];
+  previewsLoading: boolean;
+  previewProvidersConfigured: Record<string, boolean>;
+  loadPreviews: () => Promise<void>;
+  loadPreviewProviders: () => Promise<void>;
+  createPreview: () => Promise<void>;
+  deletePreview: (id: string) => Promise<void>;
+  refreshPreview: (id: string) => Promise<void>;
+
   /* ── UI State ───────────────────────────────────────────────── */
   sidebarOpen: boolean;
   sidebarView: SidebarView;
@@ -279,6 +290,9 @@ export const useStore = create<Store>()(persist((set, get) => ({
           }
         }).catch(() => {});
       }
+      // Load preview deployments and provider status in background
+      get().loadPreviews();
+      get().loadPreviewProviders();
     } catch {
       // context fetch may fail if endpoint not yet available — fall back to
       // unfiltered conversations so the sidebar isn't completely empty.
@@ -1319,6 +1333,71 @@ export const useStore = create<Store>()(persist((set, get) => ({
   /* ── Draft Input ─────────────────────────────────────────────── */
   draftInput: "",
   setDraftInput: (text) => set({ draftInput: text }),
+
+  /* ── Preview Deployments ────────────────────────────────────── */
+  previews: [],
+  previewsLoading: false,
+  previewProvidersConfigured: {},
+
+  loadPreviews: async () => {
+    const repo = get().selectedRepo;
+    if (!repo) return;
+    set({ previewsLoading: true });
+    try {
+      const previews = await api.fetchPreviews(repo);
+      set({ previews, previewsLoading: false });
+    } catch {
+      set({ previewsLoading: false });
+    }
+  },
+
+  loadPreviewProviders: async () => {
+    try {
+      const data = await api.fetchPreviewProviders();
+      set({ previewProvidersConfigured: data.providers });
+    } catch {
+      // Not critical — button will just be hidden
+    }
+  },
+
+  createPreview: async () => {
+    const { selectedRepo, repoContext } = get();
+    if (!selectedRepo || !repoContext) return;
+    try {
+      const preview = await api.createPreview(selectedRepo, repoContext.branch);
+      set((s) => ({ previews: [preview, ...s.previews] }));
+      toast.success("Preview deployment started");
+    } catch (e) {
+      toast.error(e instanceof api.ApiError ? e.message : "Failed to create preview");
+    }
+  },
+
+  deletePreview: async (id: string) => {
+    const repo = get().selectedRepo;
+    if (!repo) return;
+    try {
+      await api.deletePreview(repo, id);
+      set((s) => ({
+        previews: s.previews.filter((p) => p.id !== id),
+      }));
+      toast.success("Preview torn down");
+    } catch (e) {
+      toast.error(e instanceof api.ApiError ? e.message : "Failed to delete preview");
+    }
+  },
+
+  refreshPreview: async (id: string) => {
+    const repo = get().selectedRepo;
+    if (!repo) return;
+    try {
+      const updated = await api.fetchPreview(repo, id);
+      set((s) => ({
+        previews: s.previews.map((p) => (p.id === id ? updated : p)),
+      }));
+    } catch {
+      // Silently ignore — will retry on next poll
+    }
+  },
 
   /* ── UI State ────────────────────────────────────────────────── */
   sidebarOpen: false,
