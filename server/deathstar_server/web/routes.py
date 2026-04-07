@@ -15,9 +15,10 @@ from sqlalchemy import delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
-from deathstar_server.app_state import engine as db_engine, event_bus, git_service, settings
+from deathstar_server.app_state import engine as db_engine, event_bus, git_service, github_service, settings
 from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
+from deathstar_server.services.github import GitHubService
 from deathstar_server.services.memory_distiller import distill_memory
 from deathstar_server.services.event_bus import (
     EVENT_BRANCH_UPDATE,
@@ -206,7 +207,6 @@ def repo_context(name: str) -> RepoContextResponse:
 
     # Ensure remote origin is HTTPS-based for push compatibility
     try:
-        from deathstar_server.app_state import github_service
         github_service.ensure_remote_origin(repo_root)
     except Exception:
         pass  # Best-effort — don't block context loading
@@ -1087,7 +1087,6 @@ async def list_pull_requests(
     state: str = Query(default="open", pattern="^(open|closed|all)$"),
 ) -> list[dict]:
     """List pull requests for a repo from GitHub and cache the branch→PR mapping."""
-    from deathstar_server.app_state import github_service
     repo_root = git_service.resolve_target(name)
     prs = await github_service.list_pull_requests(repo_root=repo_root, state=state)
 
@@ -1120,6 +1119,47 @@ async def list_pull_requests(
     return prs
 
 
+def _branch_pr_to_dict(row: BranchPR) -> dict:
+    """Serialise a ``BranchPR`` row to the response shape used by the frontend."""
+    return {
+        "number": row.pr_number,
+        "url": row.pr_url,
+        "title": row.pr_title,
+        "state": row.pr_state,
+        "draft": row.draft,
+        "user": row.user,
+        "head_branch": row.branch,
+        "base_branch": row.base_branch,
+        "additions": row.additions,
+        "deletions": row.deletions,
+        "changed_files": row.changed_files,
+        "updated_at": row.updated_at,
+    }
+
+
+def _upsert_branch_pr(name: str, branch: str, pr_data: dict) -> BranchPR:
+    """Persist a GitHub PR dict into the ``BranchPR`` cache and return the row."""
+    row = BranchPR(
+        repo=name,
+        branch=branch,
+        pr_number=pr_data["number"],
+        pr_url=pr_data["url"],
+        pr_title=pr_data["title"],
+        pr_state=pr_data["state"],
+        draft=bool(pr_data.get("draft")),
+        user=pr_data.get("user", ""),
+        base_branch=pr_data.get("base_branch", "main"),
+        additions=pr_data.get("additions"),
+        deletions=pr_data.get("deletions"),
+        changed_files=pr_data.get("changed_files"),
+        updated_at=pr_data.get("updated_at", ""),
+    )
+    with Session(db_engine) as session:
+        session.merge(row)
+        session.commit()
+    return row
+
+
 @web_router.get("/repos/{name}/branch-pr")
 async def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
     """Get the PR for a specific branch — cache first, then GitHub fallback."""
@@ -1131,26 +1171,9 @@ async def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
             .where(BranchPR.pr_state == "open")
         ).first()
         if row:
-            return {
-                "pr": {
-                    "number": row.pr_number,
-                    "url": row.pr_url,
-                    "title": row.pr_title,
-                    "state": row.pr_state,
-                    "draft": row.draft,
-                    "user": row.user,
-                    "head_branch": branch,
-                    "base_branch": row.base_branch,
-                    "additions": row.additions,
-                    "deletions": row.deletions,
-                    "changed_files": row.changed_files,
-                    "updated_at": row.updated_at,
-                },
-            }
+            return {"pr": _branch_pr_to_dict(row)}
 
     # Cache miss — ask GitHub and persist the result for next time.
-    from deathstar_server.app_state import github_service
-
     try:
         repo_root = git_service.resolve_target(name)
         pr_data = await github_service.find_pull_request_for_branch(
@@ -1163,44 +1186,14 @@ async def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
     if not pr_data:
         return {"pr": None}
 
-    # Persist to BranchPR cache so subsequent loads are instant.
     try:
-        with Session(db_engine) as session:
-            session.merge(BranchPR(
-                repo=name,
-                branch=branch,
-                pr_number=pr_data["number"],
-                pr_url=pr_data["url"],
-                pr_title=pr_data["title"],
-                pr_state=pr_data["state"],
-                draft=bool(pr_data.get("draft")),
-                user=pr_data.get("user", ""),
-                base_branch=pr_data.get("base_branch", "main"),
-                additions=pr_data.get("additions"),
-                deletions=pr_data.get("deletions"),
-                changed_files=pr_data.get("changed_files"),
-                updated_at=pr_data.get("updated_at", ""),
-            ))
-            session.commit()
+        row = _upsert_branch_pr(name, branch, pr_data)
     except SQLAlchemyError:
         logger.warning("failed to cache branch PR for %s/%s", name, branch, exc_info=True)
+        # Still return the data even if caching failed.
+        return {"pr": pr_data}
 
-    return {
-        "pr": {
-            "number": pr_data["number"],
-            "url": pr_data["url"],
-            "title": pr_data["title"],
-            "state": pr_data["state"],
-            "draft": pr_data.get("draft", False),
-            "user": pr_data.get("user", ""),
-            "head_branch": branch,
-            "base_branch": pr_data.get("base_branch", "main"),
-            "additions": pr_data.get("additions"),
-            "deletions": pr_data.get("deletions"),
-            "changed_files": pr_data.get("changed_files"),
-            "updated_at": pr_data.get("updated_at"),
-        },
-    }
+    return {"pr": _branch_pr_to_dict(row)}
 
 
 # ---------------------------------------------------------------------------
@@ -1211,8 +1204,7 @@ async def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
 @web_router.get("/reviews/comments")
 async def get_pr_review_comments(pr_url: str = Query(...)) -> list[dict]:
     """Fetch existing review comments on a PR for context."""
-    from deathstar_server.app_state import github_service
-    from deathstar_server.services.github import GitHubService
+
 
     owner, repo_name, pr_number = GitHubService.parse_pr_url(pr_url)
     return await github_service.fetch_pr_review_comments(
@@ -1223,8 +1215,7 @@ async def get_pr_review_comments(pr_url: str = Query(...)) -> list[dict]:
 @web_router.post("/reviews/post-to-github")
 async def post_review_to_github(request: PostReviewRequest) -> dict:
     """Post a structured review to GitHub as a PR review with inline comments."""
-    from deathstar_server.app_state import github_service
-    from deathstar_server.services.github import GitHubService
+
 
     owner, repo_name, pr_number = GitHubService.parse_pr_url(request.pr_url)
     result = await github_service.submit_review(
@@ -1245,8 +1236,7 @@ async def post_review_to_github(request: PostReviewRequest) -> dict:
 @web_router.post("/reviews/apply-suggestions", response_model=ApplySuggestionsResponse)
 async def apply_suggestions(request: ApplySuggestionsRequest) -> ApplySuggestionsResponse:
     """Commit accepted code suggestions to the PR branch via GitHub Git Data API."""
-    from deathstar_server.app_state import github_service
-    from deathstar_server.services.github import GitHubService
+
 
     owner, repo_name, pr_number = GitHubService.parse_pr_url(request.pr_url)
     result = await github_service.apply_file_changes(
