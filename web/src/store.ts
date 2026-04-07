@@ -371,7 +371,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
     await get().loadConversations(selectedRepo);
     // Load branch PR for the new branch and auto-select if in review mode
     api.fetchBranchPR(selectedRepo, branch).then((pr) => {
-      if (pr && get().selectedRepo === selectedRepo) {
+      if (pr && get().selectedRepo === selectedRepo && get().repoContext?.branch === branch) {
         set((s) => ({
           pullRequests: [...s.pullRequests.filter((p) => p.number !== pr.number), pr],
           selectedPR: s.workflow === "review" && !s.selectedPR ? pr : s.selectedPR,
