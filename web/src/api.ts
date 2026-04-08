@@ -8,6 +8,8 @@ import type {
   FeedbackResponse,
   GitHubRepo,
   MemoryEntry,
+  PreviewDeployment,
+  PreviewProvidersStatus,
   PullRequestSummary,
   RepoContext,
   RepoInfo,
@@ -404,4 +406,51 @@ export interface AgentSessionInfo {
 
 export async function fetchAgentSessions(): Promise<AgentSessionInfo[]> {
   return request<AgentSessionInfo[]>("/agent/sessions");
+}
+
+/* ── Preview Deployments ──────────────────────────────────────── */
+
+export async function createPreview(
+  repoName: string,
+  branch: string,
+  provider: string = "render",
+): Promise<PreviewDeployment> {
+  return request<PreviewDeployment>(
+    `/repos/${encodeURIComponent(repoName)}/previews`,
+    {
+      method: "POST",
+      body: JSON.stringify({ branch, provider }),
+    },
+  );
+}
+
+export async function fetchPreviews(
+  repoName: string,
+): Promise<PreviewDeployment[]> {
+  return request<PreviewDeployment[]>(
+    `/repos/${encodeURIComponent(repoName)}/previews`,
+  );
+}
+
+export async function fetchPreview(
+  repoName: string,
+  previewId: string,
+): Promise<PreviewDeployment> {
+  return request<PreviewDeployment>(
+    `/repos/${encodeURIComponent(repoName)}/previews/${encodeURIComponent(previewId)}`,
+  );
+}
+
+export async function deletePreview(
+  repoName: string,
+  previewId: string,
+): Promise<void> {
+  await request(
+    `/repos/${encodeURIComponent(repoName)}/previews/${encodeURIComponent(previewId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function fetchPreviewProviders(): Promise<PreviewProvidersStatus> {
+  return request<PreviewProvidersStatus>("/preview-providers");
 }

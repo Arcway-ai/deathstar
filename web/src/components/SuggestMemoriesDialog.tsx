@@ -68,7 +68,7 @@ export default function SuggestMemoriesDialog() {
           {!loading &&
             suggestions.map((s, i) => (
               <div
-                key={s.content}
+                key={s.id}
                 className="group rounded-lg border border-border-subtle bg-bg-deep/50 p-3 transition-colors hover:border-accent/20"
               >
                 <p className="text-xs text-text-primary leading-relaxed mb-2">

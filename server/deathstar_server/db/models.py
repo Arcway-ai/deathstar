@@ -6,7 +6,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, ForeignKey, Index, String, Text
+from sqlalchemy import Column, ForeignKey, Index, String, Text, text
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -237,4 +237,40 @@ class BranchPR(SQLModel, table=True):
     additions: Optional[int] = Field(default=None)
     deletions: Optional[int] = Field(default=None)
     changed_files: Optional[int] = Field(default=None)
+    mergeable: Optional[bool] = Field(default=None)
+    mergeable_state: Optional[str] = Field(default=None)
+    updated_at: str = Field(nullable=False, default_factory=_utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Preview Deployments
+# ---------------------------------------------------------------------------
+
+
+class PreviewDeployment(SQLModel, table=True):
+    __tablename__ = "preview_deployments"
+    __table_args__ = (
+        Index("idx_preview_repo_branch", "repo", "branch"),
+        Index("idx_preview_status", "status"),
+        # Partial unique index: only one active preview per repo+branch+provider.
+        # PostgreSQL enforces this atomically to close the TOCTOU race.
+        # SQLite doesn't support partial indexes via this syntax, but the
+        # application-level check + IntegrityError fallback covers that case.
+        Index(
+            "uq_preview_active_repo_branch_provider",
+            "repo", "branch", "provider",
+            unique=True,
+            postgresql_where=text("status NOT IN ('destroyed', 'failed')"),
+        ),
+    )
+
+    id: str = Field(primary_key=True)
+    repo: str = Field(nullable=False)
+    branch: str = Field(nullable=False)
+    provider: str = Field(nullable=False)  # "render" | "vercel"
+    provider_service_id: str = Field(nullable=False)
+    status: str = Field(nullable=False, default="pending")
+    preview_url: Optional[str] = Field(default=None)
+    error_message: Optional[str] = Field(default=None)
+    created_at: str = Field(nullable=False, default_factory=_utcnow)
     updated_at: str = Field(nullable=False, default_factory=_utcnow)

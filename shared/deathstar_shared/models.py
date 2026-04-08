@@ -174,6 +174,8 @@ class GitHubPullRequestSummary(DeathStarModel):
     changed_files: int | None = None
     draft: bool = False
     url: str
+    mergeable: bool | None = None
+    mergeable_state: str | None = None
 
 
 class ChatRequest(DeathStarModel):
@@ -438,3 +440,39 @@ class RepoContextResponse(DeathStarModel):
     file_tree: list[str]
     conflict_files: list[str] = []
     branch_switched_from: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Preview Deployments
+# ---------------------------------------------------------------------------
+
+
+class PreviewProvider(str, Enum):
+    RENDER = "render"
+    VERCEL = "vercel"
+
+
+class PreviewStatus(str, Enum):
+    PENDING = "pending"
+    BUILDING = "building"
+    LIVE = "live"
+    FAILED = "failed"
+    DESTROYED = "destroyed"
+
+
+class CreatePreviewRequest(DeathStarModel):
+    branch: str = Field(min_length=1, pattern=r"^[a-zA-Z0-9_./-]+$", max_length=200)
+    provider: PreviewProvider = PreviewProvider.RENDER
+
+
+class PreviewDeploymentResponse(DeathStarModel):
+    id: str
+    repo: str
+    branch: str
+    provider: PreviewProvider
+    provider_service_id: str
+    status: PreviewStatus
+    preview_url: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime

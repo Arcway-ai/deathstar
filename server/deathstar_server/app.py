@@ -23,6 +23,7 @@ from deathstar_server.session import (
 from deathstar_server.web.agent_ws import agent_ws_router
 from deathstar_server.web.routes import web_router
 from deathstar_server.web.terminal import terminal_router
+from deathstar_server.web.preview_routes import preview_router
 from deathstar_server.web.webhooks import webhook_router
 from deathstar_shared.models import ErrorCode
 
@@ -89,6 +90,7 @@ app.include_router(web_router)
 app.include_router(agent_ws_router)
 app.include_router(terminal_router)
 app.include_router(webhook_router)
+app.include_router(preview_router)
 
 # Mount React build output (web/dist/assets)
 _react_dist = Path(__file__).parent / "web" / "dist"
