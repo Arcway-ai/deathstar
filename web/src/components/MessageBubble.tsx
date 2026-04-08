@@ -157,10 +157,11 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
     return review;
   }, [message.content, message.workflow, setActiveReview]);
 
+  const isPlanWorkflow = message.workflow === "plan";
   const structuredPlan = useMemo(() => {
-    if (message.workflow !== "plan") return null;
+    if (!isPlanWorkflow) return null;
     return tryParsePlan(message.content);
-  }, [message.content, message.workflow]);
+  }, [message.content, isPlanWorkflow]);
 
   const copyToClipboard = async (content: string) => {
     try {
@@ -206,8 +207,8 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
 
       {structuredReview ? (
         <ReviewPanel review={structuredReview} />
-      ) : structuredPlan ? (
-        <PlanPanel plan={structuredPlan} />
+      ) : isPlanWorkflow ? (
+        <PlanPanel plan={structuredPlan} rawContent={structuredPlan ? undefined : message.content} />
       ) : (
         <div className="prose max-w-none overflow-hidden text-sm text-text-primary">
           <ReactMarkdown

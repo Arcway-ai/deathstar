@@ -352,6 +352,14 @@ class UpdateDocumentRequest(DeathStarModel):
     document_type: Literal["tech_spec", "design_doc", "bug_analysis", "plan", "notes"] | None = None
 
 
+class DistillPlanRequest(DeathStarModel):
+    conversation_id: str = Field(min_length=1, max_length=200)
+
+
+class DistillPlanResponse(DeathStarModel):
+    plan: dict[str, object]
+
+
 # ---------------------------------------------------------------------------
 # Feedback
 # ---------------------------------------------------------------------------
