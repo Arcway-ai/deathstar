@@ -1463,7 +1463,7 @@ async def distill_plan_endpoint(request: DistillPlanRequest) -> dict[str, object
     plan = await distill_plan(messages, settings.anthropic_api_key)
     if plan is None:
         raise AppError(
-            ErrorCode.PROVIDER_ERROR,
+            ErrorCode.UPSTREAM_UNAVAILABLE,
             "Failed to distill plan from conversation — try adding more detail",
             status_code=502,
         )

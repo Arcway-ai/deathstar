@@ -1212,13 +1212,8 @@ export const useStore = create<Store>()(persist((set, get) => ({
   distillPlan: async () => {
     const { conversationId } = get();
     if (!conversationId) return null;
-    try {
-      const { plan } = await api.distillPlan(conversationId);
-      return plan as unknown as StructuredPlan;
-    } catch (e) {
-      toast.error("Failed to structure plan", e instanceof Error ? e.message : undefined);
-      return null;
-    }
+    const { plan } = await api.distillPlan(conversationId);
+    return plan as unknown as StructuredPlan;
   },
 
   /* ── Review Actions ─────────────────────────────────────────── */
