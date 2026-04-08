@@ -32,6 +32,15 @@ export default function ChatView() {
   const conflictFiles = repoContext?.conflict_files ?? [];
 
   const conversationId = activeConversation?.id;
+
+  // Reset atBottom when the conversation changes so the "Jump to latest"
+  // button doesn't flash for one render frame after a key-triggered remount.
+  // initialTopMostItemIndex guarantees the new Virtuoso starts at the bottom,
+  // so pre-setting true keeps the UI consistent.
+  useEffect(() => {
+    setAtBottom(true);
+    followingRef.current = true;
+  }, [conversationId]);
   const messages = activeConversation?.messages ?? [];
   const hasAgentBlocks = agentStream.blocks.length > 0;
   const isWaiting = sending && !hasAgentBlocks;
