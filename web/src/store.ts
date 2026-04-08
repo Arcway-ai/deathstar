@@ -1578,12 +1578,12 @@ function _ensureAgentSocket(): void {
 
       useStore.getState().loadConversations(s.selectedRepo ?? undefined);
 
-      // If the agent used write tools, refresh repo context and notify
-      const writeTools = new Set(["Write", "Edit", "Bash"]);
-      const madeChanges = blocks?.some(
-        (b) => b.type === "tool_use" && writeTools.has((b as { tool?: string }).tool ?? ""),
-      );
-      if (madeChanges && s.selectedRepo) {
+      // Always refresh repo state after agent completes — the agent may have
+      // written files, committed, switched branches, etc.  The old heuristic
+      // only refreshed when it detected Write/Edit/Bash tool uses, which missed
+      // cases like "agent committed everything" (dirty→clean) or indirect writes
+      // via Bash, leaving the Save button out of sync.
+      if (s.selectedRepo) {
         Promise.all([
           api.fetchRepoContext(s.selectedRepo),
           api.fetchRepos(),
@@ -1596,7 +1596,13 @@ function _ensureAgentSocket(): void {
               `"${context.branch_switched_from}" was deleted on remote (PR merged?). Switched to ${context.branch}.`,
             );
             useStore.getState().loadBranches();
-          } else {
+          }
+          // Only show "changes applied" toast if the agent actually used write tools
+          const writeTools = new Set(["Write", "Edit", "Bash"]);
+          const madeChanges = blocks?.some(
+            (b) => b.type === "tool_use" && writeTools.has((b as { tool?: string }).tool ?? ""),
+          );
+          if (madeChanges && !context.branch_switched_from) {
             toast.success("Branch updated", `Changes applied to ${context.branch}`);
           }
         }).catch(() => { /* ignore */ });
@@ -1808,6 +1814,9 @@ function _ensureAgentSocket(): void {
         }
         case "branch_update":
           refreshBranches();
+          break;
+        case "repo_dirty":
+          refreshRepos();
           break;
         case "queue_completed": {
           const convId = event.data.conversation_id as string;

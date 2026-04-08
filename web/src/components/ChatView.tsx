@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, forwardRef, type ComponentPropsWithRef } from "react";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useStore } from "../store";
 import { ThinkingDeathStar, DeathStarSpinner } from "./DeathStarLoader";
 import MessageBubble from "./MessageBubble";
@@ -14,15 +15,14 @@ export default function ChatView() {
   const sending = useStore((s) => s.sending);
   const compacting = useStore((s) => s.compacting);
   const agentStream = useStore((s) => s.agentStream);
-  const streamingText = useStore((s) => s.streamingText);
   const streamingProgress = useStore((s) => s.streamingProgress);
   const selectedRepo = useStore((s) => s.selectedRepo);
   const persona = useStore((s) => s.persona);
   const repoContext = useStore((s) => s.repoContext);
   const sendMessage = useStore((s) => s.sendMessage);
   const setWorkflow = useStore((s) => s.setWorkflow);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [isNearBottom, setIsNearBottom] = useState(true);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [atBottom, setAtBottom] = useState(true);
 
   const conflictFiles = repoContext?.conflict_files ?? [];
 
@@ -30,92 +30,115 @@ export default function ChatView() {
   const hasAgentBlocks = agentStream.blocks.length > 0;
   const isWaiting = sending && !hasAgentBlocks;
 
-  const NEAR_BOTTOM_THRESHOLD = 150;
-
-  const checkIfNearBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD;
-    setIsNearBottom(nearBottom);
-  }, []);
+  // Build a virtual item list: messages + optional tail items (stream, waiting, compacting)
+  const tailItems = useMemo(() => {
+    const items: string[] = [];
+    if (hasAgentBlocks) items.push("agent-stream");
+    if (isWaiting) items.push("waiting");
+    if (compacting && !isWaiting) items.push("compacting");
+    return items;
+  }, [hasAgentBlocks, isWaiting, compacting]);
+  const totalCount = messages.length + tailItems.length;
 
   const scrollToBottom = useCallback(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      setIsNearBottom(true);
-    }
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth" });
   }, []);
 
-  // Auto-scroll only when already near the bottom (RAF-throttled to avoid
-  // excessive DOM writes during fast streaming)
-  useEffect(() => {
-    if (!isNearBottom || !scrollRef.current) return;
-    const id = requestAnimationFrame(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [messages.length, sending, compacting, agentStream.blocks.length, streamingText.length, isNearBottom]);
+  // Follow output keeps virtuoso pinned to the bottom while streaming,
+  // but only when the user is already at the bottom — scrolling up to
+  // re-read earlier messages must not be overridden.
+  const followOutput = useCallback(
+    (isAtBottom: boolean) =>
+      isAtBottom && (sending || hasAgentBlocks || compacting) ? "smooth" : false,
+    [sending, hasAgentBlocks, compacting],
+  );
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
       <Starfield />
       {/* Messages area */}
-      <div
-        ref={scrollRef}
-        onScroll={checkIfNearBottom}
-        className="relative z-10 flex-1 overflow-y-auto px-3 py-3 scroll-smooth sm:px-4 sm:py-4"
-      >
-        {messages.length === 0 && !sending ? (
+      {messages.length === 0 && !sending ? (
+        <div className="relative z-10 flex-1 overflow-y-auto px-3 py-3 sm:px-4 sm:py-4">
           <EmptyState repo={selectedRepo!} personaName={persona.shortName} />
-        ) : (
-          <div className="mx-auto max-w-3xl space-y-6">
-            {messages.map((msg, i) => (
-              <MessageBubble key={msg.id} message={msg} index={i} />
-            ))}
-            {hasAgentBlocks && (
-              <div className="animate-fade-in">
-                <AgentStreamView blocks={agentStream.blocks} />
-                {streamingProgress && (
-                  <p className="mt-2 text-xs text-text-muted animate-pulse">
-                    {streamingProgress}
-                  </p>
-                )}
-              </div>
-            )}
-            {isWaiting && (
-              <div>
-                {streamingProgress && (
-                  <p className="mb-2 text-xs text-text-muted animate-pulse">
-                    {streamingProgress}
-                  </p>
-                )}
-                <ThinkingDeathStar />
-              </div>
-            )}
-            {compacting && !isWaiting && (
-              <div className="flex items-center gap-2 rounded-lg bg-bg-surface px-4 py-3 animate-fade-in">
-                <DeathStarSpinner />
-                <p className="text-xs text-text-muted animate-pulse">
-                  Compacting conversation context...
-                </p>
-              </div>
-            )}
-          </div>
-        )}
+        </div>
+      ) : (
+        <div className="relative z-10 flex-1">
+          <Virtuoso
+            ref={virtuosoRef}
+            totalCount={totalCount}
+            atBottomStateChange={setAtBottom}
+            atBottomThreshold={150}
+            followOutput={followOutput}
+            overscan={{ main: 600, reverse: 600 }}
+            increaseViewportBy={{ top: 300, bottom: 300 }}
+            className="h-full"
+            components={{
+              Scroller: ScrollerWithPadding,
+              List: ListContainer,
+            }}
+            itemContent={(index) => {
+              // Message items
+              if (index < messages.length) {
+                return (
+                  <div className="pb-6">
+                    <MessageBubble message={messages[index]!} index={index} />
+                  </div>
+                );
+              }
+              // Tail items (stream, waiting, compacting)
+              const tailKey = tailItems[index - messages.length];
+              if (tailKey === "agent-stream") {
+                return (
+                  <div className="pb-6 animate-fade-in">
+                    <AgentStreamView blocks={agentStream.blocks} />
+                    {streamingProgress && (
+                      <p className="mt-2 text-xs text-text-muted animate-pulse">
+                        {streamingProgress}
+                      </p>
+                    )}
+                  </div>
+                );
+              }
+              if (tailKey === "waiting") {
+                return (
+                  <div className="pb-6">
+                    {streamingProgress && (
+                      <p className="mb-2 text-xs text-text-muted animate-pulse">
+                        {streamingProgress}
+                      </p>
+                    )}
+                    <ThinkingDeathStar />
+                  </div>
+                );
+              }
+              if (tailKey === "compacting") {
+                return (
+                  <div className="pb-6 flex items-center gap-2 rounded-lg bg-bg-surface px-4 py-3 animate-fade-in">
+                    <DeathStarSpinner />
+                    <p className="text-xs text-text-muted animate-pulse">
+                      Compacting conversation context...
+                    </p>
+                  </div>
+                );
+              }
+              return null;
+            }}
+          />
 
-        {/* Jump to latest — anchored inside the scroll container */}
-        {!isNearBottom && sending && (
-          <div className="sticky bottom-3 z-20 flex justify-center pointer-events-none">
-            <button
-              onClick={scrollToBottom}
-              className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-surface/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-lg backdrop-blur transition-colors hover:bg-bg-surface hover:text-text-primary"
-            >
-              <ArrowDown size={12} />
-              Jump to latest
-            </button>
-          </div>
-        )}
-      </div>
+          {/* Jump to latest */}
+          {!atBottom && sending && (
+            <div className="absolute bottom-3 left-0 right-0 z-20 flex justify-center pointer-events-none">
+              <button
+                onClick={scrollToBottom}
+                className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-surface/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-lg backdrop-blur transition-colors hover:bg-bg-surface hover:text-text-primary"
+              >
+                <ArrowDown size={12} />
+                Jump to latest
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Conflict banner */}
       {conflictFiles.length > 0 && (
@@ -161,6 +184,34 @@ export default function ChatView() {
     </div>
   );
 }
+
+/* ── Custom Virtuoso sub-components ──────────────────────────── */
+
+/** Outer scroll container — mirrors the original padding & scroll-smooth. */
+const ScrollerWithPadding = forwardRef<HTMLDivElement, ComponentPropsWithRef<"div">>(
+  ({ className, ...props }, ref) => (
+    <div
+      {...props}
+      ref={ref}
+      className={`px-3 py-3 scroll-smooth sm:px-4 sm:py-4 ${className ?? ""}`}
+    />
+  ),
+);
+ScrollerWithPadding.displayName = "ScrollerWithPadding";
+
+/** Inner list wrapper — mirrors max-w-3xl + spacing. */
+const ListContainer = forwardRef<HTMLDivElement, ComponentPropsWithRef<"div">>(
+  ({ className, ...props }, ref) => (
+    <div
+      {...props}
+      ref={ref}
+      className={`mx-auto max-w-3xl ${className ?? ""}`}
+    />
+  ),
+);
+ListContainer.displayName = "ListContainer";
+
+/* ── Empty state ─────────────────────────────────────────────── */
 
 function EmptyState({ repo, personaName }: { repo: string; personaName: string }) {
   return (

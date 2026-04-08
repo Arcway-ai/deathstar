@@ -10,6 +10,7 @@ import re
 import subprocess
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -378,6 +379,15 @@ class AgentRunner:
         self._exit_stack: AsyncExitStack | None = None
         self._task_group: TaskGroup | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._on_branch_release: Callable[[], None] | None = None
+
+    def set_on_branch_release(self, callback: Callable[[], None]) -> None:
+        """Register a callback invoked whenever a branch lock is released.
+
+        Used by the queue worker to wake up immediately when a branch
+        becomes available for processing queued items.
+        """
+        self._on_branch_release = callback
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -524,6 +534,7 @@ class AgentRunner:
         if not _check_claude_auth(self._settings):
             if branch:
                 self._branch_locks.pop((repo, branch), None)
+                self._notify_branch_release()
             raise AppError(ErrorCode.AUTH_ERROR, "Claude is not authenticated. Open the Claude menu to connect your account.")
 
         # Look up SDK session ID for multi-turn continuity
@@ -724,6 +735,11 @@ class AgentRunner:
 
     def get_active_branches(self) -> dict[tuple[str, str], str]:
         return dict(self._branch_locks)
+
+    def _notify_branch_release(self) -> None:
+        """Fire the on_branch_release callback (e.g. to wake the queue worker)."""
+        if self._on_branch_release:
+            self._on_branch_release()
 
     def is_branch_active(self, repo: str, branch: str) -> bool:
         holder = self._branch_locks.get((repo, branch))
@@ -976,11 +992,15 @@ class AgentRunner:
 
         finally:
             # Always release branch lock on completion/failure and clear tracked task
+            released = False
             if agent.branch:
                 lock_key = (agent.repo, agent.branch)
                 if self._branch_locks.get(lock_key) == agent.conversation_id:
                     self._branch_locks.pop(lock_key, None)
+                    released = True
             agent._execute_task = None
+            if released:
+                self._notify_branch_release()
 
     async def _read_compact(self, agent: RunningAgent) -> None:
         try:
@@ -1156,10 +1176,14 @@ class AgentRunner:
     def _cleanup_agent(self, agent: RunningAgent) -> None:
         """Remove an agent and release its branch lock."""
         self._agents.pop(agent.conversation_id, None)
+        released = False
         if agent.branch:
             lock_key = (agent.repo, agent.branch)
             if self._branch_locks.get(lock_key) == agent.conversation_id:
                 self._branch_locks.pop(lock_key, None)
+                released = True
+        if released:
+            self._notify_branch_release()
 
     async def _reaper_loop(self) -> None:
         """Periodically clean up stale and completed agents."""

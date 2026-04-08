@@ -1,7 +1,7 @@
 ---
 name: code-review-methodology
 description: Use this skill when reviewing a pull request, code changes, or diff. Activates when the user asks to review, critique, or analyze code changes.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Code Review Methodology
@@ -58,7 +58,7 @@ You are reviewing code changes. Your goal is to catch bugs, security issues, and
 
 ## Confidence Calibration
 
-Only flag issues you are genuinely confident about. Each finding must include a confidence score:
+Only flag issues you are genuinely confident about:
 
 - **High confidence (90%+)**: You can demonstrate the bug or explain exactly how it fails
 - **Medium confidence (70-89%)**: The pattern is suspicious but you'd want to verify
@@ -66,46 +66,43 @@ Only flag issues you are genuinely confident about. Each finding must include a 
 
 Do NOT report findings below 50% confidence. If you aren't sure, investigate further before flagging.
 
-## Findings Format
+## Output Format — STRICT
 
-For each issue found:
+**Your final response MUST be a single JSON object** matching the schema below. Do NOT wrap it in markdown code fences. Do NOT include any text before or after the JSON. The UI parses this JSON to render an interactive review panel with per-finding actions.
 
+```json
+{
+  "summary": "1-3 sentence summary of key findings and overall code quality",
+  "verdict": "approve | request_changes | comment",
+  "findings": [
+    {
+      "id": "finding-1",
+      "file": "path/to/file.ext",
+      "line_start": 42,
+      "line_end": 45,
+      "severity": "error | warning | suggestion | nitpick",
+      "title": "Short description of the issue",
+      "body": "Detailed explanation: what's wrong, why it matters, and how to fix it. Be specific — cite the exact code pattern and explain the failure mode.",
+      "original_code": "the problematic code snippet (or null if not applicable)",
+      "suggested_code": "the fixed code snippet (or null if no concrete fix)"
+    }
+  ]
+}
 ```
-### [severity] Short description
 
-**File**: `path/to/file.ext:line`
-**Confidence**: High | Medium | Low
-**Category**: Bug | Security | Design | Performance | Testing
+### Field Guidelines
 
-**Problem**: What's wrong and why it matters.
-
-**Suggestion**: How to fix it, with code if possible.
-```
-
-Severity:
-- **critical** — Will cause data loss, security breach, or crash in production
-- **high** — Bug that will manifest under normal usage
-- **medium** — Design issue or edge case that could cause problems
-- **low** — Improvement that would make the code better
-- **nit** — Style or preference (use sparingly)
-
-## Summary Format
-
-End the review with:
-
-```
-## Summary
-
-**Verdict**: Approve | Request Changes | Needs Discussion
-
-**Key Findings**: 1-3 sentence summary of the most important issues.
-
-**Stats**: X critical, Y high, Z medium findings across N files.
-```
+- **summary**: Concise overview. Mention the verdict rationale and highlight the most critical finding if any.
+- **verdict**: `approve` = no blocking issues, ship it. `request_changes` = has error/warning findings that must be fixed. `comment` = has suggestions but nothing blocking.
+- **findings**: Ordered by severity (errors first, then warnings, then suggestions, then nitpicks).
+- **severity mapping**: `error` = critical/high (will break in production). `warning` = medium (edge case or design issue). `suggestion` = low (improvement). `nitpick` = style preference (use sparingly).
+- **line_start / line_end**: Use `null` if the finding is about the file in general rather than specific lines.
+- **original_code / suggested_code**: Include when you have a concrete code fix. Use `null` when the fix is architectural or can't be shown as a snippet.
+- If the change is solid and you have no findings, return `{"summary": "LGTM — [brief note on what you verified]", "verdict": "approve", "findings": []}`.
 
 ## Rules
 
 - Be specific. "This might have issues" is useless. "Line 42 will throw a NullPointerException when `user.email` is None because the `.lower()` call isn't guarded" is useful.
-- Suggest fixes, don't just point out problems.
-- Acknowledge good patterns — if the author did something well, say so briefly.
-- If the change is solid and you have no findings, say "LGTM" with a brief note on what you verified.
+- Suggest fixes, don't just point out problems. Put concrete code in `suggested_code`.
+- Acknowledge good patterns in the `summary` — if the author did something well, say so briefly.
+- **Output ONLY the JSON object.** No preamble, no markdown fences, no commentary after. The UI will not render the review panel if the output is not valid JSON.

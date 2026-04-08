@@ -56,3 +56,7 @@ event_bus = EventBus()
 queue_store = QueueStore(engine)
 agent_runner = AgentRunner(conversation_store, worktree_manager, event_bus, settings, git_service, github_service)
 queue_worker = QueueWorker(queue_store, conversation_store, worktree_manager, event_bus, agent_runner)
+# Wake the queue worker immediately when any agent releases a branch lock,
+# so queued messages for that branch are picked up without waiting for the
+# next poll interval.
+agent_runner.set_on_branch_release(queue_worker.notify)
