@@ -216,7 +216,7 @@ export default function App() {
 
       const key = e.key.toLowerCase();
 
-      // Cmd+S → quick save (allowed even when focused in inputs)
+      // Cmd+S → quick save (works even when focused in inputs)
       if (key === "s") {
         e.preventDefault();
         const { selectedRepo, quickSave } = useStore.getState();
@@ -224,12 +224,7 @@ export default function App() {
         return;
       }
 
-      // Skip palette shortcuts when the user is typing in an input/textarea
-      // to avoid hijacking text-editing key combos.
-      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
-      if (tag === "input" || tag === "textarea") return;
-
-      // Cmd+E → repo switcher (only when authenticated with repos)
+      // Cmd+E → repo switcher (works even when focused in inputs)
       if (key === "e") {
         e.preventDefault();
         const { claudeAuth } = useStore.getState();
@@ -242,7 +237,7 @@ export default function App() {
         return;
       }
 
-      // Cmd+J → branch switcher (only when a repo is selected)
+      // Cmd+J → branch switcher (works even when focused in inputs)
       if (key === "j") {
         e.preventDefault();
         const { selectedRepo, claudeAuth } = useStore.getState();

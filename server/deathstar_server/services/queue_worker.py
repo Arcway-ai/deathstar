@@ -14,6 +14,7 @@ from deathstar_server.services.agent_runner import (
 from deathstar_server.services.event_bus import (
     EVENT_QUEUE_COMPLETED,
     EVENT_QUEUE_FAILED,
+    EVENT_QUEUE_PROCESSING,
     EventBus,
     RepoEvent,
     SOURCE_LOCAL,
@@ -177,6 +178,21 @@ class QueueWorker:
 
         self._current_item_id = item_id
         self._current_conversation_id = conversation_id
+
+        # Notify the frontend that this queue item is now being processed.
+        # The frontend uses conversation_id to auto-subscribe to the agent
+        # stream so it can show the queued message and streaming response.
+        self._event_bus.publish(RepoEvent(
+            event_type=EVENT_QUEUE_PROCESSING,
+            repo=repo,
+            source=SOURCE_LOCAL,
+            data={
+                "queue_item_id": item_id,
+                "conversation_id": conversation_id,
+                "message": message,
+                "workflow": workflow_str,
+            },
+        ))
 
         try:
             # Start agent with auto_accept=True (queue items don't have interactive permission flow)

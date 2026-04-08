@@ -1460,11 +1460,14 @@ async def distill_plan_endpoint(request: DistillPlanRequest) -> dict[str, object
     if not messages:
         raise AppError(ErrorCode.INVALID_REQUEST, "conversation has no messages")
 
-    plan = await distill_plan(messages, settings.anthropic_api_key)
-    if plan is None:
+    from deathstar_server.services.document_distiller import DistillError
+
+    try:
+        plan = await distill_plan(messages, settings.anthropic_api_key)
+    except DistillError as exc:
         raise AppError(
             ErrorCode.UPSTREAM_UNAVAILABLE,
-            "Failed to distill plan from conversation — try adding more detail",
+            exc.reason,
             status_code=502,
         )
     return {"plan": plan}

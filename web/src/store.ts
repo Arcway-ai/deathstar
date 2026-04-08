@@ -1827,13 +1827,55 @@ function _ensureAgentSocket(): void {
         case "repo_dirty":
           refreshRepos();
           break;
+        case "queue_processing": {
+          const convId = event.data.conversation_id as string;
+          const queueMessage = (event.data.message as string) || "";
+          const queueItemId = event.data.queue_item_id as string;
+
+          // Refresh the queue badge (item moves from pending → processing)
+          useStore.getState().loadQueue();
+
+          // If this is for the active conversation, subscribe to the agent
+          // stream so we get real-time text/tool/thinking deltas.
+          if (s.conversationId === convId) {
+            // Post the queued user message into the chat UI
+            const queuedUserMsg: ConversationMessage = {
+              id: `queued-${queueItemId}`,
+              role: "user",
+              content: queueMessage,
+              timestamp: new Date().toISOString(),
+            };
+            useStore.setState((prev) => ({
+              sending: true,
+              streamingText: "",
+              streamingProgress: null,
+              agentStream: { blocks: [], pendingPermission: null, isStreaming: true, startedAt: Date.now(), statusMessage: "Processing queued message…" },
+              activeConversation: prev.activeConversation
+                ? { ...prev.activeConversation, messages: [...prev.activeConversation.messages, queuedUserMsg] }
+                : null,
+            }));
+
+            // Subscribe to the agent's event stream for live streaming
+            _ensureAgentSocket();
+            _agentSocket!.subscribeAgent(convId);
+          } else {
+            toast.info("Processing queued message", queueMessage.slice(0, 80));
+          }
+          break;
+        }
         case "queue_completed": {
           const convId = event.data.conversation_id as string;
           const preview = (event.data.message_preview as string) || "Queued message";
-          toast.success("Queued message completed", preview);
           useStore.getState().loadQueue();
-          // Refresh conversation if it matches the active one
-          if (s.conversationId === convId) {
+          // If this conversation is active, the result event from the agent
+          // subscription already updated the UI — just refresh side data.
+          // Otherwise show a toast.
+          if (s.conversationId !== convId) {
+            toast.success("Queued message completed", preview);
+          }
+          // Refresh conversation if it matches the active one and we weren't
+          // subscribed (e.g. user navigated to this convo after processing started)
+          if (s.conversationId === convId && !s.sending) {
             api.fetchConversation(convId).then((c) => useStore.setState({ activeConversation: c })).catch(() => {});
           }
           refreshContext();
@@ -1845,6 +1887,13 @@ function _ensureAgentSocket(): void {
           const errorMsg = (event.data.error as string) || "Unknown error";
           toast.error("Queued message failed", errorMsg);
           useStore.getState().loadQueue();
+          // Reset sending state if this was for the active conversation
+          if (event.data.conversation_id === s.conversationId) {
+            useStore.setState({
+              sending: false,
+              agentStream: { blocks: [], pendingPermission: null, isStreaming: false, startedAt: null, statusMessage: null },
+            });
+          }
           break;
         }
       }
