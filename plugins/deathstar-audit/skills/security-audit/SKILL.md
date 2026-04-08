@@ -1,7 +1,7 @@
 ---
 name: security-audit
 description: Use this skill when conducting a security audit, vulnerability assessment, or security review of a codebase. Activates when the user asks to audit, scan, or assess security posture.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Security Audit Methodology
@@ -94,37 +94,44 @@ For each dependency file found:
 2. Flag dependencies that haven't been updated in >1 year
 3. Note any dependencies pulled from non-standard registries
 
-## Findings Format
+## Output Format — STRICT
 
-Report each finding with:
+**Your final response MUST be a single JSON object** matching the schema below. Do NOT wrap it in markdown code fences. Do NOT include any text before or after the JSON. The UI parses this JSON to render an interactive review panel with per-finding actions.
 
+```json
+{
+  "summary": "1-3 sentence summary of the security posture and key vulnerabilities found",
+  "verdict": "approve | request_changes | comment",
+  "findings": [
+    {
+      "id": "finding-1",
+      "file": "path/to/file.ext",
+      "line_start": 42,
+      "line_end": 45,
+      "severity": "error | warning | suggestion | nitpick",
+      "title": "Short description of the vulnerability",
+      "body": "Detailed explanation: what the vulnerability is, why it matters, what an attacker could achieve, and the OWASP category (e.g. A03 Injection). Include evidence — the specific code pattern or configuration that creates the vulnerability.",
+      "original_code": "the vulnerable code snippet (or null if not applicable)",
+      "suggested_code": "the remediated code snippet (or null if no concrete fix)"
+    }
+  ]
+}
 ```
-### [SEVERITY] Finding Title
 
-**Category**: OWASP A0X — Category Name
-**Location**: `path/to/file.py:42`
-**Confidence**: High | Medium | Low
+### Field Guidelines
 
-**Description**: What the vulnerability is and why it matters.
-
-**Evidence**: The specific code pattern or configuration that creates the vulnerability.
-
-**Remediation**: Concrete steps to fix, with code examples where possible.
-
-**Risk**: What an attacker could achieve by exploiting this.
-```
-
-Severity levels:
-- **CRITICAL**: Remote code execution, authentication bypass, data breach
-- **HIGH**: Privilege escalation, significant data exposure, injection
-- **MEDIUM**: Information disclosure, missing security controls, weak crypto
-- **LOW**: Best practice violations, minor information leakage
-- **INFO**: Observations and hardening recommendations
+- **summary**: Concise overview of the security posture. Mention the most critical finding and overall risk level.
+- **verdict**: `approve` = no security issues found, passes audit. `request_changes` = has error/warning findings that must be remediated. `comment` = has suggestions for hardening but nothing exploitable.
+- **severity mapping**: `error` = CRITICAL/HIGH (RCE, auth bypass, data breach, injection). `warning` = MEDIUM (info disclosure, missing controls, weak crypto). `suggestion` = LOW (best practice violations). `nitpick` = INFO (hardening recommendations).
+- **line_start / line_end**: Use `null` if the finding is about configuration or architecture rather than specific lines.
+- **original_code / suggested_code**: Include working remediation code when possible. Use `null` when the fix is architectural.
+- If no vulnerabilities are found, return `{"summary": "No vulnerabilities found — [brief note on what was audited]", "verdict": "approve", "findings": []}`.
 
 ## Rules
 
 - Never report a finding you aren't confident about. False positives erode trust.
-- Always include the exact file path and line number.
-- Provide working remediation code, not just descriptions.
+- Always include the exact file path and line number in the `file` and `line_start` fields.
+- Provide working remediation code in `suggested_code`, not just descriptions.
 - Prioritize findings by exploitability, not just theoretical severity.
-- If you find no vulnerabilities in a category, say so explicitly — don't pad the report.
+- If you find no vulnerabilities in a category, that's fine — only report real findings.
+- **Output ONLY the JSON object.** No preamble, no markdown fences, no commentary after. The UI will not render the audit panel if the output is not valid JSON.
