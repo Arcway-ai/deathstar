@@ -1,4 +1,7 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import {
   AlertTriangle,
   CircleDot,
@@ -7,7 +10,9 @@ import {
   FileCode,
   HelpCircle,
   Layers,
+  Loader2,
   Save,
+  Sparkles,
   Zap,
 } from "lucide-react";
 import { useStore } from "../store";
@@ -41,7 +46,30 @@ const effortConfig: Record<TaskEffort, { color: string; label: string }> = {
 
 /* ── PlanPanel ────────────────────────────────────────────────── */
 
-export default function PlanPanel({ plan }: { plan: StructuredPlan }) {
+interface PlanPanelProps {
+  /** Parsed structured plan (when the agent returned valid JSON). */
+  plan: StructuredPlan | null;
+  /** Raw markdown/prose content (when JSON parsing failed). */
+  rawContent?: string;
+}
+
+export default function PlanPanel({ plan, rawContent }: PlanPanelProps) {
+  const [distilledPlan, setDistilledPlan] = useState<StructuredPlan | null>(null);
+
+  // Use distilled plan if we successfully converted raw content
+  const activePlan = plan ?? distilledPlan;
+
+  if (activePlan) {
+    return <StructuredPlanView plan={activePlan} />;
+  }
+
+  // Raw content mode — show markdown with distill button
+  return <RawPlanView rawContent={rawContent ?? ""} onDistilled={setDistilledPlan} />;
+}
+
+/* ── StructuredPlanView (existing rich rendering) ────────────── */
+
+function StructuredPlanView({ plan }: { plan: StructuredPlan }) {
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const createDocument = useStore((s) => s.createDocument);
@@ -197,6 +225,82 @@ export default function PlanPanel({ plan }: { plan: StructuredPlan }) {
           </AlertDescription>
         </Alert>
       )}
+    </div>
+  );
+}
+
+/* ── RawPlanView (unstructured plan with distill button) ─────── */
+
+function RawPlanView({
+  rawContent,
+  onDistilled,
+}: {
+  rawContent: string;
+  onDistilled: (plan: StructuredPlan) => void;
+}) {
+  const [distilling, setDistilling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const conversationId = useStore((s) => s.conversationId);
+  const distillPlan = useStore((s) => s.distillPlan);
+
+  const handleDistill = async () => {
+    if (!conversationId) return;
+    setDistilling(true);
+    setError(null);
+    try {
+      const plan = await distillPlan();
+      if (plan) {
+        onDistilled(plan);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to distill plan");
+    } finally {
+      setDistilling(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 animate-fade-in">
+      {/* Header card with distill action */}
+      <Card size="sm" className="ring-0 rounded-lg border border-border-subtle bg-bg-surface/50">
+        <CardHeader className="p-4 pb-0">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold text-text-primary font-display">
+            <Layers size={16} className="text-accent shrink-0" />
+            Plan
+          </CardTitle>
+          <CardAction>
+            <button
+              onClick={handleDistill}
+              disabled={distilling || !conversationId}
+              className="flex items-center gap-1.5 rounded-md px-2.5 h-7 text-[11px] font-medium border border-accent/30 text-accent hover:bg-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Use AI to structure this plan into phases and tasks"
+            >
+              {distilling ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Sparkles size={12} />
+              )}
+              {distilling ? "Structuring..." : "Structure Plan"}
+            </button>
+          </CardAction>
+          <CardDescription className="text-xs text-text-secondary leading-relaxed">
+            This plan was returned as prose. Click <strong>Structure Plan</strong> to
+            distill it into phases, tasks, and files so you can save it as a document.
+          </CardDescription>
+        </CardHeader>
+        {error && (
+          <CardContent className="px-4 pb-3">
+            <p className="text-xs text-error">{error}</p>
+          </CardContent>
+        )}
+      </Card>
+
+      {/* Rendered markdown content */}
+      <div className="prose max-w-none overflow-hidden text-sm text-text-primary rounded-lg border border-border-subtle p-4 bg-bg-surface/30">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+          {rawContent}
+        </ReactMarkdown>
+      </div>
     </div>
   );
 }
