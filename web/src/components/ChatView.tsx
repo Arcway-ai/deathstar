@@ -62,7 +62,11 @@ export default function ChatView() {
     // moving target, leaving the user stuck in limbo.
     const behavior = sending ? "auto" : "smooth";
     followingRef.current = true;
-    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior });
+    // Use align: "end" so the *bottom* of the last item aligns with the
+    // viewport bottom.  The default ("start") only brings the top of the
+    // last item into view, leaving content below the fold when the item
+    // is taller than the viewport (e.g. long agent responses).
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior });
   }, [sending]);
 
   const handleAtBottomChange = useCallback((bottom: boolean) => {

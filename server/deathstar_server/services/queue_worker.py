@@ -14,6 +14,7 @@ from deathstar_server.services.agent_runner import (
 from deathstar_server.services.event_bus import (
     EVENT_QUEUE_COMPLETED,
     EVENT_QUEUE_FAILED,
+    EVENT_QUEUE_PROCESSING,
     EventBus,
     RepoEvent,
     SOURCE_LOCAL,
@@ -198,6 +199,22 @@ class QueueWorker:
             if not result:
                 raise RuntimeError("Failed to subscribe to agent")
             sub_id, recv_stream = result
+
+            # Notify the frontend now that the agent is registered and
+            # subscribable.  The frontend uses conversation_id to auto-
+            # subscribe to the agent stream for live text/tool/thinking
+            # deltas and to post the queued user message into the chat.
+            self._event_bus.publish(RepoEvent(
+                event_type=EVENT_QUEUE_PROCESSING,
+                repo=repo,
+                source=SOURCE_LOCAL,
+                data={
+                    "queue_item_id": item_id,
+                    "conversation_id": conversation_id,
+                    "message": message,
+                    "workflow": workflow_str,
+                },
+            ))
 
             result_event: AgentEvent | None = None
             try:

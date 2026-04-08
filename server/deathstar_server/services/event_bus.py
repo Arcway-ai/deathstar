@@ -20,6 +20,7 @@ EVENT_REPO_DIRTY = "repo_dirty"
 EVENT_BRANCH_UPDATE = "branch_update"
 
 # Event types — queue
+EVENT_QUEUE_PROCESSING = "queue_processing"
 EVENT_QUEUE_COMPLETED = "queue_completed"
 EVENT_QUEUE_FAILED = "queue_failed"
 
