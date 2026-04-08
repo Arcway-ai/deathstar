@@ -147,7 +147,7 @@ export default function ActionBar() {
           if (canMakePR) {
             if (branchPR) {
               sendMessage(
-                `Update the PR description and title for PR #${branchPR.number} based on the latest commits and changes on this branch.`,
+                `First, commit any uncommitted changes locally with a clean commit message. Then update the PR description and title for PR #${branchPR.number} based on the latest commits and changes on this branch.`,
               );
             } else {
               sendMessage(

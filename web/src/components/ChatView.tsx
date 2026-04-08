@@ -47,10 +47,19 @@ export default function ChatView() {
   // Follow output keeps virtuoso pinned to the bottom while streaming,
   // but only when the user is already at the bottom — scrolling up to
   // re-read earlier messages must not be overridden.
+  // Use "auto" (instant) during rapid streaming to avoid stacking smooth-
+  // scroll animations that fight each other and cause visual snapping.
+  // Use "smooth" for discrete events (new message added, compacting) where
+  // a single animated scroll looks polished.
+  const isStreaming = sending && hasAgentBlocks;
   const followOutput = useCallback(
-    (isAtBottom: boolean) =>
-      isAtBottom && (sending || hasAgentBlocks || compacting) ? "smooth" : false,
-    [sending, hasAgentBlocks, compacting],
+    (isAtBottom: boolean) => {
+      if (!isAtBottom) return false;
+      if (isStreaming) return "auto";
+      if (sending || compacting) return "smooth";
+      return false;
+    },
+    [isStreaming, sending, compacting],
   );
 
   return (
@@ -125,15 +134,15 @@ export default function ChatView() {
             }}
           />
 
-          {/* Jump to latest */}
-          {!atBottom && sending && (
+          {/* Jump to latest — always visible when scrolled away from bottom */}
+          {!atBottom && (
             <div className="absolute bottom-3 left-0 right-0 z-20 flex justify-center pointer-events-none">
               <button
                 onClick={scrollToBottom}
-                className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-surface/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-lg backdrop-blur transition-colors hover:bg-bg-surface hover:text-text-primary"
+                className={`pointer-events-auto flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-surface/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-lg backdrop-blur transition-all duration-300 hover:bg-bg-surface hover:text-text-primary ${sending ? "animate-pulse" : ""}`}
               >
                 <ArrowDown size={12} />
-                Jump to latest
+                {sending ? "Follow along" : "Jump to latest"}
               </button>
             </div>
           )}
@@ -187,13 +196,18 @@ export default function ChatView() {
 
 /* ── Custom Virtuoso sub-components ──────────────────────────── */
 
-/** Outer scroll container — mirrors the original padding & scroll-smooth. */
+/** Outer scroll container — adds padding and disables horizontal scroll.
+ *  Note: we intentionally omit `scroll-smooth` here — it would override
+ *  Virtuoso's `followOutput: "auto"` (instant) at the CSS level, re-
+ *  introducing the stacking-animation jank.  The manual "Jump to latest"
+ *  button passes `behavior: "smooth"` explicitly, so that still animates. */
 const ScrollerWithPadding = forwardRef<HTMLDivElement, ComponentPropsWithRef<"div">>(
-  ({ className, ...props }, ref) => (
+  ({ className, style, ...props }, ref) => (
     <div
       {...props}
       ref={ref}
-      className={`px-3 py-3 scroll-smooth sm:px-4 sm:py-4 ${className ?? ""}`}
+      style={{ ...style, overflowX: "hidden" }}
+      className={`px-3 py-3 sm:px-4 sm:py-4 ${className ?? ""}`}
     />
   ),
 );
