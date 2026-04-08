@@ -20,7 +20,7 @@ from deathstar_server.app_state import engine as db_engine, event_bus, git_servi
 from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
 from deathstar_server.services.github import GitHubService
-from deathstar_server.services.document_distiller import distill_plan
+from deathstar_server.services.document_distiller import DistillError, distill_plan
 from deathstar_server.services.memory_distiller import distill_memory, suggest_memories
 from deathstar_server.services.event_bus import (
     EVENT_BRANCH_UPDATE,
@@ -1459,8 +1459,6 @@ async def distill_plan_endpoint(request: DistillPlanRequest) -> dict[str, object
     ]
     if not messages:
         raise AppError(ErrorCode.INVALID_REQUEST, "conversation has no messages")
-
-    from deathstar_server.services.document_distiller import DistillError
 
     try:
         plan = await distill_plan(messages, settings.anthropic_api_key)

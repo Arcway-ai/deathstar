@@ -153,6 +153,10 @@ async def distill_plan(
             plan = _extract_json(raw_text)
             return _validate_plan(plan)
 
+        except anthropic.AuthenticationError as exc:
+            # Must be caught before APIError — AuthenticationError is a subclass
+            logger.warning("distill_plan auth failed: %s", exc)
+            raise DistillError("Anthropic API authentication failed") from exc
         except (anthropic.APIError, anthropic.APIConnectionError) as exc:
             last_error = exc
             logger.warning(
@@ -162,9 +166,6 @@ async def distill_plan(
             )
             # Retry on transient API errors
             continue
-        except anthropic.AuthenticationError as exc:
-            logger.warning("distill_plan auth failed: %s", exc)
-            raise DistillError("Anthropic API authentication failed") from exc
         except json.JSONDecodeError as exc:
             last_error = exc
             logger.warning(
