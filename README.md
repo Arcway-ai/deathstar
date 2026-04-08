@@ -488,6 +488,46 @@ npm run dev     # Starts Vite dev server on :5173, proxies API to :8080
 
 The Vite dev server proxies `/web/api/*` (including WebSocket) and `/v1/*` to `localhost:8080`.
 
+## Deploy Previews with Render
+
+You can configure [Render](https://render.com) to automatically spin up deploy previews for pull requests — giving reviewers a live, running instance of your changes before merging.
+
+### 1. Configure a Render Blueprint
+
+Add a `render.yaml` at the root of your repo to define the preview environment. The `previews.generation` field is **required** — without it, Render will not create preview instances for PRs. See the [Render Blueprint docs](https://render.com/docs/infrastructure-as-code) for the full spec.
+
+```yaml
+previews:
+  generation: automatic   # creates a preview on every PR; use "manual" for on-demand
+
+services:
+  - type: web
+    name: deathstar-preview
+    runtime: docker
+    dockerfilePath: ./docker/control-api.Dockerfile
+    envVars:
+      - key: DEATHSTAR_API_TOKEN
+        generateValue: true
+```
+
+### 2. Connect the Render GitHub App
+
+1. In the Render Dashboard, go to **Blueprints** and connect your repo
+2. Render's [GitHub App](https://render.com/docs/github) detects new PRs and automatically spins up preview instances based on `render.yaml`
+3. Each preview gets its own URL — Render posts it as a deployment status on the PR
+4. Previews are torn down when the PR is closed or merged
+
+### 3. Create a Render API Key (Optional)
+
+An API key is **not** required for the GitHub App preview flow above. You only need one if you want to trigger deployments from CI or call the [Render REST API](https://render.com/docs/api#1-create-an-api-key) directly:
+
+1. Go to your [Account Settings](https://dashboard.render.com/u/settings?add-api-key) in the Render Dashboard
+2. Click **"Create API Key"**
+3. Copy the key immediately — it is only shown once
+4. Store it as a repository secret (e.g. `RENDER_API_KEY` in GitHub Actions)
+
+> **Security:** Treat this key as a secret. Do not commit it to version control or share it publicly. If compromised, revoke it immediately in the dashboard and generate a new one.
+
 ## Testing
 
 ```bash
