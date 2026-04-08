@@ -311,6 +311,13 @@ export async function deleteDocument(id: string): Promise<void> {
   await request(`/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export async function distillPlan(conversationId: string): Promise<{ plan: Record<string, unknown> }> {
+  return request<{ plan: Record<string, unknown> }>("/documents/distill-plan", {
+    method: "POST",
+    body: JSON.stringify({ conversation_id: conversationId }),
+  });
+}
+
 /* ── Feedback ─────────────────────────────────────────────────── */
 
 export async function saveFeedback(req: FeedbackRequest): Promise<FeedbackResponse> {

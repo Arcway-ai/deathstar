@@ -20,6 +20,7 @@ from deathstar_server.app_state import engine as db_engine, event_bus, git_servi
 from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
 from deathstar_server.services.github import GitHubService
+from deathstar_server.services.document_distiller import distill_plan
 from deathstar_server.services.memory_distiller import distill_memory, suggest_memories
 from deathstar_server.services.event_bus import (
     EVENT_BRANCH_UPDATE,
@@ -37,6 +38,8 @@ from deathstar_shared.models import (
     ConversationDetail,
     ConversationSummary,
     CreateDocumentRequest,
+    DistillPlanRequest,
+    DistillPlanResponse,
     DocumentResponse,
     ErrorCode,
     FeedbackRequest,
@@ -1438,6 +1441,33 @@ def delete_document(document_id: str) -> dict[str, bool]:
     if not deleted:
         raise AppError(ErrorCode.INVALID_REQUEST, "document not found", status_code=404)
     return {"deleted": True}
+
+
+@web_router.post("/documents/distill-plan", response_model=DistillPlanResponse)
+async def distill_plan_endpoint(request: DistillPlanRequest) -> dict[str, object]:
+    """Distill a plan-workflow conversation into a StructuredPlan JSON."""
+    if not settings.anthropic_api_key:
+        raise AppError(ErrorCode.INTEGRATION_NOT_CONFIGURED, "Anthropic API key not configured")
+
+    conv = _get_conversation_store().get_conversation(request.conversation_id)
+    if conv is None:
+        raise AppError(ErrorCode.INVALID_REQUEST, "conversation not found", status_code=404)
+
+    messages = [
+        {"role": m.role, "content": m.content}
+        for m in conv.messages
+    ]
+    if not messages:
+        raise AppError(ErrorCode.INVALID_REQUEST, "conversation has no messages")
+
+    plan = await distill_plan(messages, settings.anthropic_api_key)
+    if plan is None:
+        raise AppError(
+            ErrorCode.PROVIDER_ERROR,
+            "Failed to distill plan from conversation — try adding more detail",
+            status_code=502,
+        )
+    return {"plan": plan}
 
 
 # ---------------------------------------------------------------------------
