@@ -99,5 +99,6 @@ Before outputting the JSON, verify:
 - **Read before planning.** Use Read, Glob, and Grep to understand the codebase. Plans based on assumptions about code structure are useless.
 - **Be concrete.** "Refactor the auth module" is not a task. "Add a `validate_session()` method to `session.py` that checks HMAC signature and expiry" is a task.
 - **Scope ruthlessly.** If something is nice-to-have but not required, mention it in `open_questions` or omit it entirely.
+- **Don't plan what you can just do.** If a task takes less than 5 minutes, it doesn't need a plan step — just do it.
 - **Surface trade-offs.** Every architectural decision has downsides. State them in the `overview` so the reader knows what they're trading away.
 - **Output ONLY the JSON object.** No preamble, no markdown fences, no commentary after. The UI will not render the plan panel if the output is not valid JSON.

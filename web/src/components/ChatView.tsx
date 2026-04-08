@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, forwardRef, type ComponentPropsWithRef } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useStore } from "../store";
 import { ThinkingDeathStar, DeathStarSpinner } from "./DeathStarLoader";
@@ -31,19 +31,25 @@ export default function ChatView() {
   const isWaiting = sending && !hasAgentBlocks;
 
   // Build a virtual item list: messages + optional tail items (stream, waiting, compacting)
-  const tailItems: string[] = [];
-  if (hasAgentBlocks) tailItems.push("agent-stream");
-  if (isWaiting) tailItems.push("waiting");
-  if (compacting && !isWaiting) tailItems.push("compacting");
+  const tailItems = useMemo(() => {
+    const items: string[] = [];
+    if (hasAgentBlocks) items.push("agent-stream");
+    if (isWaiting) items.push("waiting");
+    if (compacting && !isWaiting) items.push("compacting");
+    return items;
+  }, [hasAgentBlocks, isWaiting, compacting]);
   const totalCount = messages.length + tailItems.length;
 
   const scrollToBottom = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth" });
   }, []);
 
-  // Follow output keeps virtuoso pinned to the bottom while streaming
+  // Follow output keeps virtuoso pinned to the bottom while streaming,
+  // but only when the user is already at the bottom — scrolling up to
+  // re-read earlier messages must not be overridden.
   const followOutput = useCallback(
-    () => (sending || hasAgentBlocks || compacting ? "smooth" : false) as false | "smooth",
+    (isAtBottom: boolean) =>
+      isAtBottom && (sending || hasAgentBlocks || compacting) ? "smooth" : false,
     [sending, hasAgentBlocks, compacting],
   );
 
@@ -75,7 +81,7 @@ export default function ChatView() {
               if (index < messages.length) {
                 return (
                   <div className="pb-6">
-                    <MessageBubble key={messages[index]!.id} message={messages[index]!} index={index} />
+                    <MessageBubble message={messages[index]!} index={index} />
                   </div>
                 );
               }
@@ -181,16 +187,13 @@ export default function ChatView() {
 
 /* ── Custom Virtuoso sub-components ──────────────────────────── */
 
-import { forwardRef, type ComponentPropsWithRef } from "react";
-
 /** Outer scroll container — mirrors the original padding & scroll-smooth. */
 const ScrollerWithPadding = forwardRef<HTMLDivElement, ComponentPropsWithRef<"div">>(
-  (props, ref) => (
+  ({ className, ...props }, ref) => (
     <div
       {...props}
       ref={ref}
-      className="px-3 py-3 scroll-smooth sm:px-4 sm:py-4"
-      style={{ ...props.style }}
+      className={`px-3 py-3 scroll-smooth sm:px-4 sm:py-4 ${className ?? ""}`}
     />
   ),
 );
@@ -198,12 +201,11 @@ ScrollerWithPadding.displayName = "ScrollerWithPadding";
 
 /** Inner list wrapper — mirrors max-w-3xl + spacing. */
 const ListContainer = forwardRef<HTMLDivElement, ComponentPropsWithRef<"div">>(
-  (props, ref) => (
+  ({ className, ...props }, ref) => (
     <div
       {...props}
       ref={ref}
-      className="mx-auto max-w-3xl"
-      style={{ ...props.style }}
+      className={`mx-auto max-w-3xl ${className ?? ""}`}
     />
   ),
 );
