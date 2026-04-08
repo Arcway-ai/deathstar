@@ -69,10 +69,10 @@ export default function WorkflowPills() {
           <button
             key={w.id}
             onClick={() => setWorkflow(w.id)}
-            className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+            className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
               workflow === w.id
                 ? "bg-accent text-bg-deep"
-                : "bg-bg-surface text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
+                : "bg-bg-surface text-text-secondary hover:bg-bg-elevated hover:text-text-primary active:bg-bg-elevated"
             }`}
           >
             <w.icon size={12} />
@@ -81,7 +81,7 @@ export default function WorkflowPills() {
         ))}
 
         {/* Auto-accept toggle */}
-        <label className="ml-3 flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title="Auto-approve all tool usage (no permission prompts)">
+        <label className="ml-auto sm:ml-3 flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title="Auto-approve all tool usage (no permission prompts)">
           <input
             type="checkbox"
             checked={autoAccept}
@@ -89,7 +89,8 @@ export default function WorkflowPills() {
             className="h-3.5 w-3.5 rounded border-border-default accent-accent"
           />
           <Zap size={12} />
-          Auto-accept
+          <span className="hidden sm:inline">Auto-accept</span>
+          <span className="sm:hidden">Auto</span>
         </label>
 
       </div>

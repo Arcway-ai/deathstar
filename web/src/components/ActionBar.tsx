@@ -79,7 +79,7 @@ export default function ActionBar() {
   // Do we have any visible GitHub/Deploy buttons?
   const hasGitHubActions = canMakePR || canMerge || branchPR || hasPreviewProvider || hasAnyConflicts;
 
-  const btnBase = "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed";
+  const btnBase = "flex h-7 items-center gap-1 sm:gap-1.5 rounded-md px-2 sm:px-2.5 text-[11px] font-medium transition-colors active:opacity-80 disabled:opacity-30 disabled:cursor-not-allowed";
 
   return (
     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mb-1.5 px-0.5">
