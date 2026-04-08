@@ -209,7 +209,7 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
       ) : structuredPlan ? (
         <PlanPanel plan={structuredPlan} />
       ) : (
-        <div className="prose max-w-none text-sm text-text-primary">
+        <div className="prose max-w-none overflow-hidden text-sm text-text-primary">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeHighlight]}

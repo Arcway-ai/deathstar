@@ -189,10 +189,11 @@ export default function ChatView() {
 
 /** Outer scroll container — mirrors the original padding & scroll-smooth. */
 const ScrollerWithPadding = forwardRef<HTMLDivElement, ComponentPropsWithRef<"div">>(
-  ({ className, ...props }, ref) => (
+  ({ className, style, ...props }, ref) => (
     <div
       {...props}
       ref={ref}
+      style={{ ...style, overflowX: "hidden" }}
       className={`px-3 py-3 scroll-smooth sm:px-4 sm:py-4 ${className ?? ""}`}
     />
   ),
