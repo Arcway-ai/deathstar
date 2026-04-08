@@ -83,7 +83,7 @@ function BlockView({ block }: { block: AgentContentBlock }) {
 
 function TextBlockView({ text }: { text: string }) {
   return (
-    <div className="prose max-w-none text-sm text-text-primary">
+    <div className="prose min-w-0 max-w-none overflow-hidden text-sm text-text-primary">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
@@ -239,16 +239,16 @@ function PermissionRequestView({
         <div className="flex items-center gap-2">
           <button
             onClick={() => respondToPermission(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-success/20 px-3 py-1.5 text-xs font-medium text-success hover:bg-success/30 transition-colors"
+            className="flex items-center gap-1.5 rounded-lg bg-success/20 px-4 py-2 text-sm sm:px-3 sm:py-1.5 sm:text-xs font-medium text-success hover:bg-success/30 active:bg-success/40 transition-colors"
           >
-            <Check size={12} />
+            <Check size={14} className="sm:size-3" />
             Allow
           </button>
           <button
             onClick={() => respondToPermission(false)}
-            className="flex items-center gap-1.5 rounded-lg bg-error/20 px-3 py-1.5 text-xs font-medium text-error hover:bg-error/30 transition-colors"
+            className="flex items-center gap-1.5 rounded-lg bg-error/20 px-4 py-2 text-sm sm:px-3 sm:py-1.5 sm:text-xs font-medium text-error hover:bg-error/30 active:bg-error/40 transition-colors"
           >
-            <X size={12} />
+            <X size={14} className="sm:size-3" />
             Deny
           </button>
         </div>

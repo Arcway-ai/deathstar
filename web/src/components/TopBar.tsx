@@ -87,7 +87,7 @@ export default function TopBar() {
       {selectedRepo && (
         <button
           onClick={toggleRightPanel}
-          className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors ${
+          className={`flex items-center gap-1 sm:gap-1.5 rounded-md px-1.5 sm:px-2 py-1 text-xs transition-colors ${
             rightPanelOpen
               ? "bg-accent-muted text-accent"
               : "text-text-secondary hover:bg-bg-hover hover:text-text-primary"

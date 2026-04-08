@@ -215,7 +215,7 @@ export default function InputBar() {
           onKeyDown={handleKeyDown}
           placeholder={dragOver ? "Drop file to pin as context…" : placeholder}
           rows={1}
-          className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-text-primary placeholder:text-text-muted outline-none"
+          className="flex-1 resize-none bg-transparent px-2 py-1.5 text-base sm:text-sm text-text-primary placeholder:text-text-muted outline-none"
         />
         <button
           onClick={handleSubmit}

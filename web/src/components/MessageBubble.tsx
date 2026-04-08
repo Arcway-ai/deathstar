@@ -44,8 +44,8 @@ export default function MessageBubble({
 function UserMessage({ message }: { message: ConversationMessage }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent/15 px-4 py-2.5 text-sm text-text-primary">
-        <p className="whitespace-pre-wrap">{message.content}</p>
+      <div className="max-w-[90%] sm:max-w-[85%] min-w-0 rounded-2xl rounded-br-md bg-accent/15 px-3 py-2 sm:px-4 sm:py-2.5 text-sm text-text-primary">
+        <p className="whitespace-pre-wrap break-words">{message.content}</p>
       </div>
     </div>
   );
@@ -200,7 +200,7 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
   }, [message.agent_blocks]);
 
   return (
-    <div className="group border-l-2 border-accent/20 pl-3">
+    <div className="group min-w-0 border-l-2 border-accent/20 pl-3">
       {/* Agent tool history (thinking, tool calls, results) */}
       {nonTextBlocks && <AgentBlocksView blocks={nonTextBlocks} />}
 
@@ -239,22 +239,22 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
       )}
 
       {/* Metadata + actions */}
-      <div className="mt-1.5 flex items-center gap-3 text-[10px] text-text-muted">
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-text-muted">
         {message.model && (
-          <span className="flex items-center gap-1">
-            <Cpu size={10} />
-            {message.model}
+          <span className="flex items-center gap-1 truncate max-w-[140px] sm:max-w-none">
+            <Cpu size={10} className="shrink-0" />
+            <span className="truncate">{message.model}</span>
           </span>
         )}
         {message.duration_ms != null && (
           <span className="flex items-center gap-1">
-            <Clock size={10} />
+            <Clock size={10} className="shrink-0" />
             {(message.duration_ms / 1000).toFixed(1)}s
           </span>
         )}
         {message.usage?.total_tokens != null && (
           <span className="flex items-center gap-1" title={`${message.usage.input_tokens?.toLocaleString() ?? "?"} in / ${message.usage.output_tokens?.toLocaleString() ?? "?"} out`}>
-            <Hash size={10} />
+            <Hash size={10} className="shrink-0" />
             {message.usage.total_tokens.toLocaleString()}
           </span>
         )}
@@ -267,7 +267,7 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
           );
           return cost != null ? (
             <span className="flex items-center gap-1" title={`Estimated cost: ${formatCost(cost)}`}>
-              <Coins size={10} />
+              <Coins size={10} className="shrink-0" />
               {formatCost(cost)}
             </span>
           ) : null;
@@ -278,11 +278,11 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
           </span>
         )}
 
-        {/* Actions — visible on hover */}
-        <div className="ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        {/* Actions — always tappable on mobile, hover-reveal on desktop */}
+        <div className="ml-auto flex items-center gap-1 opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100">
           <button
             onClick={handleCopy}
-            className="rounded p-1 hover:bg-bg-hover"
+            className="rounded p-1.5 -m-0.5 hover:bg-bg-hover active:bg-bg-hover"
             title="Copy response"
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
@@ -290,7 +290,7 @@ function AssistantMessage({ message }: { message: ConversationMessage }) {
           <button
             onClick={handleThumbsUp}
             disabled={!!feedback || isDistilling}
-            className={`rounded p-1 hover:bg-bg-hover ${feedback === "thumbs_up" ? "text-success" : ""} ${isDistilling ? "animate-pulse" : ""}`}
+            className={`rounded p-1.5 -m-0.5 hover:bg-bg-hover active:bg-bg-hover ${feedback === "thumbs_up" ? "text-success" : ""} ${isDistilling ? "animate-pulse" : ""}`}
             title={isDistilling ? "Extracting memories..." : "Extract memories from this response"}
           >
             <ThumbsUp size={12} />

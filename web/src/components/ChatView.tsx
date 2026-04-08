@@ -129,11 +129,11 @@ export default function ChatView() {
       <Starfield />
       {/* Messages area */}
       {messages.length === 0 && !sending ? (
-        <div className="relative z-10 flex-1 overflow-y-auto px-3 py-3 sm:px-4 sm:py-4">
+        <div className="relative z-10 min-w-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4 sm:py-4">
           <EmptyState repo={selectedRepo!} personaName={persona.shortName} />
         </div>
       ) : (
-        <div className="relative z-10 flex-1">
+        <div className="relative z-10 min-w-0 flex-1">
           <Virtuoso
             key={conversationId ?? "__new"}
             ref={virtuosoRef}
@@ -248,8 +248,8 @@ export default function ChatView() {
       {/* Input area — pb-safe provides env(safe-area-inset-bottom) clearance
            for the home indicator on iPad/iPhone, with a responsive floor
            (0.75 rem mobile, 1 rem sm+) so desktop spacing is unchanged. */}
-      <div className="border-t border-border-subtle bg-bg-primary px-3 pt-2 pb-safe sm:px-4">
-        <div className="mx-auto max-w-3xl">
+      <div className="border-t border-border-subtle bg-bg-primary px-2 pt-2 pb-safe sm:px-4">
+        <div className="mx-auto max-w-3xl min-w-0">
           <WorkflowPills />
           <ActionBar />
           <InputBar />
