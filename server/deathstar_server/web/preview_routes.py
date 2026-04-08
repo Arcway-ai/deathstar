@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
+from sqlalchemy.exc import IntegrityError
 
 from sqlmodel import Session, select
 
@@ -65,7 +66,9 @@ async def create_preview(name: str, body: CreatePreviewRequest):
     repo_root = git_service.resolve_target(name)
     provider = _get_provider(body.provider)
 
-    # Guard: reject if an active preview already exists for this repo+branch+provider
+    # Application-level duplicate check (fast-path rejection).
+    # The partial unique index (uq_preview_active_repo_branch_provider) enforces
+    # this atomically at the DB level to close the TOCTOU race window.
     with Session(db_engine) as session:
         existing = session.exec(
             select(PreviewDeployment)
@@ -113,10 +116,26 @@ async def create_preview(name: str, body: CreatePreviewRequest):
         updated_at=now,
     )
 
-    with Session(db_engine) as session:
-        session.add(row)
-        session.commit()
-        session.refresh(row)
+    try:
+        with Session(db_engine) as session:
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+    except IntegrityError:
+        # Concurrent request won the race — clean up the Render service we just
+        # created, then return 409 so the caller retries or fetches the existing
+        # preview.
+        logger.warning(
+            "TOCTOU race: duplicate preview for %s/%s/%s — cleaning up Render service %s",
+            name, body.branch, body.provider, result.provider_service_id,
+        )
+        await provider.delete_preview(result.provider_service_id)
+        raise AppError(
+            ErrorCode.INVALID_REQUEST,
+            f"An active preview already exists for {name}/{body.branch} "
+            "(concurrent request won the race)",
+            status_code=409,
+        )
 
     logger.info(
         "Created preview deployment %s for %s/%s via %s",
