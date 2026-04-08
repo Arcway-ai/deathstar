@@ -90,7 +90,7 @@ async def create_preview(name: str, body: CreatePreviewRequest):
 
     # Generate a short, unique service name for the preview.
     # Sanitize branch name: Render requires alphanumeric + hyphens only.
-    safe_branch = re.sub(r"[^a-zA-Z0-9-]", "-", body.branch)
+    safe_branch = re.sub(r"[^a-zA-Z0-9-]", "-", body.branch).strip("-")
     short_id = uuid.uuid4().hex[:6]
     service_name = f"preview-{name}-{safe_branch}-{short_id}"[:50]
 
