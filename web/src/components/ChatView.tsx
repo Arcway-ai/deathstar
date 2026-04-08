@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, forwardRef, type ComponentPropsWithRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, forwardRef, type ComponentPropsWithRef } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useStore } from "../store";
 import { ThinkingDeathStar, DeathStarSpinner } from "./DeathStarLoader";
@@ -24,6 +24,11 @@ export default function ChatView() {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [atBottom, setAtBottom] = useState(true);
 
+  // Tracks explicit user intent to follow streaming output.  Set when the
+  // user clicks "Follow along" and cleared when they scroll away manually.
+  // Using a ref (not state) avoids re-render loops inside scroll callbacks.
+  const followingRef = useRef(true);
+
   const conflictFiles = repoContext?.conflict_files ?? [];
 
   const conversationId = activeConversation?.id;
@@ -42,26 +47,73 @@ export default function ChatView() {
   const totalCount = messages.length + tailItems.length;
 
   const scrollToBottom = useCallback(() => {
-    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "smooth" });
+    // During active streaming, use instant scroll so the user lands at the
+    // bottom immediately and followOutput can take over.  Smooth scroll
+    // races against rapid content growth and often falls short of the
+    // moving target, leaving the user stuck in limbo.
+    const behavior = sending ? "auto" : "smooth";
+    followingRef.current = true;
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior });
+  }, [sending]);
+
+  const handleAtBottomChange = useCallback((bottom: boolean) => {
+    setAtBottom(bottom);
+    if (bottom) {
+      // Arrived at the bottom — confirm follow intent so followOutput
+      // continues to pin us there.
+      followingRef.current = true;
+    }
+    // Note: we do NOT clear followingRef when bottom becomes false here
+    // because Virtuoso briefly reports not-at-bottom during rapid content
+    // growth even while following.  The ref is only cleared by the
+    // isScrolling handler below when the user actively drags/flicks.
   }, []);
 
-  // Follow output keeps virtuoso pinned to the bottom while streaming,
-  // but only when the user is already at the bottom — scrolling up to
-  // re-read earlier messages must not be overridden.
-  // Use "auto" (instant) during rapid streaming to avoid stacking smooth-
-  // scroll animations that fight each other and cause visual snapping.
-  // Use "smooth" for discrete events (new message added, compacting) where
-  // a single animated scroll looks polished.
+  // Clear follow intent when the user manually scrolls (drag / wheel / flick).
+  // Virtuoso fires isScrolling=true on any scroll including programmatic ones,
+  // but we only clear the ref when the user ends up NOT at the bottom — that
+  // distinguishes a manual scroll-up from a programmatic snap-to-bottom.
+  const handleIsScrolling = useCallback((scrolling: boolean) => {
+    if (!scrolling && !atBottom) {
+      followingRef.current = false;
+    }
+  }, [atBottom]);
+
+  // Follow output keeps virtuoso pinned to the bottom while streaming.
+  //
+  // The callback receives Virtuoso's own `isAtBottom` check, but that can
+  // lag behind rapid content growth (the single "agent-stream" tail item
+  // gets taller without totalCount changing, so Virtuoso's height-change
+  // detection isn't always timely).  We also honour `followingRef` — the
+  // explicit user intent set by clicking "Follow along" — so we keep
+  // scrolling even when Virtuoso briefly thinks we're not at the bottom.
+  //
+  // Return values:
+  //   "auto"  — instant scroll (streaming: prevents stacking smooth animations)
+  //   "smooth"— CSS-animated scroll (discrete events like message completion)
+  //   false   — no auto-scroll (user is reading earlier messages)
   const isStreaming = sending && hasAgentBlocks;
   const followOutput = useCallback(
     (isAtBottom: boolean) => {
-      if (!isAtBottom) return false;
+      if (!isAtBottom && !followingRef.current) return false;
       if (isStreaming) return "auto";
       if (sending || compacting) return "smooth";
       return false;
     },
     [isStreaming, sending, compacting],
   );
+
+  // Safety-net: during streaming the "agent-stream" tail item grows
+  // taller in-place without totalCount changing.  Virtuoso's followOutput
+  // may not fire reliably for pure height growth, so we manually nudge the
+  // scroll position whenever the block count changes and the user intends
+  // to follow.
+  const blockCount = agentStream.blocks.length;
+  useEffect(() => {
+    if (isStreaming && followingRef.current) {
+      virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
+    }
+  }, [blockCount, isStreaming]);
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
@@ -78,9 +130,10 @@ export default function ChatView() {
             ref={virtuosoRef}
             initialTopMostItemIndex={totalCount > 0 ? totalCount - 1 : 0}
             totalCount={totalCount}
-            atBottomStateChange={setAtBottom}
+            atBottomStateChange={handleAtBottomChange}
             atBottomThreshold={150}
             followOutput={followOutput}
+            isScrolling={handleIsScrolling}
             overscan={{ main: 600, reverse: 600 }}
             increaseViewportBy={{ top: 300, bottom: 300 }}
             className="h-full"
