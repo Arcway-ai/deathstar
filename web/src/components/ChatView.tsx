@@ -139,7 +139,7 @@ export default function ChatView() {
             <div className="absolute bottom-3 left-0 right-0 z-20 flex justify-center pointer-events-none">
               <button
                 onClick={scrollToBottom}
-                className={`pointer-events-auto flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-surface/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-lg backdrop-blur transition-colors hover:bg-bg-surface hover:text-text-primary ${sending ? "animate-pulse" : ""}`}
+                className={`pointer-events-auto flex items-center gap-1.5 rounded-full border border-border-subtle bg-bg-surface/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-lg backdrop-blur transition-all duration-300 hover:bg-bg-surface hover:text-text-primary ${sending ? "animate-pulse" : ""}`}
               >
                 <ArrowDown size={12} />
                 {sending ? "Follow along" : "Jump to latest"}
@@ -196,14 +196,18 @@ export default function ChatView() {
 
 /* ── Custom Virtuoso sub-components ──────────────────────────── */
 
-/** Outer scroll container — mirrors the original padding & scroll-smooth. */
+/** Outer scroll container — adds padding and disables horizontal scroll.
+ *  Note: we intentionally omit `scroll-smooth` here — it would override
+ *  Virtuoso's `followOutput: "auto"` (instant) at the CSS level, re-
+ *  introducing the stacking-animation jank.  The manual "Jump to latest"
+ *  button passes `behavior: "smooth"` explicitly, so that still animates. */
 const ScrollerWithPadding = forwardRef<HTMLDivElement, ComponentPropsWithRef<"div">>(
   ({ className, style, ...props }, ref) => (
     <div
       {...props}
       ref={ref}
       style={{ ...style, overflowX: "hidden" }}
-      className={`px-3 py-3 scroll-smooth sm:px-4 sm:py-4 ${className ?? ""}`}
+      className={`px-3 py-3 sm:px-4 sm:py-4 ${className ?? ""}`}
     />
   ),
 );
