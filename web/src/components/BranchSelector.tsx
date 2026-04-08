@@ -30,6 +30,21 @@ export default function BranchSelector() {
     return map;
   }, [pullRequests]);
 
+  // Sort: default (main/master) → local/both → remote-only, alphabetical within each tier
+  const sortedBranches = useMemo(() => {
+    const tier = (b: BranchInfo): number => {
+      if (b.name === "main" || b.name === "master") return 0;
+      if (b.location !== "remote") return 1; // local or both
+      return 2; // remote-only
+    };
+    return [...branches].sort((a, b) => {
+      const ta = tier(a);
+      const tb = tier(b);
+      if (ta !== tb) return ta - tb;
+      return a.name.localeCompare(b.name);
+    });
+  }, [branches]);
+
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [inlineCreate, setInlineCreate] = useState(false);
@@ -235,7 +250,7 @@ export default function BranchSelector() {
             ) : branches.length === 0 ? (
               <p className="px-3 py-2 text-xs text-text-muted">No branches found</p>
             ) : (
-              branches.map((branch) => {
+              sortedBranches.map((branch) => {
                 const isRemoteOnly = branch.location === "remote";
                 const isCurrent = branch.name === currentBranch;
                 return (
