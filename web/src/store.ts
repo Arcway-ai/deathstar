@@ -32,6 +32,11 @@ import type {
   WorkflowKind,
 } from "./types";
 
+let _suggestionId = 0;
+function withIds(suggestions: { content: string; tags: string[] }[]) {
+  return suggestions.map((s) => ({ ...s, id: String(++_suggestionId) }));
+}
+
 interface Store {
   /* ── Repos ─────────────────────────────────────────────────── */
   repos: RepoInfo[];
@@ -137,7 +142,7 @@ interface Store {
   deleteMemory: (id: string) => Promise<void>;
 
   /* ── Memory Suggestions ────────────────────────────────────── */
-  suggestedMemories: { content: string; tags: string[] }[];
+  suggestedMemories: { id: string; content: string; tags: string[] }[];
   suggestingMemories: boolean;
   suggestMemoriesOpen: boolean;
   setSuggestMemoriesOpen: (open: boolean) => void;
@@ -1062,7 +1067,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
         set({ suggestMemoriesOpen: false });
         return;
       }
-      set({ suggestedMemories: res.suggestions });
+      set({ suggestedMemories: withIds(res.suggestions) });
     } catch (e) {
       set({ memoryDistillingId: null, suggestingMemories: false, suggestMemoriesOpen: false });
       toast.error("Failed to suggest memories", e instanceof Error ? e.message : "Please try again");
@@ -1096,7 +1101,7 @@ export const useStore = create<Store>()(persist((set, get) => ({
         set({ suggestingMemories: false, suggestMemoriesOpen: false });
         return;
       }
-      set({ suggestedMemories: res.suggestions, suggestingMemories: false });
+      set({ suggestedMemories: withIds(res.suggestions), suggestingMemories: false });
     } catch (e) {
       set({ suggestingMemories: false, suggestMemoriesOpen: false });
       toast.error("Failed to suggest memories", e instanceof Error ? e.message : "Please try again");
