@@ -1614,6 +1614,19 @@ function _ensureAgentSocket(): void {
           if (madeChanges && !context.branch_switched_from) {
             toast.success("Branch updated", `Changes applied to ${context.branch}`);
           }
+          // Refresh branch PR — the agent may have created or updated a PR
+          // (e.g. via "Make PR" button or gh pr create in Bash). Without this
+          // the new PR won't appear in the UI until the user navigates away.
+          const repo = useStore.getState().selectedRepo;
+          if (repo && context.branch) {
+            api.fetchBranchPR(repo, context.branch).then((pr) => {
+              if (pr && useStore.getState().selectedRepo === repo) {
+                useStore.setState((prev) => ({
+                  pullRequests: [...prev.pullRequests.filter((p) => p.number !== pr.number), pr],
+                }));
+              }
+            }).catch(() => {});
+          }
         }).catch(() => { /* ignore */ });
       }
 
