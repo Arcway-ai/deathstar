@@ -26,6 +26,7 @@ export default function ChatView() {
 
   const conflictFiles = repoContext?.conflict_files ?? [];
 
+  const conversationId = activeConversation?.id;
   const messages = activeConversation?.messages ?? [];
   const hasAgentBlocks = agentStream.blocks.length > 0;
   const isWaiting = sending && !hasAgentBlocks;
@@ -73,7 +74,9 @@ export default function ChatView() {
       ) : (
         <div className="relative z-10 flex-1">
           <Virtuoso
+            key={conversationId ?? "__new"}
             ref={virtuosoRef}
+            initialTopMostItemIndex={totalCount > 0 ? totalCount - 1 : 0}
             totalCount={totalCount}
             atBottomStateChange={setAtBottom}
             atBottomThreshold={150}

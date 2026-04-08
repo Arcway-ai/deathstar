@@ -488,6 +488,49 @@ npm run dev     # Starts Vite dev server on :5173, proxies API to :8080
 
 The Vite dev server proxies `/web/api/*` (including WebSocket) and `/v1/*` to `localhost:8080`.
 
+## Deploy Previews with Render
+
+You can configure [Render](https://render.com) to automatically spin up deploy previews for pull requests — giving reviewers a live, running instance of your changes before merging.
+
+### 1. Create a Render API Key
+
+Follow the [Render API docs](https://render.com/docs/api#1-create-an-api-key) to create an API key:
+
+1. Go to your [Account Settings](https://dashboard.render.com/u/settings?add-api-key) in the Render Dashboard
+2. Click **"Create API Key"**
+3. Copy the key immediately — it is only shown once
+
+> **Security:** Treat this key as a secret. Do not commit it to version control or share it publicly. If compromised, revoke it immediately in the dashboard and generate a new one.
+
+### 2. Add the API Key to Your Repository
+
+Store the API key as a repository secret so your CI pipeline can trigger Render previews:
+
+- **GitHub:** Go to **Settings > Secrets and variables > Actions** and add `RENDER_API_KEY`
+
+### 3. Configure a Render Blueprint
+
+Add a `render.yaml` at the root of your repo to define the preview environment. See the [Render Blueprint docs](https://render.com/docs/infrastructure-as-code) for the full spec. A minimal web service example:
+
+```yaml
+services:
+  - type: web
+    name: deathstar-preview
+    runtime: docker
+    dockerfilePath: ./docker/control-api.Dockerfile
+    envVars:
+      - key: DEATHSTAR_API_TOKEN
+        generateValue: true
+```
+
+### 4. Enable Preview Environments
+
+1. In the Render Dashboard, go to **Blueprints** and connect your repo
+2. Enable **Preview Environments** for the blueprint
+3. Render will automatically create a preview instance for each new pull request and tear it down when the PR is closed
+
+Each preview gets its own URL, making it easy for reviewers to test changes in a live environment.
+
 ## Testing
 
 ```bash
