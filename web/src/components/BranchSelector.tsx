@@ -172,7 +172,10 @@ export default function BranchSelector() {
           if (v) { setInlineCreate(false); setCreating(false); setError(null); loadBranches(); }
         }}
       >
-        <PopoverTrigger className="flex items-center gap-1.5 rounded-md bg-bg-surface px-2 py-1 text-xs hover:bg-bg-hover transition-colors">
+        <PopoverTrigger
+          className="flex items-center gap-1.5 rounded-md bg-bg-surface px-2 py-1 text-xs hover:bg-bg-hover transition-colors"
+          title={currentBranch}
+        >
           <GitBranch size={12} className="text-text-muted" />
           <span className="font-mono text-text-secondary max-w-[100px] truncate">
             {currentBranch}
