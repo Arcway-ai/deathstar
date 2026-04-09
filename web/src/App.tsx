@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { FolderGit2, GitBranch } from "lucide-react";
-import { isModKey } from "./lib/utils";
+import { isModKey } from "@/lib/utils";
 import { useStore } from "./store";
 import * as api from "./api";
 import { initSession } from "./api";

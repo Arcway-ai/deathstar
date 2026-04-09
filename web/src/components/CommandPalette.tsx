@@ -110,8 +110,6 @@ export default function CommandPalette({
 
   if (!open) return null;
 
-  const modKey = modKeyLabel;
-
   return (
     <>
       {/* Backdrop */}
@@ -129,7 +127,7 @@ export default function CommandPalette({
           <span className="text-xs font-medium text-text-secondary">{title}</span>
           {triggerKey && (
             <span className="text-[10px] text-text-muted">
-              {modKey}{triggerKey.toUpperCase()} to cycle
+              {modKeyLabel}{triggerKey.toUpperCase()} to cycle
             </span>
           )}
         </div>
