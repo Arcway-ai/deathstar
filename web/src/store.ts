@@ -791,18 +791,24 @@ export const useStore = create<Store>()(persist((set, get) => ({
         : "";
       effectiveMessage = `Review PR #${selectedPR.number}: ${selectedPR.title}\n${selectedPR.url}\nBranch: ${selectedPR.head_branch} → ${selectedPR.base_branch}${stats}`;
 
-      // Fetch existing review comments for context
+      // Include the full PR description/body so the reviewer sees the author's
+      // intent, linked issues, and any acceptance criteria.
+      if (selectedPR.body) {
+        effectiveMessage += `\n\n## PR Description\n${selectedPR.body}`;
+      }
+
+      // Fetch existing review comments for context (Greptile, human reviewers, etc.)
       try {
         const comments = await api.fetchPRReviewComments(selectedPR.url);
         if (comments.length > 0) {
-          let commentSection = "\n\n## Existing reviewer comments on this PR\nAddress these alongside your own findings:\n";
-          for (const c of comments.slice(0, 30)) {
+          let commentSection = "\n\n## Existing reviewer comments on this PR\nRead each comment carefully and address these alongside your own findings:\n";
+          for (const c of comments.slice(0, 50)) {
             if (c.type === "inline" && c.path) {
-              commentSection += `\n- **${c.user}** on \`${c.path}${c.line ? `:${c.line}` : ""}\`:\n  ${c.body.slice(0, 500)}`;
+              commentSection += `\n- **${c.user}** on \`${c.path}${c.line ? `:${c.line}` : ""}\`:\n  ${c.body}`;
             } else if (c.type === "review" && c.state) {
-              commentSection += `\n- **${c.user}** (${c.state}):\n  ${c.body.slice(0, 500)}`;
+              commentSection += `\n- **${c.user}** (${c.state}):\n  ${c.body}`;
             } else {
-              commentSection += `\n- **${c.user}**:\n  ${c.body.slice(0, 500)}`;
+              commentSection += `\n- **${c.user}**:\n  ${c.body}`;
             }
           }
           effectiveMessage += commentSection;
@@ -1767,6 +1773,7 @@ function _ensureAgentSocket(): void {
         changed_files: null,
         mergeable: null,
         mergeable_state: null,
+        body: "",
       };
       useStore.setState((s) => ({
         pullRequests: [...s.pullRequests.filter((p) => p.number !== pr.number), pr],

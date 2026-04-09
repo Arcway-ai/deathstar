@@ -1143,6 +1143,7 @@ def _branch_pr_to_dict(row: BranchPR) -> dict:
         "changed_files": row.changed_files,
         "mergeable": row.mergeable,
         "mergeable_state": row.mergeable_state,
+        "body": row.body,
         "updated_at": row.updated_at,
     }
 
@@ -1164,6 +1165,7 @@ def _upsert_branch_pr(name: str, branch: str, pr_data: dict) -> BranchPR:
         changed_files=pr_data.get("changed_files"),
         mergeable=pr_data.get("mergeable"),
         mergeable_state=pr_data.get("mergeable_state"),
+        body=pr_data.get("body", ""),
         updated_at=pr_data.get("updated_at", ""),
     )
     with Session(db_engine) as session:

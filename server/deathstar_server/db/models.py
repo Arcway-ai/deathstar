@@ -239,6 +239,7 @@ class BranchPR(SQLModel, table=True):
     changed_files: Optional[int] = Field(default=None)
     mergeable: Optional[bool] = Field(default=None)
     mergeable_state: Optional[str] = Field(default=None)
+    body: str = Field(nullable=False, default="")
     updated_at: str = Field(nullable=False, default_factory=_utcnow)
 
 
