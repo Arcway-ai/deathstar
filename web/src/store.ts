@@ -4,7 +4,7 @@ import * as api from "./api";
 import { AgentSocket } from "./agentSocket";
 import type { AgentResult, AgentStatusEvent, RepoEventData } from "./agentSocket";
 import { toast } from "./components/Toast";
-import { tryParsePlan } from "./planUtils";
+import { tryParsePlan, RETRY_STRUCTURE_PLAN_PROMPT } from "./planUtils";
 import { planToMarkdown } from "./components/PlanPanel";
 import { defaultPersona, getPersonaById } from "./personas";
 import { defaultTheme, applyTheme } from "./themes";
@@ -38,22 +38,6 @@ let _suggestionId = 0;
 function withIds(suggestions: { content: string; tags: string[] }[]) {
   return suggestions.map((s) => ({ ...s, id: String(++_suggestionId) }));
 }
-
-/** Follow-up prompt sent when the agent returned malformed plan JSON. */
-const RETRY_STRUCTURE_PLAN_PROMPT = [
-  "Your previous response could not be parsed as valid JSON. Please try again — output ONLY a single valid JSON object with no markdown fences, no trailing commas, and no commentary before or after. Match this schema exactly:",
-  "",
-  "{",
-  '  "title": "Short descriptive title (under 80 chars)",',
-  '  "overview": "1-3 sentence summary",',
-  '  "complexity": "low | medium | high",',
-  '  "phases": [{ "id": "phase-1", "name": "...", "description": "...", "tasks": [{ "id": "phase-1-task-1", "title": "...", "description": "...", "files": ["path/to/file.py"], "effort": "small | medium | large" }] }],',
-  '  "risks": ["Concrete risk descriptions"],',
-  '  "open_questions": ["Specific questions needing answers"]',
-  "}",
-  "",
-  "Double-check that every string is properly escaped and the JSON is valid before responding.",
-].join("\n");
 
 interface Store {
   /* ── Repos ─────────────────────────────────────────────────── */
@@ -1599,11 +1583,19 @@ function _ensureAgentSocket(): void {
       // Auto-save structured plans as documents when the plan workflow returns valid JSON.
       // This runs after the message is appended so the user sees it rendered immediately,
       // then the document is created in the background (createDocument shows its own toast).
+      // We dedup by source_conversation_id so refining a plan in the same conversation
+      // doesn't create duplicate documents.
       if (s.workflow === "plan" && assistantMsg.content) {
         const plan = tryParsePlan(assistantMsg.content);
         if (plan) {
-          const md = planToMarkdown(plan);
-          useStore.getState().createDocument(plan.title, md, "plan");
+          const { documents, conversationId: convoId } = useStore.getState();
+          const alreadyExists = documents.some(
+            (d) => d.document_type === "plan" && d.source_conversation_id === convoId,
+          );
+          if (!alreadyExists) {
+            const md = planToMarkdown(plan);
+            useStore.getState().createDocument(plan.title, md, "plan");
+          }
         } else {
           // The agent was in plan mode but didn't return parseable structured JSON.
           // This is expected for the first response (prose plan) — only warn if

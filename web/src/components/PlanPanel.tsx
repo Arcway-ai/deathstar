@@ -16,6 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useStore } from "../store";
+import { STRUCTURE_PLAN_PROMPT } from "../planUtils";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -69,9 +70,12 @@ function StructuredPlanView({ plan }: { plan: StructuredPlan }) {
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const createDocument = useStore((s) => s.createDocument);
-  // Check if this plan was already saved (e.g. by auto-save on result)
+  // Check if this plan was already saved (e.g. by auto-save on result).
+  // Match by source_conversation_id so different plans with the same title
+  // across conversations don't falsely show the saved indicator.
+  const conversationId = useStore((s) => s.conversationId);
   const alreadySaved = useStore((s) =>
-    s.documents.some((d) => d.document_type === "plan" && d.title === plan.title),
+    s.documents.some((d) => d.document_type === "plan" && d.source_conversation_id === conversationId),
   );
   const complexity = complexityConfig[plan.complexity];
 
@@ -236,20 +240,6 @@ function StructuredPlanView({ plan }: { plan: StructuredPlan }) {
 }
 
 /* ── RawPlanView (unstructured plan with distill button) ─────── */
-
-/** Prompt sent as a follow-up message to restructure a raw plan into JSON. */
-const STRUCTURE_PLAN_PROMPT = [
-  "Please restructure the plan you just created into a single JSON object matching this exact schema (output ONLY valid JSON, no markdown fences, no commentary):",
-  "",
-  '{',
-  '  "title": "Short descriptive title (under 80 chars)",',
-  '  "overview": "1-3 sentence summary",',
-  '  "complexity": "low | medium | high",',
-  '  "phases": [{ "id": "phase-1", "name": "...", "description": "...", "tasks": [{ "id": "phase-1-task-1", "title": "...", "description": "...", "files": ["path/to/file.py"], "effort": "small | medium | large" }] }],',
-  '  "risks": ["Concrete risk descriptions"],',
-  '  "open_questions": ["Specific questions needing answers"]',
-  '}',
-].join("\n");
 
 function RawPlanView({ rawContent }: { rawContent: string }) {
   const sendMessage = useStore((s) => s.sendMessage);
