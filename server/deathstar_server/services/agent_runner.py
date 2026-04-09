@@ -45,6 +45,7 @@ from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
 from deathstar_server.services.agent import _MODE_CONFIGS
 from deathstar_server.services.event_bus import EventBus
+from deathstar_server.services.tool_guardrails import GuardrailTier, classify_tool_use
 from deathstar_server.services.github import GitHubService
 from deathstar_server.services.gitops import GitService, _random_star_wars_character
 from deathstar_server.services.worktree import WorktreeManager
@@ -555,16 +556,73 @@ class AgentRunner:
 
         # Build permission callback using anyio.Event for signaling
         async def can_use_tool(tool_name, tool_input, context):
+            # Legacy belt-and-suspenders check for git push to protected branches
             deny = _check_protected_branch_push(tool_name, tool_input)
             if deny:
                 return deny
+
+            # ── Tiered guardrail classification ──────────────────────
+            verdict = classify_tool_use(tool_name, tool_input)
+
+            if verdict.tier == GuardrailTier.HARD_DENY:
+                rule = verdict.rule
+                assert rule is not None  # always set for non-AUTO_ACCEPT
+                logger.warning(
+                    "GUARDRAIL HARD_DENY [%s]: %s | %s",
+                    rule.category, rule.reason, verdict.command_preview,
+                )
+                return PermissionResultDeny(
+                    message=f"Blocked: {rule.reason}. This action is never allowed from an agent.",
+                )
+
+            if verdict.tier == GuardrailTier.REQUIRE_APPROVAL:
+                rule = verdict.rule
+                assert rule is not None
+                logger.warning(
+                    "GUARDRAIL REQUIRE_APPROVAL [%s]: %s | %s",
+                    rule.category, rule.reason, verdict.command_preview,
+                )
+                if agent.auto_accept and not agent.has_subscribers:
+                    # Queue-worker / headless — no human to approve
+                    logger.warning(
+                        "GUARDRAIL DENIED (headless) [%s]: %s",
+                        rule.category, rule.reason,
+                    )
+                    return PermissionResultDeny(
+                        message=(
+                            f"Requires approval: {rule.reason}. "
+                            "Destructive actions cannot be auto-approved in queue mode — "
+                            "run interactively to approve."
+                        ),
+                    )
+                # Escalate to user — even in auto_accept mode
+                return await _ask_subscriber(agent, tool_name, tool_input, guardrail={
+                    "tier": verdict.tier.value,
+                    "category": rule.category,
+                    "reason": rule.reason,
+                })
+
+            # ── AUTO_ACCEPT tier ─────────────────────────────────────
             if agent.auto_accept:
                 logger.info("auto-accepting tool: %s", tool_name)
                 return PermissionResultAllow()
-            # Ask subscribers for permission
+
+            # Not auto_accept — ask the subscriber (default interactive flow)
+            return await _ask_subscriber(agent, tool_name, tool_input)
+
+        async def _ask_subscriber(
+            agent: RunningAgent,
+            tool_name: str,
+            tool_input,
+            guardrail: dict | None = None,
+        ):
+            """Publish a permission request and wait for the subscriber's response."""
+            event_data: dict = {"tool": tool_name, "input": tool_input}
+            if guardrail:
+                event_data["guardrail"] = guardrail
             agent.publish(AgentEvent(
                 type=AgentEventType.PERMISSION_REQUEST,
-                data={"tool": tool_name, "input": tool_input},
+                data=event_data,
             ))
             agent.status = AgentStatus.WAITING_PERMISSION
             agent.permission_event = anyio.Event()
@@ -967,6 +1025,16 @@ class AgentRunner:
             if agent.status != AgentStatus.COMPLETED:
                 agent.status = AgentStatus.FAILED
                 agent.completed_at = time.time()
+                # Publish ERROR so queue worker (and any other subscriber)
+                # unblocks — without this the recv_stream stays open and
+                # the queue worker would hang waiting for RESULT/ERROR.
+                agent.publish(AgentEvent(
+                    type=AgentEventType.ERROR,
+                    data={
+                        "code": "AGENT_INCOMPLETE",
+                        "message": "Agent finished without producing a result",
+                    },
+                ))
 
             logger.info(
                 "agent execution ended: %d messages, %.1fs (conv=%s)",

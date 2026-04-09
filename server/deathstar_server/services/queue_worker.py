@@ -218,15 +218,12 @@ class QueueWorker:
 
             result_event: AgentEvent | None = None
             try:
-                async with asyncio.timeout(600):
-                    async for event in recv_stream:
-                        if event.type == AgentEventType.RESULT:
-                            result_event = event
-                            break
-                        elif event.type == AgentEventType.ERROR:
-                            raise RuntimeError(event.data.get("message", "Agent error"))
-            except TimeoutError:
-                raise RuntimeError("Agent execution timed out (600s)")
+                async for event in recv_stream:
+                    if event.type == AgentEventType.RESULT:
+                        result_event = event
+                        break
+                    elif event.type == AgentEventType.ERROR:
+                        raise RuntimeError(event.data.get("message", "Agent error"))
             finally:
                 self._agent_runner.unsubscribe(conversation_id, sub_id)
 
