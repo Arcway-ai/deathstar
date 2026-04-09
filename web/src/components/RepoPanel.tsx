@@ -18,6 +18,7 @@ import {
   Pin,
 } from "lucide-react";
 import { useStore } from "../store";
+import * as api from "../api";
 import { buildTree } from "../fileTree";
 import { characterAvatarUrl } from "../avatars";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -67,8 +68,23 @@ export default function RepoPanel() {
                   <button
                     key={r.name}
                     onClick={() => {
-                      navigate(`/${encodeURIComponent(r.name)}`);
                       setRepoDropdownOpen(false);
+                      if (r.name === selectedRepo) return;
+                      // Fetch conversations for the target repo and navigate to
+                      // the most recent one, matching the command palette behavior.
+                      api.fetchConversations(r.name).then((convos) => {
+                        const sorted = [...convos].sort(
+                          (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+                        );
+                        const first = sorted[0];
+                        if (first) {
+                          navigate(`/${encodeURIComponent(r.name)}/c/${encodeURIComponent(first.id)}`);
+                        } else {
+                          navigate(`/${encodeURIComponent(r.name)}`);
+                        }
+                      }).catch(() => {
+                        navigate(`/${encodeURIComponent(r.name)}`);
+                      });
                     }}
                     className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors ${
                       r.name === selectedRepo

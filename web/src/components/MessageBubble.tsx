@@ -13,7 +13,8 @@ import {
 } from "lucide-react";
 import { useStore } from "../store";
 import { estimateCost, formatCost } from "../models";
-import type { AgentContentBlock, ConversationMessage, ProviderName, StructuredPlan, StructuredReview } from "../types";
+import { tryParseJSON, tryParsePlan } from "../planUtils";
+import type { AgentContentBlock, ConversationMessage, ProviderName, StructuredReview } from "../types";
 import PlanPanel from "./PlanPanel";
 import ReviewPanel from "./ReviewPanel";
 import AgentBlocksView from "./AgentBlocksView";
@@ -94,21 +95,6 @@ function CodeBlockCopyButton({ preChildren }: { preChildren: React.ReactNode }) 
   );
 }
 
-/** Strip optional markdown code fences and parse JSON. */
-function tryParseJSON(content: string): unknown | null {
-  try {
-    let raw = content.trim();
-    if (raw.startsWith("```")) {
-      const firstNewline = raw.indexOf("\n");
-      raw = raw.slice(firstNewline + 1);
-      if (raw.endsWith("```")) raw = raw.slice(0, -3).trim();
-    }
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
 function tryParseReview(content: string): StructuredReview | null {
   const parsed = tryParseJSON(content);
   if (
@@ -120,20 +106,6 @@ function tryParseReview(content: string): StructuredReview | null {
     Array.isArray((parsed as StructuredReview).findings)
   ) {
     return parsed as StructuredReview;
-  }
-  return null;
-}
-
-function tryParsePlan(content: string): StructuredPlan | null {
-  const parsed = tryParseJSON(content);
-  if (
-    parsed &&
-    typeof parsed === "object" &&
-    "title" in parsed &&
-    "phases" in parsed &&
-    Array.isArray((parsed as StructuredPlan).phases)
-  ) {
-    return parsed as StructuredPlan;
   }
   return null;
 }
