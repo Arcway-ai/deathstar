@@ -39,7 +39,7 @@ export default function AgentStreamView({
   const statusMessage = useStore((s) => s.agentStream.statusMessage);
 
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2 overflow-hidden">
       {blocks.map((block, i) => (
         <BlockView key={i} block={block} />
       ))}

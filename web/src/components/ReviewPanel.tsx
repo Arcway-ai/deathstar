@@ -367,7 +367,7 @@ function FindingItem({
               <span className="text-[10px] font-medium text-red-400/80">
                 Current code:
               </span>
-              <pre className="rounded-md bg-bg-deep border border-red-500/10 px-3 py-2 text-[11px] font-mono text-text-secondary overflow-x-auto">
+              <pre className="rounded-md bg-bg-deep border border-red-500/10 px-3 py-2 text-[11px] font-mono text-text-secondary overflow-x-auto whitespace-pre-wrap break-all">
                 {finding.original_code}
               </pre>
             </div>
@@ -378,7 +378,7 @@ function FindingItem({
               <span className="text-[10px] font-medium text-emerald-400/80">
                 Suggested fix:
               </span>
-              <pre className="rounded-md bg-bg-deep border border-emerald-500/10 px-3 py-2 text-[11px] font-mono text-text-secondary overflow-x-auto">
+              <pre className="rounded-md bg-bg-deep border border-emerald-500/10 px-3 py-2 text-[11px] font-mono text-text-secondary overflow-x-auto whitespace-pre-wrap break-all">
                 {finding.suggested_code}
               </pre>
             </div>

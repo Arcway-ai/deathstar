@@ -298,7 +298,7 @@ const ListContainer = forwardRef<HTMLDivElement, ComponentPropsWithRef<"div">>(
     <div
       {...props}
       ref={ref}
-      className={`mx-auto max-w-3xl ${className ?? ""}`}
+      className={`mx-auto max-w-3xl overflow-hidden ${className ?? ""}`}
     />
   ),
 );
