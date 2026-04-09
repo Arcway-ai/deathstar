@@ -28,7 +28,6 @@ import type {
   RepoInfo,
   RightPanelView,
   SidebarView,
-  StructuredPlan,
   StructuredReview,
   WorkflowKind,
 } from "./types";
@@ -161,7 +160,6 @@ interface Store {
   deleteDocument: (id: string) => Promise<void>;
   pinDocument: (id: string) => void;
   unpinDocument: (id: string) => void;
-  distillPlan: () => Promise<StructuredPlan | null>;
 
   /* ── Review Actions ────────────────────────────────────────── */
   activeReview: StructuredReview | null;
@@ -1208,13 +1206,6 @@ export const useStore = create<Store>()(persist((set, get) => ({
   unpinDocument: (id) => set((s) => ({
     pinnedDocumentIds: s.pinnedDocumentIds.filter((pid) => pid !== id),
   })),
-
-  distillPlan: async () => {
-    const { conversationId } = get();
-    if (!conversationId) return null;
-    const { plan } = await api.distillPlan(conversationId);
-    return plan as unknown as StructuredPlan;
-  },
 
   /* ── Review Actions ─────────────────────────────────────────── */
   activeReview: null,

@@ -54,17 +54,13 @@ interface PlanPanelProps {
 }
 
 export default function PlanPanel({ plan, rawContent }: PlanPanelProps) {
-  const [distilledPlan, setDistilledPlan] = useState<StructuredPlan | null>(null);
-
-  // Use distilled plan if we successfully converted raw content
-  const activePlan = plan ?? distilledPlan;
-
-  if (activePlan) {
-    return <StructuredPlanView plan={activePlan} />;
+  if (plan) {
+    return <StructuredPlanView plan={plan} />;
   }
 
-  // Raw content mode — show markdown with distill button
-  return <RawPlanView rawContent={rawContent ?? ""} onDistilled={setDistilledPlan} />;
+  // Raw content mode — show markdown with "Structure Plan" button that sends
+  // a follow-up message through the normal agent chat flow.
+  return <RawPlanView rawContent={rawContent ?? ""} />;
 }
 
 /* ── StructuredPlanView (existing rich rendering) ────────────── */
@@ -231,32 +227,26 @@ function StructuredPlanView({ plan }: { plan: StructuredPlan }) {
 
 /* ── RawPlanView (unstructured plan with distill button) ─────── */
 
-function RawPlanView({
-  rawContent,
-  onDistilled,
-}: {
-  rawContent: string;
-  onDistilled: (plan: StructuredPlan) => void;
-}) {
-  const [distilling, setDistilling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const conversationId = useStore((s) => s.conversationId);
-  const distillPlan = useStore((s) => s.distillPlan);
+/** Prompt sent as a follow-up message to restructure a raw plan into JSON. */
+const STRUCTURE_PLAN_PROMPT = [
+  "Please restructure the plan you just created into a single JSON object matching this exact schema (output ONLY valid JSON, no markdown fences, no commentary):",
+  "",
+  '{',
+  '  "title": "Short descriptive title (under 80 chars)",',
+  '  "overview": "1-3 sentence summary",',
+  '  "complexity": "low | medium | high",',
+  '  "phases": [{ "id": "phase-1", "name": "...", "description": "...", "tasks": [{ "id": "phase-1-task-1", "title": "...", "description": "...", "files": ["path/to/file.py"], "effort": "small | medium | large" }] }],',
+  '  "risks": ["Concrete risk descriptions"],',
+  '  "open_questions": ["Specific questions needing answers"]',
+  '}',
+].join("\n");
 
-  const handleDistill = async () => {
-    if (!conversationId) return;
-    setDistilling(true);
-    setError(null);
-    try {
-      const plan = await distillPlan();
-      if (plan) {
-        onDistilled(plan);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to distill plan");
-    } finally {
-      setDistilling(false);
-    }
+function RawPlanView({ rawContent }: { rawContent: string }) {
+  const sendMessage = useStore((s) => s.sendMessage);
+  const sending = useStore((s) => s.sending);
+
+  const handleDistill = () => {
+    sendMessage(STRUCTURE_PLAN_PROMPT);
   };
 
   return (
@@ -271,28 +261,23 @@ function RawPlanView({
           <CardAction>
             <button
               onClick={handleDistill}
-              disabled={distilling || !conversationId}
+              disabled={sending}
               className="flex items-center gap-1.5 rounded-md px-2.5 h-7 text-[11px] font-medium border border-accent/30 text-accent hover:bg-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Use AI to structure this plan into phases and tasks"
+              title="Ask the agent to restructure this plan into phases and tasks"
             >
-              {distilling ? (
+              {sending ? (
                 <Loader2 size={12} className="animate-spin" />
               ) : (
                 <Sparkles size={12} />
               )}
-              {distilling ? "Structuring..." : "Structure Plan"}
+              {sending ? "Structuring..." : "Structure Plan"}
             </button>
           </CardAction>
           <CardDescription className="text-xs text-text-secondary leading-relaxed">
             This plan was returned as prose. Click <strong>Structure Plan</strong> to
-            distill it into phases, tasks, and files so you can save it as a document.
+            ask the agent to restructure it into phases, tasks, and files.
           </CardDescription>
         </CardHeader>
-        {error && (
-          <CardContent className="px-4 pb-3">
-            <p className="text-xs text-error">{error}</p>
-          </CardContent>
-        )}
       </Card>
 
       {/* Rendered markdown content */}

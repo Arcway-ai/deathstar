@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { isModKey } from "@/lib/utils";
 import {
   FolderTree,
   GitCommitHorizontal,
@@ -167,7 +168,7 @@ function FileTreePanel() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+      if (isModKey(e) && e.key === "p") {
         e.preventDefault();
         searchRef.current?.focus();
       }

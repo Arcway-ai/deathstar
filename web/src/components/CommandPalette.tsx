@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { isModKey, modKeyLabel } from "@/lib/utils";
 
 export interface CommandPaletteItem {
   id: string;
@@ -68,7 +69,7 @@ export default function CommandPalette({
   const handleTriggerCycle = useCallback(
     (e: KeyboardEvent) => {
       if (!open || !triggerKey) return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === triggerKey.toLowerCase()) {
+      if (isModKey(e) && e.key.toLowerCase() === triggerKey.toLowerCase()) {
         e.preventDefault();
         setActiveIndex((prev) => {
           const list = filtered.length > 0 ? filtered : items;
@@ -109,9 +110,6 @@ export default function CommandPalette({
 
   if (!open) return null;
 
-  const isMac = navigator.platform.toUpperCase().includes("MAC");
-  const modKey = isMac ? "\u2318" : "Ctrl+";
-
   return (
     <>
       {/* Backdrop */}
@@ -129,7 +127,7 @@ export default function CommandPalette({
           <span className="text-xs font-medium text-text-secondary">{title}</span>
           {triggerKey && (
             <span className="text-[10px] text-text-muted">
-              {modKey}{triggerKey.toUpperCase()} to cycle
+              {modKeyLabel}{triggerKey.toUpperCase()} to cycle
             </span>
           )}
         </div>

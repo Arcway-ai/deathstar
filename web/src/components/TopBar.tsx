@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import { isMac } from "@/lib/utils";
 import {
   Plus,
   TerminalSquare,
@@ -32,7 +33,6 @@ export default function TopBar() {
 
   const currentRepo = repos.find((r) => r.name === selectedRepo);
   const isDirty = currentRepo?.dirty ?? false;
-  const isMac = navigator.platform.toUpperCase().includes("MAC");
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border-subtle bg-bg-primary px-2 sm:gap-2 sm:px-3">
