@@ -5,6 +5,7 @@ import { isModKey } from "@/lib/utils";
 import { useStore } from "./store";
 import * as api from "./api";
 import { initSession } from "./api";
+import { navigateToRepo } from "./repoNav";
 import { toast } from "./components/Toast";
 import { applyTheme } from "./themes";
 import AuthGate from "./components/AuthGate";
@@ -181,22 +182,7 @@ export default function App() {
     (item: CommandPaletteItem) => {
       setRepoPaletteOpen(false);
       if (item.id === selectedRepo) return;
-      // Fetch conversations for the target repo, then navigate to the most
-      // recent one.  The store's `conversations` array only holds entries for
-      // the *current* repo, so we must always hit the API for the new repo.
-      api.fetchConversations(item.id).then((convos) => {
-        const sorted = [...convos].sort(
-          (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-        );
-        const first = sorted[0];
-        if (first) {
-          navigate(`/${encodeURIComponent(item.id)}/c/${encodeURIComponent(first.id)}`);
-        } else {
-          navigate(`/${encodeURIComponent(item.id)}`);
-        }
-      }).catch(() => {
-        navigate(`/${encodeURIComponent(item.id)}`);
-      });
+      navigateToRepo(item.id, navigate);
     },
     [selectedRepo, navigate],
   );

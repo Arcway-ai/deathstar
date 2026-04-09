@@ -18,6 +18,7 @@ import {
   Pin,
 } from "lucide-react";
 import { useStore } from "../store";
+import { navigateToRepo } from "../repoNav";
 import { buildTree } from "../fileTree";
 import { characterAvatarUrl } from "../avatars";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -67,8 +68,9 @@ export default function RepoPanel() {
                   <button
                     key={r.name}
                     onClick={() => {
-                      navigate(`/${encodeURIComponent(r.name)}`);
                       setRepoDropdownOpen(false);
+                      if (r.name === selectedRepo) return;
+                      navigateToRepo(r.name, navigate);
                     }}
                     className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors ${
                       r.name === selectedRepo

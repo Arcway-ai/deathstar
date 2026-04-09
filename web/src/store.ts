@@ -4,6 +4,8 @@ import * as api from "./api";
 import { AgentSocket } from "./agentSocket";
 import type { AgentResult, AgentStatusEvent, RepoEventData } from "./agentSocket";
 import { toast } from "./components/Toast";
+import { tryParsePlan, RETRY_STRUCTURE_PLAN_PROMPT } from "./planUtils";
+import { planToMarkdown } from "./components/PlanPanel";
 import { defaultPersona, getPersonaById } from "./personas";
 import { defaultTheme, applyTheme } from "./themes";
 import type { Theme } from "./themes";
@@ -1577,6 +1579,38 @@ function _ensureAgentSocket(): void {
       }));
 
       useStore.getState().loadConversations(s.selectedRepo ?? undefined);
+
+      // Auto-save structured plans as documents when the plan workflow returns valid JSON.
+      // This runs after the message is appended so the user sees it rendered immediately,
+      // then the document is created in the background (createDocument shows its own toast).
+      // We dedup by source_conversation_id so refining a plan in the same conversation
+      // doesn't create duplicate documents.
+      if (s.workflow === "plan" && assistantMsg.content) {
+        const plan = tryParsePlan(assistantMsg.content);
+        if (plan) {
+          const { documents, conversationId: convoId } = useStore.getState();
+          const alreadyExists = documents.some(
+            (d) => d.document_type === "plan" && d.source_conversation_id === convoId,
+          );
+          if (!alreadyExists) {
+            const md = planToMarkdown(plan);
+            useStore.getState().createDocument(plan.title, md, "plan");
+          }
+        } else {
+          // The agent was in plan mode but didn't return parseable structured JSON.
+          // This is expected for the first response (prose plan) — only warn if
+          // the content looks like it was attempting JSON (starts with { or [).
+          const trimmed = assistantMsg.content.trim();
+          const looksLikeJSON = trimmed.startsWith("{") || trimmed.startsWith("[") ||
+            (trimmed.startsWith("```") && trimmed.includes("{"));
+          if (looksLikeJSON) {
+            toast.persistent("error", "Plan not saved",
+              "The response looked like JSON but couldn't be parsed as a structured plan.",
+              { label: "Retry", onClick: () => useStore.getState().sendMessage(RETRY_STRUCTURE_PLAN_PROMPT) },
+            );
+          }
+        }
+      }
 
       // Always refresh repo state after agent completes — the agent may have
       // written files, committed, switched branches, etc.  The old heuristic

@@ -37,9 +37,19 @@ export default function ChatView() {
   // button doesn't flash for one render frame after a key-triggered remount.
   // initialTopMostItemIndex guarantees the new Virtuoso starts at the bottom,
   // so pre-setting true keeps the UI consistent.
+  //
+  // We also schedule an explicit scroll-to-bottom after the first paint.
+  // initialTopMostItemIndex positions the viewport, but Virtuoso's measured
+  // item heights may shift once React finishes rendering markdown, syntax
+  // highlighting, and agent blocks.  The delayed nudge catches those cases
+  // so the user always sees the latest message on initial load.
   useEffect(() => {
     setAtBottom(true);
     followingRef.current = true;
+    const t = setTimeout(() => {
+      virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
+    }, 150);
+    return () => clearTimeout(t);
   }, [conversationId]);
   const messages = activeConversation?.messages ?? [];
   const hasAgentBlocks = agentStream.blocks.length > 0;
