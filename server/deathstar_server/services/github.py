@@ -217,17 +217,19 @@ class GitHubService:
             "url": str(pr.html_url),
         }
 
-        # The list endpoint doesn't include mergeable — fetch via GET for the
-        # single PR to get the merge-conflict state from GitHub.
+        # The list endpoint doesn't include mergeable or body — fetch via GET
+        # for the single PR to get the merge-conflict state and description.
         try:
             detail = await gh.rest.pulls.async_get(owner, repo, pr.number)
             pr_detail = detail.parsed_data
             result["mergeable"] = getattr(pr_detail, "mergeable", None)
             result["mergeable_state"] = getattr(pr_detail, "mergeable_state", None)
+            result["body"] = getattr(pr_detail, "body", None) or ""
         except RequestFailed:
             logger.debug("failed to fetch mergeable state for PR #%s", pr.number)
             result["mergeable"] = None
             result["mergeable_state"] = None
+            result["body"] = ""
 
         return result
 

@@ -44,6 +44,8 @@ export interface PullRequestSummary {
   mergeable: boolean | null;
   /** GitHub merge state: 'clean', 'dirty', 'blocked', 'behind', 'unknown', etc. */
   mergeable_state: string | null;
+  /** PR description / body text (Markdown). */
+  body: string;
 }
 
 /* ── Structured Review ────────────────────────────────────────── */

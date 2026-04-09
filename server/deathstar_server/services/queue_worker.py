@@ -180,7 +180,10 @@ class QueueWorker:
         self._current_conversation_id = conversation_id
 
         try:
-            # Start agent with auto_accept=True (queue items don't have interactive permission flow)
+            # Start agent with auto_accept=True + headless=True.
+            # headless ensures REQUIRE_APPROVAL guardrails are denied
+            # immediately rather than stalling on a permission request
+            # that no human can answer.
             await self._agent_runner.start_agent(
                 conversation_id=conversation_id,
                 repo=repo,
@@ -190,6 +193,7 @@ class QueueWorker:
                 model=model_str,
                 system_prompt=system_str,
                 auto_accept=True,
+                headless=True,
             )
 
             # Subscribe immediately after start_agent. The execution task was spawned via
@@ -218,15 +222,12 @@ class QueueWorker:
 
             result_event: AgentEvent | None = None
             try:
-                async with asyncio.timeout(600):
-                    async for event in recv_stream:
-                        if event.type == AgentEventType.RESULT:
-                            result_event = event
-                            break
-                        elif event.type == AgentEventType.ERROR:
-                            raise RuntimeError(event.data.get("message", "Agent error"))
-            except TimeoutError:
-                raise RuntimeError("Agent execution timed out (600s)")
+                async for event in recv_stream:
+                    if event.type == AgentEventType.RESULT:
+                        result_event = event
+                        break
+                    elif event.type == AgentEventType.ERROR:
+                        raise RuntimeError(event.data.get("message", "Agent error"))
             finally:
                 self._agent_runner.unsubscribe(conversation_id, sub_id)
 

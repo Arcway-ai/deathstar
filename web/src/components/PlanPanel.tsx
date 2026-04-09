@@ -243,9 +243,12 @@ function StructuredPlanView({ plan }: { plan: StructuredPlan }) {
 
 function RawPlanView({ rawContent }: { rawContent: string }) {
   const sendMessage = useStore((s) => s.sendMessage);
+  const setWorkflow = useStore((s) => s.setWorkflow);
   const sending = useStore((s) => s.sending);
 
   const handleDistill = () => {
+    // Switch to plan mode so the structured response auto-creates a document
+    setWorkflow("plan");
     sendMessage(STRUCTURE_PLAN_PROMPT);
   };
 
