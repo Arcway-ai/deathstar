@@ -52,6 +52,7 @@ module "security" {
   source               = "../../modules/security"
   project_name         = var.project_name
   vpc_id               = module.network.vpc_id
+  enable_tailscale     = var.enable_tailscale
   enable_web_ui        = var.enable_web_ui
   web_ui_port          = var.web_ui_port
   web_ui_allowed_cidrs = var.web_ui_allowed_cidrs

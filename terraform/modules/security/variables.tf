@@ -18,6 +18,10 @@ variable "web_ui_allowed_cidrs" {
   type = list(string)
 }
 
+variable "enable_tailscale" {
+  type = bool
+}
+
 variable "tags" {
   type = map(string)
 }

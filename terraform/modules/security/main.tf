@@ -15,6 +15,17 @@ resource "aws_vpc_security_group_egress_rule" "all" {
   description       = "Allow outbound access for AWS APIs, package mirrors, git remotes, and AI providers."
 }
 
+resource "aws_vpc_security_group_ingress_rule" "tailscale_udp" {
+  count = var.enable_tailscale ? 1 : 0
+
+  security_group_id = aws_security_group.this.id
+  ip_protocol       = "udp"
+  from_port         = 41641
+  to_port           = 41641
+  cidr_ipv4         = "0.0.0.0/0"
+  description       = "Tailscale direct WireGuard connections (avoids DERP relay)."
+}
+
 resource "aws_vpc_security_group_ingress_rule" "web_ui" {
   for_each = var.enable_web_ui ? toset(var.web_ui_allowed_cidrs) : toset([])
 
