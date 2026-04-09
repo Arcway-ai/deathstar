@@ -44,7 +44,16 @@ from deathstar_server.config import Settings
 from deathstar_server.db.models import BranchPR
 from deathstar_server.errors import AppError
 from deathstar_server.services.agent import _MODE_CONFIGS
-from deathstar_server.services.event_bus import EventBus
+from deathstar_server.services.event_bus import (
+    EVENT_LOCAL_CHECKOUT,
+    EVENT_LOCAL_COMMIT,
+    EVENT_PR_UPDATE,
+    EVENT_PUSH,
+    EVENT_REPO_DIRTY,
+    EventBus,
+    RepoEvent,
+    SOURCE_AGENT,
+)
 from deathstar_server.services.tool_guardrails import GuardrailTier, classify_tool_use
 from deathstar_server.services.github import GitHubService
 from deathstar_server.services.gitops import GitService, _random_star_wars_character
@@ -302,6 +311,7 @@ class RunningAgent:
     working_dir: Path
     client: ClaudeSDKClient
     auto_accept: bool
+    headless: bool = False
     status: AgentStatus = AgentStatus.STARTING
     accumulated_text: str = ""
     accumulated_blocks: list[dict] = field(default_factory=list)
@@ -436,6 +446,7 @@ class AgentRunner:
         model: str | None = None,
         system_prompt: str | None = None,
         auto_accept: bool = False,
+        headless: bool = False,
         context_files: list[str] | None = None,
     ) -> RunningAgent:
         """Start or reuse an agent for the given conversation.
@@ -550,6 +561,7 @@ class AgentRunner:
             working_dir=cwd,
             client=None,  # type: ignore[arg-type] — set below
             auto_accept=auto_accept,
+            headless=headless,
             prompt=message,
         )
         self._agents[conversation_id] = agent
@@ -582,8 +594,12 @@ class AgentRunner:
                     "GUARDRAIL REQUIRE_APPROVAL [%s]: %s | %s",
                     rule.category, rule.reason, verdict.command_preview,
                 )
-                if agent.auto_accept and not agent.has_subscribers:
-                    # Queue-worker / headless — no human to approve
+                if agent.headless:
+                    # Queue-worker / headless — no human to approve.
+                    # Uses the explicit `headless` flag rather than checking
+                    # subscriber presence so the guard still fires even when
+                    # the queue worker holds a subscriber stream for reading
+                    # RESULT/ERROR events.
                     logger.warning(
                         "GUARDRAIL DENIED (headless) [%s]: %s",
                         rule.category, rule.reason,
@@ -814,6 +830,8 @@ class AgentRunner:
         delta_sent_text = ""
         accumulated_blocks: list[dict] = []
         msg_count = 0
+        # Track tool_use_id → (tool_name, tool_input) for repo event detection
+        pending_tool_uses: dict[str, tuple[str, dict | str]] = {}
 
         logger.info("agent execution started: conv=%s", agent.conversation_id)
 
@@ -856,6 +874,8 @@ class AgentRunner:
                                 type=AgentEventType.TOOL_USE,
                                 data={"id": block.id, "tool": block.name, "input": block.input},
                             ))
+                            # Track for repo event detection on result
+                            pending_tool_uses[block.id] = (block.name, block.input)
 
                         elif isinstance(block, ToolResultBlock):
                             content = block.content
@@ -879,6 +899,13 @@ class AgentRunner:
                                     "is_error": block.is_error or False,
                                 },
                             ))
+                            # Detect state-changing ops → emit RepoEvents
+                            tool_info = pending_tool_uses.pop(block.tool_use_id, None)
+                            if tool_info:
+                                self._emit_repo_events_for_tool(
+                                    agent, tool_info[0], tool_info[1],
+                                    result_str, block.is_error or False,
+                                )
 
                         elif isinstance(block, ThinkingBlock):
                             if accumulated_blocks and accumulated_blocks[-1].get("type") == "thinking":
@@ -1235,6 +1262,121 @@ class AgentRunner:
             agent.publish(AgentEvent(
                 type=AgentEventType.TEXT_DELTA,
                 data={"text": f"\n\n*PR creation failed: {exc}*"},
+            ))
+
+    # -------------------------------------------------------------------
+    # Agent → RepoEvent bridge
+    # -------------------------------------------------------------------
+
+    # Patterns for detecting git state changes from Bash tool results.
+    # Only compiled once (class-level).
+    _RE_GIT_COMMIT = re.compile(r"\bgit\s+(?:commit|merge)\b")
+    _RE_GIT_PUSH = re.compile(r"\bgit\s+push\b")
+    _RE_GIT_CHECKOUT = re.compile(r"\bgit\s+(?:checkout|switch)\b")
+    _RE_GIT_CHECKOUT_BRANCH = re.compile(
+        r"\bgit\s+(?:checkout|switch)\s+(?:-[bBcC]\s+)?([^\s;&|]+)",
+    )
+    _RE_GH_PR_CREATE = re.compile(r"\bgh\s+pr\s+create\b")
+    _RE_GH_PR_MUTATE = re.compile(r"\bgh\s+pr\s+(?:merge|close|edit|review)\b")
+    _RE_PR_NUMBER = re.compile(r"(?:^|/)(\d+)\s*$|pull/(\d+)")
+
+    def _emit_repo_events_for_tool(
+        self,
+        agent: RunningAgent,
+        tool_name: str,
+        tool_input: dict | str,
+        result: str,
+        is_error: bool,
+    ) -> None:
+        """Detect state-changing operations from a completed tool call and emit RepoEvents.
+
+        This bridges the gap between agent tool executions and UI state
+        refreshes — the frontend subscribes to the event bus and refreshes
+        commits, PRs, branches, etc. immediately rather than waiting for
+        GitHub webhooks or polling.
+        """
+        if is_error:
+            return
+
+        if tool_name == "Bash":
+            command = ""
+            if isinstance(tool_input, dict):
+                command = str(tool_input.get("command", ""))
+            elif isinstance(tool_input, str):
+                command = tool_input
+            if not command:
+                return
+
+            # Git commit / merge → refresh commits + context
+            if self._RE_GIT_COMMIT.search(command):
+                self._event_bus.publish(RepoEvent(
+                    event_type=EVENT_LOCAL_COMMIT,
+                    repo=agent.repo,
+                    source=SOURCE_AGENT,
+                    data={"command": command[:200]},
+                ))
+
+            # Git push → refresh commits + context (same-branch = silent)
+            if self._RE_GIT_PUSH.search(command):
+                branch = agent.branch or "unknown"
+                self._event_bus.publish(RepoEvent(
+                    event_type=EVENT_PUSH,
+                    repo=agent.repo,
+                    source=SOURCE_AGENT,
+                    data={
+                        "ref": f"refs/heads/{branch}",
+                        "sender": "Agent",
+                    },
+                ))
+
+            # Git checkout / switch → refresh context + branches
+            if self._RE_GIT_CHECKOUT.search(command):
+                match = self._RE_GIT_CHECKOUT_BRANCH.search(command)
+                to_branch = match.group(1) if match else "unknown"
+                # Strip leading flags like -- from the branch name
+                if to_branch.startswith("-"):
+                    to_branch = "unknown"
+                self._event_bus.publish(RepoEvent(
+                    event_type=EVENT_LOCAL_CHECKOUT,
+                    repo=agent.repo,
+                    source=SOURCE_AGENT,
+                    data={
+                        "from_branch": agent.branch or "unknown",
+                        "to_branch": to_branch,
+                    },
+                ))
+
+            # gh pr create → refresh PRs
+            if self._RE_GH_PR_CREATE.search(command):
+                pr_data: dict = {"action": "created"}
+                # Try to extract PR number from result output
+                pr_match = self._RE_PR_NUMBER.search(result.strip())
+                if pr_match:
+                    pr_num = pr_match.group(1) or pr_match.group(2)
+                    pr_data["number"] = int(pr_num)
+                self._event_bus.publish(RepoEvent(
+                    event_type=EVENT_PR_UPDATE,
+                    repo=agent.repo,
+                    source=SOURCE_AGENT,
+                    data=pr_data,
+                ))
+
+            # gh pr merge/close/edit/review → refresh PRs
+            if self._RE_GH_PR_MUTATE.search(command):
+                self._event_bus.publish(RepoEvent(
+                    event_type=EVENT_PR_UPDATE,
+                    repo=agent.repo,
+                    source=SOURCE_AGENT,
+                    data={"action": "updated"},
+                ))
+
+        elif tool_name in ("Write", "Edit"):
+            # File modifications → mark repo dirty so UI refreshes file tree
+            self._event_bus.publish(RepoEvent(
+                event_type=EVENT_REPO_DIRTY,
+                repo=agent.repo,
+                source=SOURCE_AGENT,
+                data={"tool": tool_name},
             ))
 
     # -------------------------------------------------------------------

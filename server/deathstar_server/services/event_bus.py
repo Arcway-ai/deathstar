@@ -32,6 +32,7 @@ EVENT_CI_STATUS = "ci_status"
 # Sources
 SOURCE_LOCAL = "local"
 SOURCE_GITHUB = "github"
+SOURCE_AGENT = "agent"
 
 # Dedup TTL
 _DEDUP_TTL_SECONDS = 120

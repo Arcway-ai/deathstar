@@ -1098,14 +1098,24 @@ async def list_pull_requests(
 
     # Cache branch→PR mapping — evict stale entries first so merged/closed
     # PRs that the API no longer returns don't linger as 'open' in the cache.
+    # Preserve `body` from existing rows because the GitHub list endpoint
+    # does not include PR descriptions — only the individual GET does.
     try:
         with Session(db_engine) as session:
+            # Save body values that were fetched by get_branch_pr / find_pull_request_for_branch
+            existing_bodies: dict[int, str] = {}
+            existing_rows = session.exec(select(BranchPR).where(BranchPR.repo == name)).all()
+            for row in existing_rows:
+                if row.body:
+                    existing_bodies[row.pr_number] = row.body
+
             session.execute(delete(BranchPR).where(BranchPR.repo == name))
             for pr in prs:
+                pr_number = pr["number"]
                 branch_pr = BranchPR(
                     repo=name,
                     branch=pr["head_branch"],
-                    pr_number=pr["number"],
+                    pr_number=pr_number,
                     pr_url=pr["url"],
                     pr_title=pr["title"],
                     pr_state=pr["state"],
@@ -1117,6 +1127,7 @@ async def list_pull_requests(
                     changed_files=pr.get("changed_files"),
                     mergeable=pr.get("mergeable"),
                     mergeable_state=pr.get("mergeable_state"),
+                    body=existing_bodies.get(pr_number, ""),
                     updated_at=pr.get("updated_at", ""),
                 )
                 session.merge(branch_pr)
@@ -1184,10 +1195,11 @@ async def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
             .where(BranchPR.branch == branch)
             .where(BranchPR.pr_state == "open")
         ).first()
-        if row:
+        if row and row.body:
+            # Body already fetched — use the cache.
             return {"pr": _branch_pr_to_dict(row)}
 
-    # Cache miss — ask GitHub and persist the result for next time.
+    # Cache miss or body not yet fetched — ask GitHub and persist.
     try:
         repo_root = git_service.resolve_target(name)
         pr_data = await github_service.find_pull_request_for_branch(
