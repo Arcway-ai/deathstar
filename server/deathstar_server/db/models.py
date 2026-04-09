@@ -240,6 +240,7 @@ class BranchPR(SQLModel, table=True):
     mergeable: Optional[bool] = Field(default=None)
     mergeable_state: Optional[str] = Field(default=None)
     body: str = Field(nullable=False, default="")
+    body_fetched: bool = Field(nullable=False, default=False)
     updated_at: str = Field(nullable=False, default_factory=_utcnow)
 
 

@@ -1098,20 +1098,22 @@ async def list_pull_requests(
 
     # Cache branch→PR mapping — evict stale entries first so merged/closed
     # PRs that the API no longer returns don't linger as 'open' in the cache.
-    # Preserve `body` from existing rows because the GitHub list endpoint
-    # does not include PR descriptions — only the individual GET does.
+    # Preserve `body` and `body_fetched` from existing rows because the
+    # GitHub list endpoint does not include PR descriptions — only the
+    # individual GET (via find_pull_request_for_branch) does.
     try:
         with Session(db_engine) as session:
-            # Save body values that were fetched by get_branch_pr / find_pull_request_for_branch
-            existing_bodies: dict[int, str] = {}
+            # Save body data that was fetched by get_branch_pr / find_pull_request_for_branch
+            existing_body_data: dict[int, tuple[str, bool]] = {}
             existing_rows = session.exec(select(BranchPR).where(BranchPR.repo == name)).all()
             for row in existing_rows:
-                if row.body:
-                    existing_bodies[row.pr_number] = row.body
+                if row.body_fetched:
+                    existing_body_data[row.pr_number] = (row.body, True)
 
             session.execute(delete(BranchPR).where(BranchPR.repo == name))
             for pr in prs:
                 pr_number = pr["number"]
+                saved = existing_body_data.get(pr_number)
                 branch_pr = BranchPR(
                     repo=name,
                     branch=pr["head_branch"],
@@ -1127,7 +1129,8 @@ async def list_pull_requests(
                     changed_files=pr.get("changed_files"),
                     mergeable=pr.get("mergeable"),
                     mergeable_state=pr.get("mergeable_state"),
-                    body=existing_bodies.get(pr_number, ""),
+                    body=saved[0] if saved else "",
+                    body_fetched=saved[1] if saved else False,
                     updated_at=pr.get("updated_at", ""),
                 )
                 session.merge(branch_pr)
@@ -1177,6 +1180,7 @@ def _upsert_branch_pr(name: str, branch: str, pr_data: dict) -> BranchPR:
         mergeable=pr_data.get("mergeable"),
         mergeable_state=pr_data.get("mergeable_state"),
         body=pr_data.get("body", ""),
+        body_fetched=True,
         updated_at=pr_data.get("updated_at", ""),
     )
     with Session(db_engine) as session:
@@ -1195,8 +1199,8 @@ async def get_branch_pr(name: str, branch: str = Query(...)) -> dict | None:
             .where(BranchPR.branch == branch)
             .where(BranchPR.pr_state == "open")
         ).first()
-        if row and row.body:
-            # Body already fetched — use the cache.
+        if row and row.body_fetched:
+            # Body already fetched (may be empty for PRs without descriptions).
             return {"pr": _branch_pr_to_dict(row)}
 
     # Cache miss or body not yet fetched — ask GitHub and persist.
