@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { FolderGit2, GitBranch } from "lucide-react";
+import { isModKey } from "./lib/utils";
 import { useStore } from "./store";
 import * as api from "./api";
 import { initSession } from "./api";
@@ -212,7 +213,7 @@ export default function App() {
   // Global keyboard shortcuts: Cmd+S, Cmd+E, Cmd+J
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
+      if (!isModKey(e)) return;
 
       const key = e.key.toLowerCase();
 
