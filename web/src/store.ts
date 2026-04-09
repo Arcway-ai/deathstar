@@ -297,7 +297,8 @@ export const useStore = create<Store>()(persist((set, get) => ({
           }
         }).catch(() => {});
       }
-      // Load preview deployments and provider status in background
+      // Load documents, preview deployments, and provider status in background
+      get().loadDocuments(name);
       get().loadPreviews();
       get().loadPreviewProviders();
     } catch {
