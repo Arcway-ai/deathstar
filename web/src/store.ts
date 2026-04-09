@@ -256,6 +256,10 @@ export const useStore = create<Store>()(persist((set, get) => ({
       selectedPR: null,
       activeReview: null,
       findingActions: {},
+      // Clear documents + pins so stale data from the previous repo
+      // doesn't flash while the new repo's documents load async.
+      documents: [],
+      pinnedDocumentIds: [],
       // Reset streaming state when jumping to a different repo so the input
       // is immediately usable (the server agent keeps running in its worktree).
       sending: false,
