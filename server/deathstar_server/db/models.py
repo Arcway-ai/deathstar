@@ -6,7 +6,7 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, ForeignKey, Index, String, Text, text
+from sqlalchemy import Column, ForeignKey, Index, Integer, String, Text, text
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -242,6 +242,79 @@ class BranchPR(SQLModel, table=True):
     body: str = Field(nullable=False, default="")
     body_fetched: bool = Field(nullable=False, default=False)
     updated_at: str = Field(nullable=False, default_factory=_utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Linear Integration
+# ---------------------------------------------------------------------------
+
+
+class LinearProject(SQLModel, table=True):
+    __tablename__ = "linear_projects"
+    __table_args__ = (
+        Index("idx_linear_projects_repo", "repo"),
+        Index("idx_linear_projects_linear_id", "linear_project_id", unique=True),
+        Index("idx_linear_projects_conversation", "conversation_id"),
+    )
+
+    id: str = Field(primary_key=True)
+    repo: str = Field(nullable=False)
+    conversation_id: Optional[str] = Field(
+        sa_column=Column(
+            String,
+            ForeignKey("conversations.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    linear_project_id: str = Field(nullable=False)
+    linear_team_id: str = Field(nullable=False)
+    name: str = Field(nullable=False)
+    slug: str = Field(nullable=False, default="")
+    state: str = Field(nullable=False, default="planned")
+    url: str = Field(nullable=False, default="")
+    last_synced_at: Optional[str] = Field(default=None)
+    created_at: str = Field(nullable=False, default_factory=_utcnow)
+    updated_at: str = Field(nullable=False, default_factory=_utcnow)
+
+    issues: list["LinearIssue"] = Relationship(
+        back_populates="project",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+
+
+class LinearIssue(SQLModel, table=True):
+    __tablename__ = "linear_issues"
+    __table_args__ = (
+        Index("idx_linear_issues_linear_id", "linear_issue_id", unique=True),
+        Index("idx_linear_issues_project", "linear_project_id"),
+        Index("idx_linear_issues_repo_branch", "repo", "branch"),
+    )
+
+    id: str = Field(primary_key=True)
+    linear_project_id: str = Field(
+        sa_column=Column(
+            String,
+            ForeignKey("linear_projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    repo: str = Field(nullable=False)
+    linear_issue_id: str = Field(nullable=False)
+    identifier: str = Field(nullable=False)  # e.g. ENG-123
+    title: str = Field(nullable=False)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    status: str = Field(nullable=False, default="backlog")
+    priority: int = Field(
+        sa_column=Column(Integer, nullable=False, server_default=text("0")),
+    )  # 0=none, 1=urgent, 2=high, 3=medium, 4=low
+    branch: Optional[str] = Field(default=None)
+    assignee: Optional[str] = Field(default=None)
+    url: str = Field(nullable=False, default="")
+    last_synced_at: Optional[str] = Field(default=None)
+    created_at: str = Field(nullable=False, default_factory=_utcnow)
+    updated_at: str = Field(nullable=False, default_factory=_utcnow)
+
+    project: Optional[LinearProject] = Relationship(back_populates="issues")
 
 
 # ---------------------------------------------------------------------------

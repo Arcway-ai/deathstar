@@ -17,6 +17,7 @@ class IntegrationName(str, Enum):
     TAILSCALE = "tailscale"
     GITHUB = "github"
     DATABASE = "database"
+    LINEAR = "linear"
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,10 @@ def integration_target(config: CLIConfig, integration: IntegrationName) -> Secre
         IntegrationName.DATABASE: SecretTarget(
             label="Database password",
             parameter_name=config.db_password_parameter_name,
+        ),
+        IntegrationName.LINEAR: SecretTarget(
+            label="Linear API key",
+            parameter_name=config.linear_parameter_name,
         ),
     }
     return mapping[integration]
