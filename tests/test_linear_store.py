@@ -81,7 +81,12 @@ class TestLinkProject:
             linear_project_id="proj-abc",
             conversation_id=None,
             team_id="team-1",
-            project_data={"name": "Sprint 1", "slugId": "sprint-1", "state": "started", "url": "https://linear.app/p/1"},
+            project_data={
+                "name": "Sprint 1",
+                "slugId": "sprint-1",
+                "status": {"id": "s1", "name": "Started", "type": "started"},
+                "url": "https://linear.app/p/1",
+            },
         )
         assert project.repo == "my-repo"
         assert project.linear_project_id == "proj-abc"
@@ -109,6 +114,33 @@ class TestLinkProject:
         # Should still be just one project
         projects = store.list_projects_for_repo("my-repo")
         assert len(projects) == 1
+
+    def test_extracts_state_from_status_object_on_update(self, store: LinearStore) -> None:
+        store.link_project(
+            repo="r",
+            linear_project_id="proj-1",
+            conversation_id=None,
+            team_id="t",
+            project_data={"name": "P", "status": {"type": "planned"}},
+        )
+        updated = store.link_project(
+            repo="r",
+            linear_project_id="proj-1",
+            conversation_id=None,
+            team_id="t",
+            project_data={"name": "P", "status": {"id": "s2", "name": "Started", "type": "started"}},
+        )
+        assert updated.state == "started"
+
+    def test_defaults_state_when_no_status(self, store: LinearStore) -> None:
+        project = store.link_project(
+            repo="r",
+            linear_project_id="proj-2",
+            conversation_id=None,
+            team_id="t",
+            project_data={"name": "No Status"},
+        )
+        assert project.state == "planned"
 
     def test_integrity_error_fallback(self, tmp_path: Path) -> None:
         """Concurrent inserts with the same linear_project_id should not crash."""

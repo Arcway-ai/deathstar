@@ -84,12 +84,28 @@ class LinearStore:
                 existing.linear_team_id = team_id
                 existing.name = project_data.get("name", existing.name)
                 existing.slug = project_data.get("slugId", existing.slug)
-                existing.state = project_data.get("state", existing.state)
+                # Linear returns project status as an object: {id, name, type}.
+                # We store the type string (e.g. "started", "planned").
+                status_obj = project_data.get("status")
+                if isinstance(status_obj, dict):
+                    existing.state = status_obj.get("type", existing.state)
+                elif isinstance(status_obj, str):
+                    # Allow callers to pass a plain string for convenience.
+                    existing.state = status_obj
                 existing.url = project_data.get("url", existing.url)
                 existing.updated_at = now
                 session.commit()
                 session.refresh(existing)
                 return existing
+
+            # Extract state type from status object or fall back to string.
+            status_obj = project_data.get("status")
+            if isinstance(status_obj, dict):
+                state = status_obj.get("type", "planned")
+            elif isinstance(status_obj, str):
+                state = status_obj
+            else:
+                state = "planned"
 
             project = LinearProject(
                 id=str(uuid.uuid4()),
@@ -99,7 +115,7 @@ class LinearStore:
                 linear_team_id=team_id,
                 name=project_data.get("name", ""),
                 slug=project_data.get("slugId", ""),
-                state=project_data.get("state", "planned"),
+                state=state,
                 url=project_data.get("url", ""),
                 last_synced_at=now,
                 created_at=now,

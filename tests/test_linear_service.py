@@ -142,8 +142,16 @@ class TestExecuteErrorHandling:
 
 class TestExecuteRetry:
     @pytest.mark.asyncio
-    async def test_429_retries_then_succeeds(self, service: LinearService) -> None:
-        rate_limited = _mock_response(status_code=429)
+    async def test_ratelimited_graphql_error_retries_then_succeeds(
+        self, service: LinearService,
+    ) -> None:
+        """Linear returns rate limits as HTTP 200 + GraphQL RATELIMITED error."""
+        rate_limited = _mock_response(json_data={
+            "errors": [{
+                "message": "Rate limit exceeded",
+                "extensions": {"code": "RATELIMITED"},
+            }],
+        })
         success = _mock_response(json_data={"data": {"teams": []}})
 
         mock_client = AsyncMock()
@@ -160,8 +168,15 @@ class TestExecuteRetry:
         assert mock_client.post.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_429_exhausts_retries(self, service: LinearService) -> None:
-        rate_limited = _mock_response(status_code=429)
+    async def test_ratelimited_graphql_error_exhausts_retries(
+        self, service: LinearService,
+    ) -> None:
+        rate_limited = _mock_response(json_data={
+            "errors": [{
+                "message": "Rate limit exceeded",
+                "extensions": {"code": "RATELIMITED"},
+            }],
+        })
 
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=rate_limited)
@@ -182,7 +197,7 @@ class TestExecuteRetry:
     ) -> None:
         resp = _mock_response(
             json_data={"data": {"ok": True}},
-            headers={"X-RateLimit-Remaining": "50"},
+            headers={"X-RateLimit-Requests-Remaining": "50"},
         )
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=resp)
@@ -219,7 +234,10 @@ class TestListProjectIssues:
     async def test_returns_issues(self, service: LinearService) -> None:
         issues = [{"id": "i1", "identifier": "ENG-1", "title": "Task"}]
         resp = _mock_response(
-            json_data={"data": {"project": {"issues": {"nodes": issues}}}},
+            json_data={"data": {"project": {"issues": {
+                "nodes": issues,
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }}}},
         )
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=resp)
@@ -229,6 +247,33 @@ class TestListProjectIssues:
         with patch("deathstar_server.services.linear.httpx.AsyncClient", return_value=mock_client):
             result = await service.list_project_issues("proj-1")
         assert result == issues
+
+    @pytest.mark.asyncio
+    async def test_paginates_across_multiple_pages(self, service: LinearService) -> None:
+        """Verify cursor-based pagination fetches all pages."""
+        page1_resp = _mock_response(json_data={"data": {"project": {"issues": {
+            "nodes": [{"id": "i1"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+        }}}})
+        page2_resp = _mock_response(json_data={"data": {"project": {"issues": {
+            "nodes": [{"id": "i2"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "cursor-2"},
+        }}}})
+        page3_resp = _mock_response(json_data={"data": {"project": {"issues": {
+            "nodes": [{"id": "i3"}],
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+        }}}})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=[page1_resp, page2_resp, page3_resp])
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("deathstar_server.services.linear.httpx.AsyncClient", return_value=mock_client):
+            result = await service.list_project_issues("proj-1")
+
+        assert result == [{"id": "i1"}, {"id": "i2"}, {"id": "i3"}]
+        assert mock_client.post.await_count == 3
 
     @pytest.mark.asyncio
     async def test_returns_empty_for_missing_project(self, service: LinearService) -> None:

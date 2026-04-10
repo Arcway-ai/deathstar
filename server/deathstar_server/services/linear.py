@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 _LINEAR_API_URL = "https://api.linear.app/graphql"
 
-# Rate limit warning threshold — Linear's limit is 1500 req/hr.
+# Rate limit warning threshold — Linear allows 5,000 requests/hr and
+# 3,000,000 complexity points/hr per API key (leaky bucket).
 _RATE_LIMIT_WARN_THRESHOLD = 200
 
 
@@ -55,7 +56,9 @@ class LinearService:
     ) -> dict[str, Any]:
         """Execute a GraphQL query against the Linear API.
 
-        Retries on 429 (rate-limited) with exponential backoff.
+        Retries on rate-limit responses with exponential backoff.
+        Linear signals rate limits as HTTP 200 with a GraphQL error whose
+        ``extensions.code`` is ``"RATELIMITED"`` (not HTTP 429).
         """
         key = self._require_key()
         headers = {
@@ -75,8 +78,8 @@ class LinearService:
                     headers=headers,
                 )
 
-                # Track rate limits
-                remaining = resp.headers.get("X-RateLimit-Remaining")
+                # Track rate limits — Linear uses X-RateLimit-Requests-Remaining
+                remaining = resp.headers.get("X-RateLimit-Requests-Remaining")
                 if remaining:
                     try:
                         if int(remaining) < _RATE_LIMIT_WARN_THRESHOLD:
@@ -86,19 +89,6 @@ class LinearService:
                             )
                     except ValueError:
                         pass
-
-                if resp.status_code == 429:
-                    attempt += 1
-                    if attempt > max_retries:
-                        raise AppError(
-                            ErrorCode.RATE_LIMITED,
-                            "Linear API rate limit exceeded after retries",
-                            status_code=429,
-                        )
-                    wait = 2 ** attempt
-                    logger.warning("Linear 429 — retrying in %ds (attempt %d/%d)", wait, attempt, max_retries)
-                    await asyncio.sleep(wait)
-                    continue
 
                 if resp.status_code in (401, 403):
                     raise AppError(
@@ -126,7 +116,28 @@ class LinearService:
 
                 if "errors" in body:
                     errors = body["errors"]
-                    msg = errors[0].get("message", str(errors)) if errors else "unknown"
+                    first = errors[0] if errors else {}
+                    ext_code = first.get("extensions", {}).get("code", "")
+
+                    # Linear returns rate-limit errors as HTTP 200 with
+                    # extensions.code == "RATELIMITED".
+                    if ext_code == "RATELIMITED":
+                        attempt += 1
+                        if attempt > max_retries:
+                            raise AppError(
+                                ErrorCode.RATE_LIMITED,
+                                "Linear API rate limit exceeded after retries",
+                                status_code=429,
+                            )
+                        wait = 2 ** attempt
+                        logger.warning(
+                            "Linear RATELIMITED — retrying in %ds (attempt %d/%d)",
+                            wait, attempt, max_retries,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+
+                    msg = first.get("message", str(errors))
                     raise AppError(
                         ErrorCode.INTERNAL_ERROR,
                         f"Linear GraphQL error: {msg}",
@@ -169,7 +180,11 @@ class LinearService:
                         id
                         name
                         slugId
-                        state
+                        status {
+                            id
+                            name
+                            type
+                        }
                         url
                     }
                 }
@@ -190,7 +205,11 @@ class LinearService:
                 id
                 name
                 slugId
-                state
+                status {
+                    id
+                    name
+                    type
+                }
                 url
                 teams {
                     nodes {
@@ -209,12 +228,21 @@ class LinearService:
     # Issues
     # ------------------------------------------------------------------
 
-    async def list_project_issues(self, project_id: str) -> list[dict[str, Any]]:
-        """List all issues for a project."""
+    async def list_project_issues(
+        self,
+        project_id: str,
+        *,
+        page_size: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List all issues for a project (paginated).
+
+        Uses Relay-style cursor pagination with ``first``/``after`` so
+        projects with more than 50 issues are fully retrieved.
+        """
         query = """
-        query($projectId: String!) {
+        query($projectId: String!, $first: Int!, $after: String) {
             project(id: $projectId) {
-                issues {
+                issues(first: $first, after: $after) {
                     nodes {
                         id
                         identifier
@@ -232,15 +260,40 @@ class LinearService:
                             displayName
                         }
                     }
+                    pageInfo {
+                        hasNextPage
+                        endCursor
+                    }
                 }
             }
         }
         """
-        data = await self._execute(query, {"projectId": project_id})
-        project = data.get("project")
-        if not project:
-            return []
-        return project.get("issues", {}).get("nodes", [])
+        all_issues: list[dict[str, Any]] = []
+        cursor: str | None = None
+
+        while True:
+            variables: dict[str, Any] = {
+                "projectId": project_id,
+                "first": page_size,
+            }
+            if cursor:
+                variables["after"] = cursor
+
+            data = await self._execute(query, variables)
+            project = data.get("project")
+            if not project:
+                return []
+
+            issues_conn = project.get("issues", {})
+            all_issues.extend(issues_conn.get("nodes", []))
+
+            page_info = issues_conn.get("pageInfo", {})
+            if page_info.get("hasNextPage") and page_info.get("endCursor"):
+                cursor = page_info["endCursor"]
+            else:
+                break
+
+        return all_issues
 
     async def get_issue(self, issue_id: str) -> dict[str, Any] | None:
         """Fetch a single issue by ID."""
