@@ -140,17 +140,25 @@ def _validate_transport(transport: str) -> str:
     return normalized
 
 
-_HYPERSPACE_FRAMES = [
-    "⠋ Entering hyperspace...",
-    "⠙ Navigating asteroid field...",
-    "⠹ Powering up the reactor core...",
-    "⠸ Aligning deflector shields...",
-    "⠼ Calibrating targeting systems...",
-    "⠴ Loading proton torpedoes...",
-    "⠦ Establishing uplink to command...",
-    "⠧ Syncing star charts...",
-    "⠇ Initializing droid protocols...",
-    "⠏ Charging the superlaser...",
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+_HYPERSPACE_PHASES = [
+    "Entering hyperspace",
+    "Navigating asteroid field",
+    "Powering up the reactor core",
+    "Aligning deflector shields",
+    "Calibrating targeting systems",
+    "Loading proton torpedoes",
+    "Establishing uplink to command",
+    "Syncing star charts",
+    "Initializing droid protocols",
+    "Charging the superlaser",
+    "Routing through the Kessel Run",
+    "Decrypting Imperial codes",
+    "Warming up the hyperdrive",
+    "Scanning for rebel frequencies",
+    "Priming shield generators",
+    "Locking S-foils in attack position",
 ]
 
 _HYPERSPACE_READY = [
@@ -169,47 +177,84 @@ def _wait_for_healthy(
     timeout_seconds: int = 600,
     poll_interval: int = 10,
 ) -> dict | None:
-    """Poll the remote health endpoint with a Star Wars loading animation."""
+    """Poll the remote health endpoint with a Star Wars loading animation.
+
+    The spinner updates every 200ms for a live feel, but actual health
+    checks only fire every ``poll_interval`` seconds to avoid hammering
+    the endpoint. Phase messages rotate every ~8 seconds.
+    """
+    import logging
     import random
     import sys
 
     deadline = time.monotonic() + timeout_seconds
     last_err = ""
-    frame_idx = 0
+    spin_idx = 0
+    phase_idx = 0
+    next_poll = time.monotonic()
+    next_phase_change = time.monotonic() + 8
+
+    # Suppress noisy Tailscale-fallback warnings during the wait so they
+    # don't clobber the spinner line.
+    remote_logger = logging.getLogger("deathstar_cli.remote")
+    prev_level = remote_logger.level
+    remote_logger.setLevel(logging.CRITICAL)
 
     try:
         client = RemoteAPIClient(config, region, transport=transport)
     except (RuntimeError, httpx.HTTPError) as exc:
+        remote_logger.setLevel(prev_level)
         typer.echo(f"  Could not create API client: {exc}", err=True)
         return None
 
-    while time.monotonic() < deadline:
-        try:
-            result = client._request("GET", "/v1/health")
-            # Clear the line and print success
-            sys.stderr.write("\r\033[K")
+    try:
+        while time.monotonic() < deadline:
+            now = time.monotonic()
+            elapsed = int(now - (deadline - timeout_seconds))
+
+            # Rotate phase message periodically
+            if now >= next_phase_change:
+                phase_idx += 1
+                next_phase_change = now + random.uniform(6, 10)
+
+            # Render spinner
+            phase = _HYPERSPACE_PHASES[phase_idx % len(_HYPERSPACE_PHASES)]
+            spinner = _SPINNER[spin_idx % len(_SPINNER)]
+            bar = _progress_bar(elapsed, timeout_seconds, width=20)
+            sys.stderr.write(f"\r\033[K  {spinner} {phase}... {bar} [{elapsed}s / {timeout_seconds}s]")
             sys.stderr.flush()
-            quote = random.choice(_HYPERSPACE_READY)
-            typer.echo(f"\n  ✦ {quote}")
-            version = result.get("version", "unknown") if isinstance(result, dict) else "unknown"
-            typer.echo(f"  Version: {version}")
-            return result
-        except (RuntimeError, httpx.HTTPError) as exc:
-            last_err = str(exc)
-            remaining = int(deadline - time.monotonic())
-            if remaining <= 0:
-                break
-            frame = _HYPERSPACE_FRAMES[frame_idx % len(_HYPERSPACE_FRAMES)]
-            elapsed = timeout_seconds - remaining
-            sys.stderr.write(f"\r\033[K  {frame} [{elapsed}s / {timeout_seconds}s]")
-            sys.stderr.flush()
-            frame_idx += 1
-            time.sleep(min(poll_interval, remaining))
+            spin_idx += 1
+
+            # Only poll when the interval has elapsed
+            if now >= next_poll:
+                next_poll = now + poll_interval
+                try:
+                    result = client._request("GET", "/v1/health")
+                    sys.stderr.write("\r\033[K")
+                    sys.stderr.flush()
+                    quote = random.choice(_HYPERSPACE_READY)
+                    typer.echo(f"\n  ✦ {quote}")
+                    version = result.get("version", "unknown") if isinstance(result, dict) else "unknown"
+                    typer.echo(f"  Version: {version}")
+                    return result
+                except (RuntimeError, httpx.HTTPError) as exc:
+                    last_err = str(exc)
+
+            time.sleep(0.2)
+    finally:
+        remote_logger.setLevel(prev_level)
 
     sys.stderr.write("\r\033[K")
     sys.stderr.flush()
     typer.echo(f"  ✗ Timed out after {timeout_seconds}s. Last error: {last_err[:200]}", err=True)
     return None
+
+
+def _progress_bar(elapsed: int, total: int, width: int = 20) -> str:
+    """Render a small progress bar like [████████░░░░░░░░░░░░]."""
+    fraction = min(elapsed / total, 1.0) if total > 0 else 0.0
+    filled = int(width * fraction)
+    return "▐" + "█" * filled + "░" * (width - filled) + "▌"
 
 
 @app.command()
@@ -1256,6 +1301,59 @@ def redeploy(
     config = _config()
     effective_region = region or config.region
     _build_and_push_image(config, effective_region)
+
+
+@app.command()
+def reboot(
+    region: str | None = typer.Option(None, "--region", help="AWS region override."),
+    yes: bool = typer.Option(False, "--yes", help="Skip interactive confirmation."),
+) -> None:
+    """Reboot the remote EC2 instance.
+
+    Non-destructive — the instance, EBS volumes, and IP stay the same.
+    Useful when SSM and Tailscale are both unreachable.
+    """
+    config = _config()
+    effective_region = region or config.region
+    outputs = terraform_outputs(config, effective_region)
+    instance_id = str(outputs["instance_id"])
+
+    if not yes:
+        typer.confirm(f"  Reboot instance {instance_id}?", abort=True)
+
+    ec2 = boto3.client("ec2", region_name=effective_region)
+    ec2.reboot_instances(InstanceIds=[instance_id])
+    typer.echo(f"  Reboot initiated for {instance_id}.")
+    typer.echo("  Wait 1–2 minutes, then try: deathstar status")
+
+
+@app.command(name="console-log")
+def console_log(
+    region: str | None = typer.Option(None, "--region", help="AWS region override."),
+    tail: int = typer.Option(200, "--tail", help="Number of lines to show."),
+) -> None:
+    """Show the EC2 serial console output.
+
+    Works even when SSM and Tailscale are unreachable — reads directly
+    from the EC2 hypervisor. Useful for diagnosing boot failures,
+    cloud-init errors, and kernel panics.
+    """
+    config = _config()
+    effective_region = region or config.region
+    outputs = terraform_outputs(config, effective_region)
+    instance_id = str(outputs["instance_id"])
+
+    ec2 = boto3.client("ec2", region_name=effective_region)
+    response = ec2.get_console_output(InstanceId=instance_id, Latest=True)
+    output = response.get("Output", "")
+
+    if not output:
+        typer.echo("  No console output available (instance may still be booting).", err=True)
+        raise typer.Exit(code=1)
+
+    lines = output.splitlines()
+    for line in lines[-tail:]:
+        typer.echo(line)
 
 
 @app.command()
