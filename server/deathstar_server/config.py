@@ -49,6 +49,9 @@ class Settings:
     max_worktrees_per_repo: int
     max_total_worktrees: int
     database_url: str
+    linear_api_key: str | None = None
+    linear_webhook_secret: str | None = None
+    linear_poll_interval_seconds: int = 60
     anthropic_api_key: str | None = None
     render_api_key: str | None = None
     render_owner_id: str | None = None
@@ -90,6 +93,9 @@ def load_settings() -> Settings:
             "DEATHSTAR_DATABASE_URL",
             "sqlite:///deathstar.db",
         ),
+        linear_api_key=_optional(os.getenv("LINEAR_API_KEY")),
+        linear_webhook_secret=_optional(os.getenv("LINEAR_WEBHOOK_SECRET")),
+        linear_poll_interval_seconds=_int_env("LINEAR_POLL_INTERVAL", 60),
         anthropic_api_key=_optional(os.getenv("ANTHROPIC_API_KEY")),
         render_api_key=_optional(os.getenv("RENDER_API_KEY")),
         render_owner_id=_optional(os.getenv("RENDER_OWNER_ID")),

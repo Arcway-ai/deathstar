@@ -29,10 +29,17 @@ EVENT_PUSH = "push"
 EVENT_PR_UPDATE = "pr_update"
 EVENT_CI_STATUS = "ci_status"
 
+# Event types — Linear
+EVENT_LINEAR_ISSUE_CREATED = "linear_issue_created"
+EVENT_LINEAR_ISSUE_UPDATED = "linear_issue_updated"
+EVENT_LINEAR_ISSUE_DELETED = "linear_issue_deleted"
+EVENT_LINEAR_PROJECT_UPDATED = "linear_project_updated"
+
 # Sources
 SOURCE_LOCAL = "local"
 SOURCE_GITHUB = "github"
 SOURCE_AGENT = "agent"
+SOURCE_LINEAR = "linear"
 
 # Dedup TTL
 _DEDUP_TTL_SECONDS = 120

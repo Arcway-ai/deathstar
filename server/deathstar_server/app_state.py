@@ -20,7 +20,9 @@ from deathstar_server.web.feedback import FeedbackStore
 from deathstar_server.web.memory_bank import MemoryBank
 from deathstar_server.web.queue_store import QueueStore
 from deathstar_server.services.agent_runner import AgentRunner
+from deathstar_server.services.linear import LinearService
 from deathstar_server.services.queue_worker import QueueWorker
+from deathstar_server.web.linear_store import LinearStore
 
 settings = load_settings()
 configure_logging(settings.log_path, settings.log_level)
@@ -34,6 +36,7 @@ os.environ.pop("CLAUDE_API_KEY", None)
 
 git_service = GitService(settings)
 github_service = GitHubService(settings)
+linear_service = LinearService(settings)
 backup_service = BackupService(settings)
 worktree_manager = WorktreeManager(settings)
 render_preview = RenderPreviewProvider(settings)
@@ -53,6 +56,7 @@ memory_bank = MemoryBank(engine)
 feedback_store = FeedbackStore(engine)
 document_store = DocumentStore(engine)
 event_bus = EventBus()
+linear_store = LinearStore(engine)
 queue_store = QueueStore(engine)
 agent_runner = AgentRunner(conversation_store, worktree_manager, event_bus, settings, git_service, github_service)
 queue_worker = QueueWorker(queue_store, conversation_store, worktree_manager, event_bus, agent_runner)
