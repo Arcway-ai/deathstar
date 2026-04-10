@@ -147,7 +147,7 @@ export default function ChatView() {
           <EmptyState repo={selectedRepo!} personaName={persona.shortName} />
         </div>
       ) : (
-        <div className="relative z-10 min-w-0 flex-1">
+        <div className="relative z-10 min-w-0 flex-1 overflow-hidden">
           <Virtuoso
             key={conversationId ?? "__new"}
             ref={virtuosoRef}
@@ -275,7 +275,12 @@ export default function ChatView() {
 
 /* ── Custom Virtuoso sub-components ──────────────────────────── */
 
-/** Outer scroll container — adds padding and disables horizontal scroll.
+/** Outer scroll container — adds vertical padding and disables horizontal scroll.
+ *  Horizontal padding lives on ListContainer, NOT here.  Virtuoso's internal
+ *  viewport div uses `position:absolute; width:100%` with no explicit `left`,
+ *  so any horizontal padding on the Scroller pushes the viewport (and the
+ *  item-list inside it) past the right edge of the screen on mobile.
+ *
  *  Note: we intentionally omit `scroll-smooth` here — it would override
  *  Virtuoso's `followOutput: "auto"` (instant) at the CSS level, re-
  *  introducing the stacking-animation jank.  The manual "Jump to latest"
@@ -286,19 +291,21 @@ const ScrollerWithPadding = forwardRef<HTMLDivElement, ComponentPropsWithRef<"di
       {...props}
       ref={ref}
       style={{ ...style, overflowX: "hidden" }}
-      className={`px-3 py-3 sm:px-4 sm:py-4 ${className ?? ""}`}
+      className={`py-3 sm:py-4 ${className ?? ""}`}
     />
   ),
 );
 ScrollerWithPadding.displayName = "ScrollerWithPadding";
 
-/** Inner list wrapper — mirrors max-w-3xl + spacing. */
+/** Inner list wrapper — max-w-3xl + horizontal padding + overflow containment.
+ *  Horizontal padding is here (not on the Scroller) to avoid the Virtuoso
+ *  viewport absolute-positioning overflow bug on mobile — see comment above. */
 const ListContainer = forwardRef<HTMLDivElement, ComponentPropsWithRef<"div">>(
   ({ className, ...props }, ref) => (
     <div
       {...props}
       ref={ref}
-      className={`mx-auto max-w-3xl overflow-hidden ${className ?? ""}`}
+      className={`mx-auto max-w-3xl overflow-hidden px-3 sm:px-4 ${className ?? ""}`}
     />
   ),
 );
