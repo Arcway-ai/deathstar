@@ -43,6 +43,7 @@ def build_config(tmp_path) -> CLIConfig:
         connect_transport="auto",
         github_app_client_id=None,
         tailscale_oauth_client_id=None,
+        linear_parameter_name="/deathstar/integrations/linear/api_key",
         tailscale_oauth_client_secret=None,
     )
 

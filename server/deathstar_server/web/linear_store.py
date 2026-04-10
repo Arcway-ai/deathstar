@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from deathstar_server.db.models import LinearIssue, LinearProject
@@ -20,13 +21,13 @@ class SyncResult:
 
     created: int
     updated: int
-    deleted_ids: list[str]
+    deleted_ids: tuple[str, ...]
 
 
 def _slugify(text: str) -> str:
     """Convert text to a URL/branch-safe slug."""
     slug = text.lower().strip()
-    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"[^a-z0-9\s_-]", "", slug)
     slug = re.sub(r"[\s_]+", "-", slug)
     slug = re.sub(r"-+", "-", slug)
     return slug.strip("-")[:60]
@@ -105,7 +106,21 @@ class LinearStore:
                 updated_at=now,
             )
             session.add(project)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                # TOCTOU: a concurrent request inserted the same
+                # linear_project_id between our SELECT and INSERT.
+                # Fall back to reading the winner's row.
+                session.rollback()
+                existing = session.exec(
+                    select(LinearProject).where(
+                        LinearProject.linear_project_id == linear_project_id,
+                    )
+                ).first()
+                if existing:
+                    return existing
+                raise
             session.refresh(project)
             return project
 
@@ -152,7 +167,7 @@ class LinearStore:
             project = session.get(LinearProject, project_id)
             if not project:
                 logger.warning("sync_issues: project %s not found", project_id)
-                return SyncResult(created=0, updated=0, deleted_ids=[])
+                return SyncResult(created=0, updated=0, deleted_ids=())
 
             repo = project.repo
 
@@ -253,7 +268,7 @@ class LinearStore:
 
             session.commit()
 
-        return SyncResult(created=created, updated=updated, deleted_ids=deleted_ids)
+        return SyncResult(created=created, updated=updated, deleted_ids=tuple(deleted_ids))
 
     def get_issue_by_linear_id(self, linear_issue_id: str) -> LinearIssue | None:
         with Session(self._engine) as session:

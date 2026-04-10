@@ -65,7 +65,7 @@ def integration_target(config: CLIConfig, integration: IntegrationName) -> Secre
         ),
         IntegrationName.LINEAR: SecretTarget(
             label="Linear API key",
-            parameter_name="/deathstar/integrations/linear/api_key",
+            parameter_name=config.linear_parameter_name,
         ),
     }
     return mapping[integration]

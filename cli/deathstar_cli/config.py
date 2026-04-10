@@ -80,6 +80,7 @@ class CLIConfig:
     remote_transport: str
     connect_transport: str
     github_app_client_id: str | None
+    linear_parameter_name: str
     tailscale_oauth_client_id: str | None
     tailscale_oauth_client_secret: str | None
 
@@ -152,6 +153,10 @@ class CLIConfig:
             remote_transport=os.getenv("DEATHSTAR_REMOTE_TRANSPORT", "auto").strip().lower(),
             connect_transport=os.getenv("DEATHSTAR_CONNECT_TRANSPORT", "auto").strip().lower(),
             github_app_client_id=os.getenv("DEATHSTAR_GITHUB_APP_CLIENT_ID") or None,
+            linear_parameter_name=os.getenv(
+                "DEATHSTAR_LINEAR_PARAMETER_NAME",
+                "/deathstar/integrations/linear/api_key",
+            ),
             tailscale_oauth_client_id=os.getenv("DEATHSTAR_TAILSCALE_OAUTH_CLIENT_ID") or None,
             tailscale_oauth_client_secret=os.getenv("DEATHSTAR_TAILSCALE_OAUTH_CLIENT_SECRET") or None,
         )

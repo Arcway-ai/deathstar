@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -56,8 +57,6 @@ class LinearService:
 
         Retries on 429 (rate-limited) with exponential backoff.
         """
-        import asyncio
-
         key = self._require_key()
         headers = {
             "Authorization": key,
@@ -68,64 +67,73 @@ class LinearService:
             payload["variables"] = variables
 
         attempt = 0
-        while True:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while True:
                 resp = await client.post(
                     _LINEAR_API_URL,
                     json=payload,
                     headers=headers,
                 )
 
-            # Track rate limits
-            remaining = resp.headers.get("X-RateLimit-Remaining")
-            if remaining:
-                try:
-                    if int(remaining) < _RATE_LIMIT_WARN_THRESHOLD:
-                        logger.warning(
-                            "Linear rate limit low: %s requests remaining",
-                            remaining,
+                # Track rate limits
+                remaining = resp.headers.get("X-RateLimit-Remaining")
+                if remaining:
+                    try:
+                        if int(remaining) < _RATE_LIMIT_WARN_THRESHOLD:
+                            logger.warning(
+                                "Linear rate limit low: %s requests remaining",
+                                remaining,
+                            )
+                    except ValueError:
+                        pass
+
+                if resp.status_code == 429:
+                    attempt += 1
+                    if attempt > max_retries:
+                        raise AppError(
+                            ErrorCode.RATE_LIMITED,
+                            "Linear API rate limit exceeded after retries",
+                            status_code=429,
                         )
-                except ValueError:
-                    pass
+                    wait = 2 ** attempt
+                    logger.warning("Linear 429 — retrying in %ds (attempt %d/%d)", wait, attempt, max_retries)
+                    await asyncio.sleep(wait)
+                    continue
 
-            if resp.status_code == 429:
-                attempt += 1
-                if attempt > max_retries:
+                if resp.status_code in (401, 403):
                     raise AppError(
-                        ErrorCode.RATE_LIMITED,
-                        "Linear API rate limit exceeded after retries",
-                        status_code=429,
+                        ErrorCode.AUTH_ERROR,
+                        f"Linear rejected the request (HTTP {resp.status_code})",
+                        status_code=resp.status_code,
                     )
-                wait = 2 ** attempt
-                logger.warning("Linear 429 — retrying in %ds (attempt %d/%d)", wait, attempt, max_retries)
-                await asyncio.sleep(wait)
-                continue
 
-            if resp.status_code in (401, 403):
-                raise AppError(
-                    ErrorCode.AUTH_ERROR,
-                    f"Linear rejected the request (HTTP {resp.status_code})",
-                    status_code=resp.status_code,
-                )
+                if resp.status_code >= 400:
+                    raise AppError(
+                        ErrorCode.INTERNAL_ERROR,
+                        f"Linear API error (HTTP {resp.status_code}): {resp.text[:300]}",
+                        status_code=502,
+                    )
 
-            if resp.status_code >= 400:
-                raise AppError(
-                    ErrorCode.INTERNAL_ERROR,
-                    f"Linear API error (HTTP {resp.status_code}): {resp.text[:300]}",
-                    status_code=502,
-                )
+                try:
+                    body = resp.json()
+                except (ValueError, httpx.DecodingError):
+                    raise AppError(
+                        ErrorCode.INTERNAL_ERROR,
+                        f"Linear returned non-JSON response (HTTP {resp.status_code}): "
+                        f"{resp.text[:200]}",
+                        status_code=502,
+                    )
 
-            body = resp.json()
-            if "errors" in body:
-                errors = body["errors"]
-                msg = errors[0].get("message", str(errors)) if errors else "unknown"
-                raise AppError(
-                    ErrorCode.INTERNAL_ERROR,
-                    f"Linear GraphQL error: {msg}",
-                    status_code=502,
-                )
+                if "errors" in body:
+                    errors = body["errors"]
+                    msg = errors[0].get("message", str(errors)) if errors else "unknown"
+                    raise AppError(
+                        ErrorCode.INTERNAL_ERROR,
+                        f"Linear GraphQL error: {msg}",
+                        status_code=502,
+                    )
 
-            return body.get("data", {})
+                return body.get("data", {})
 
     # ------------------------------------------------------------------
     # Teams

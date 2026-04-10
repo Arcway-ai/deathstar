@@ -192,6 +192,7 @@ class TestPostInitValidation:
                 connect_transport="auto",
                 github_app_client_id=None,
                 tailscale_oauth_client_id=None,
+                linear_parameter_name="/p/linear",
                 tailscale_oauth_client_secret=None,
             )
 
@@ -231,6 +232,7 @@ class TestPostInitValidation:
                 connect_transport="auto",
                 github_app_client_id=None,
                 tailscale_oauth_client_id=None,
+                linear_parameter_name="/p/linear",
                 tailscale_oauth_client_secret=None,
             )
 
@@ -269,6 +271,7 @@ class TestPostInitValidation:
             connect_transport="auto",
             github_app_client_id=None,
             tailscale_oauth_client_id=None,
+            linear_parameter_name="/p/linear",
             tailscale_oauth_client_secret=None,
         )
         assert config.project_name == "my-project_v2"
@@ -308,6 +311,7 @@ class TestPostInitValidation:
             connect_transport="auto",
             github_app_client_id=None,
             tailscale_oauth_client_id=None,
+            linear_parameter_name="/p/linear",
             tailscale_oauth_client_secret=None,
         )
         assert config.region == "eu-central-1"
