@@ -65,6 +65,7 @@ deathstar upgrade
 - Frontend themes use CSS custom properties applied at runtime via `applyTheme()` in `themes.ts`. shadcn CSS variables (e.g. `--popover`, `--primary`) are synced from the active theme.
 - Use top-level imports only — never inline/dynamic imports.
 - Zustand store (`web/src/store.ts`) is the single source of truth for all frontend state. Use `useStore` selector hooks in components.
+- **Alembic migrations must be PostgreSQL-compatible.** Production runs PostgreSQL — never use SQLite-isms like `0`/`1` for booleans (use `true`/`false` or `sa.text('false')`), or unquoted integer literals where PostgreSQL expects a specific type. Test migrations against PostgreSQL semantics.
 
 ## Bootstrap & Terraform Template Conventions
 
@@ -80,7 +81,7 @@ deathstar upgrade
 - **Kamal-style deploy**: `redeploy` and `upgrade` build the Docker image locally, push it to the instance via `docker save | gzip | ssh docker load`, then restart with blue/green canary health check. No remote Docker builds or S3 file sync.
 - **Provider-agnostic (CLI)**: CLI workflows still use the multi-provider layer (OpenAI, Anthropic, Google, Vertex AI). One request/response contract across providers.
 - **API auth**: Optional bearer token via `DEATHSTAR_API_TOKEN`. Health endpoint is always public.
-- **No public SSH**: Security group has zero inbound rules by default.
+- **No public SSH**: Security group allows inbound UDP 41641 (Tailscale WireGuard) when Tailscale is enabled, and optional web UI port. No SSH ingress.
 - **Single instance**: v1 is intentionally single EC2, single AZ. No HA.
 - **Web UI**: Always-on React + Vite frontend. Multi-stage Docker build (Node.js builds frontend, Python builds backend). Static files and `/` bypass auth; `/web/api/*` requires bearer token. WebSocket terminal at `/web/api/terminal`.
 - **shadcn/ui**: All UI primitives use shadcn/ui (base-ui/react). Installed components: Dialog, Button, Input, Popover, Tabs, Badge, Sonner, Accordion, ScrollArea, Separator, Alert, Card, Sheet. New frontend work should use shadcn primitives via `npx shadcn@latest add <component>`.

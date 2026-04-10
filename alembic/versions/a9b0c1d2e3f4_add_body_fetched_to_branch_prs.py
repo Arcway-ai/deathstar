@@ -18,9 +18,9 @@ depends_on: tuple[str, ...] | None = None
 
 
 def upgrade() -> None:
-    op.add_column('branch_prs', sa.Column('body_fetched', sa.Boolean(), nullable=False, server_default=sa.text('0')))
+    op.add_column('branch_prs', sa.Column('body_fetched', sa.Boolean(), nullable=False, server_default=sa.text('false')))
     # Mark existing rows that already have a body as fetched
-    op.execute("UPDATE branch_prs SET body_fetched = 1 WHERE body != ''")
+    op.execute("UPDATE branch_prs SET body_fetched = true WHERE body != ''")
 
 
 def downgrade() -> None:
