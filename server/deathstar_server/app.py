@@ -10,10 +10,17 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from deathstar_server.app_state import event_bus, settings, worktree_manager
+from deathstar_server.app_state import (
+    event_bus,
+    linear_service,
+    linear_store,
+    settings,
+    worktree_manager,
+)
 from deathstar_server.errors import AppError
 from deathstar_server.routes import router
 from deathstar_server.services.github_poller import GitHubPoller
+from deathstar_server.services.linear_poller import LinearPoller
 from deathstar_server.session import (
     SESSION_COOKIE_NAME,
     cookie_params,
@@ -24,6 +31,7 @@ from deathstar_server.web.agent_ws import agent_ws_router
 from deathstar_server.web.routes import web_router
 from deathstar_server.web.terminal import terminal_router
 from deathstar_server.web.preview_routes import preview_router
+from deathstar_server.web.linear_webhooks import linear_webhook_router
 from deathstar_server.web.webhooks import webhook_router
 from deathstar_shared.models import ErrorCode
 
@@ -36,6 +44,7 @@ if not settings.api_token:
     )
 
 _github_poller = GitHubPoller(settings, event_bus)
+_linear_poller = LinearPoller(settings, linear_service, linear_store, event_bus)
 
 
 async def _worktree_reaper() -> None:
@@ -74,6 +83,7 @@ async def lifespan(app: FastAPI):
     from deathstar_server.app_state import agent_runner, queue_worker
 
     await _github_poller.start()
+    await _linear_poller.start()
     await agent_runner.start()
     await queue_worker.start()
     reaper_task = asyncio.create_task(_worktree_reaper(), name="worktree-reaper")
@@ -81,6 +91,7 @@ async def lifespan(app: FastAPI):
     reaper_task.cancel()
     await queue_worker.stop()
     await agent_runner.stop()
+    await _linear_poller.stop()
     await _github_poller.stop()
 
 
@@ -90,6 +101,7 @@ app.include_router(web_router)
 app.include_router(agent_ws_router)
 app.include_router(terminal_router)
 app.include_router(webhook_router)
+app.include_router(linear_webhook_router)
 app.include_router(preview_router)
 
 # Mount React build output (web/dist/assets)
@@ -102,6 +114,7 @@ if _assets_dir.is_dir():
 _PUBLIC_PATHS = {
     "/v1/health", "/", "/index.html", "/favicon.svg",
     "/web/api/auth/session", "/web/api/webhooks/github",
+    "/web/api/webhooks/linear",
 }
 _PUBLIC_PREFIXES = ("/assets/",)
 
