@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, case
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -154,6 +154,12 @@ class LinearStore:
                 .where(LinearProject.repo == repo)
                 .order_by(LinearProject.updated_at.desc())
             )
+            return list(session.exec(stmt).all())
+
+    def list_all_projects(self) -> list[LinearProject]:
+        """List all linked Linear projects across all repos."""
+        with Session(self._engine) as session:
+            stmt = select(LinearProject).order_by(LinearProject.updated_at.desc())
             return list(session.exec(stmt).all())
 
     # ------------------------------------------------------------------
@@ -317,11 +323,21 @@ class LinearStore:
             return True
 
     def list_issues_for_project(self, project_id: str) -> list[LinearIssue]:
-        """List all issues for a given project (by internal PK)."""
+        """List all issues for a given project (by internal PK).
+
+        Ordered by priority (Urgent first, No Priority last) then by
+        identifier.  Linear priorities: 0=None, 1=Urgent, 2=High,
+        3=Medium, 4=Low.  A raw ASC sort would put 0 before 1, so we
+        use a CASE expression to push 0 to the end.
+        """
         with Session(self._engine) as session:
+            priority_order = case(
+                (LinearIssue.priority == 0, 99),
+                else_=LinearIssue.priority,
+            )
             stmt = (
                 select(LinearIssue)
                 .where(LinearIssue.linear_project_id == project_id)
-                .order_by(LinearIssue.priority, LinearIssue.identifier)
+                .order_by(priority_order, LinearIssue.identifier)
             )
             return list(session.exec(stmt).all())

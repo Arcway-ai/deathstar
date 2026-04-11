@@ -186,6 +186,15 @@ class TestListProjects:
         assert len(results) == 1
         assert results[0].repo == "a"
 
+    def test_list_all_projects(self, store: LinearStore) -> None:
+        store.link_project(repo="a", linear_project_id="p1", conversation_id=None, team_id="t", project_data={"name": "A"})
+        store.link_project(repo="b", linear_project_id="p2", conversation_id=None, team_id="t", project_data={"name": "B"})
+        results = store.list_all_projects()
+        assert len(results) == 2
+
+    def test_list_all_projects_empty(self, store: LinearStore) -> None:
+        assert store.list_all_projects() == []
+
 
 # ------------------------------------------------------------------
 # sync_issues tests
@@ -346,6 +355,27 @@ class TestUpdateIssueStatus:
 
     def test_not_found_returns_false(self, store: LinearStore) -> None:
         assert store.update_issue_status("nonexistent", "Done") is False
+
+
+class TestListIssuesPriorityOrder:
+    """Verify Urgent (1) sorts before No Priority (0)."""
+
+    def test_urgent_before_no_priority(self, store: LinearStore) -> None:
+        project = store.link_project(
+            repo="r", linear_project_id="p1",
+            conversation_id=None, team_id="t",
+            project_data={"name": "P"},
+        )
+        store.sync_issues(project.id, [
+            {"id": "i-none", "identifier": "ENG-1", "title": "None", "state": {"name": "Backlog"}, "priority": 0, "url": ""},
+            {"id": "i-urgent", "identifier": "ENG-2", "title": "Urgent", "state": {"name": "Todo"}, "priority": 1, "url": ""},
+            {"id": "i-high", "identifier": "ENG-3", "title": "High", "state": {"name": "Todo"}, "priority": 2, "url": ""},
+            {"id": "i-low", "identifier": "ENG-4", "title": "Low", "state": {"name": "Backlog"}, "priority": 4, "url": ""},
+        ])
+        issues = store.list_issues_for_project(project.id)
+        priorities = [i.priority for i in issues]
+        # Expected: Urgent(1), High(2), Low(4), None(0)
+        assert priorities == [1, 2, 4, 0]
 
 
 class TestSyncResultImmutability:
